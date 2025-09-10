@@ -115,7 +115,7 @@ Telar is under active development. We are building in public and are currently f
 | ------------------------- | ------------------- | --------------------------------------------- |
 | **Headless API**          | `/apps/api`         | 🏗️ In Progress                                |
 | **Unified Web Client**    | `/apps/web`         |  🏗️ In Progress                             |
-| **Standalone AI Engine**  | `/apps/ai-engine`   |  🚀 In Development    |
+| **Standalone AI Engine**  | `/apps/ai-engine`   |  🚀 In Development (See PR [#1](https://github.com/Qolzam/telar/pull/1))    |
 | **TypeScript SDK**        | `/packages/sdk`     | 📋 Planned                                    |
 
 ### The Roadmap
