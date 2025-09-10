@@ -4,7 +4,7 @@ import (
 	"context"
 )
 
-// Client defines the interface for LLM operations
+// Client defines the interface for language model operations
 type Client interface {
 	GenerateEmbeddings(ctx context.Context, text string) ([]float32, error)
 	GenerateCompletion(ctx context.Context, prompt string) (string, error)
@@ -32,6 +32,7 @@ type CompletionResponse struct {
 	Usage *Usage `json:"usage,omitempty"`
 }
 
+// Usage tracks token consumption for billing and monitoring
 type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`

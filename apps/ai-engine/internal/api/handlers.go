@@ -1,15 +1,24 @@
 package api
 
 import (
+	"log"
+	"strconv"
+	"time"
+
 	"github.com/gofiber/fiber/v2"
+	"github.com/qolzam/telar/apps/ai-engine/internal/knowledge"
 )
 
+// Handler contains HTTP handlers for AI Engine endpoints
 type Handler struct {
-	// TODO: Add service dependencies
+	knowledgeService *knowledge.Service
 }
 
-func NewHandler() *Handler {
-	return &Handler{}
+// NewHandler creates a new handler instance
+func NewHandler(knowledgeService *knowledge.Service) *Handler {
+	return &Handler{
+		knowledgeService: knowledgeService,
+	}
 }
 
 type IngestRequest struct {
@@ -24,8 +33,9 @@ type IngestResponse struct {
 }
 
 type QueryRequest struct {
-	Question string `json:"question" binding:"required"`
-	Limit    int    `json:"limit,omitempty"`
+	Question string            `json:"question" binding:"required"`
+	Limit    int               `json:"limit,omitempty"`
+	Context  map[string]string `json:"context,omitempty"`
 }
 
 type QueryResponse struct {
@@ -45,6 +55,7 @@ type HealthResponse struct {
 	Services map[string]string `json:"services"`
 }
 
+// Ingest processes document ingestion requests
 func (h *Handler) Ingest(c *fiber.Ctx) error {
 	var req IngestRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -54,16 +65,32 @@ func (h *Handler) Ingest(c *fiber.Ctx) error {
 		})
 	}
 
-	// TODO: Implement RAG ingestion
+	docID := "doc-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+
+	docReq := &knowledge.DocumentRequest{
+		ID:       docID,
+		Text:     req.Text,
+		Metadata: req.Metadata,
+	}
+
+	if err := h.knowledgeService.StoreDocument(c.Context(), docReq); err != nil {
+		log.Printf("Failed to store document: %v", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error":   "Failed to store document",
+			"details": err.Error(),
+		})
+	}
+
 	response := IngestResponse{
 		Status:  "success",
 		Message: "Document ingested successfully",
-		ID:      "mock-document-id-" + req.Text[:min(10, len(req.Text))],
+		ID:      docID,
 	}
 
 	return c.JSON(response)
 }
 
+// Query processes knowledge query requests using RAG
 func (h *Handler) Query(c *fiber.Ctx) error {
 	var req QueryRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -73,32 +100,62 @@ func (h *Handler) Query(c *fiber.Ctx) error {
 		})
 	}
 
-	// TODO: Implement RAG query
+	queryReq := &knowledge.QueryRequest{
+		Query:   req.Question,
+		Context: req.Context,
+	}
+
+	result, err := h.knowledgeService.QueryKnowledge(c.Context(), queryReq)
+	if err != nil {
+		log.Printf("Failed to query knowledge: %v", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error":   "Failed to process query",
+			"details": err.Error(),
+		})
+	}
+
+	var sources []SourceChunk
+	for _, source := range result.Sources {
+		sources = append(sources, SourceChunk{
+			ID:       source.Document.ID,
+			Text:     source.Document.Text,
+			Score:    source.Score,
+			Metadata: source.Document.Metadata,
+		})
+	}
+
 	response := QueryResponse{
-		Answer: "This is a mock response to the question: " + req.Question,
-		Sources: []SourceChunk{
-			{
-				ID:    "mock-chunk-1",
-				Text:  "This is a mock source chunk that would contain relevant information.",
-				Score: 0.95,
-				Metadata: map[string]string{
-					"source": "mock-document",
-				},
-			},
-		},
+		Answer:  result.Answer,
+		Sources: sources,
 	}
 
 	return c.JSON(response)
 }
 
+// Health returns service health status and dependency checks
 func (h *Handler) Health(c *fiber.Ctx) error {
+	services := map[string]string{
+		"api": "healthy",
+	}
+
+	if err := h.knowledgeService.HealthCheck(c.Context()); err != nil {
+		log.Printf("Knowledge service health check failed: %v", err)
+		services["knowledge"] = "unhealthy"
+		services["details"] = err.Error()
+		
+		return c.Status(fiber.StatusServiceUnavailable).JSON(HealthResponse{
+			Status:   "unhealthy",
+			Services: services,
+		})
+	}
+
+	services["knowledge"] = "healthy"
+	services["llm"] = "healthy"
+	services["weaviate"] = "healthy"
+
 	response := HealthResponse{
-		Status: "healthy",
-		Services: map[string]string{
-			"api":      "healthy",
-			"llm":      "not_implemented",
-			"weaviate": "not_implemented",
-		},
+		Status:   "healthy",
+		Services: services,
 	}
 
 	return c.JSON(response)

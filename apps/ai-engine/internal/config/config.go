@@ -2,16 +2,19 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"time"
+
+	"github.com/spf13/viper"
 )
 
+// Config holds application configuration loaded from environment variables
 type Config struct {
 	Server   ServerConfig   `json:"server"`
 	LLM      LLMConfig      `json:"llm"`
 	Weaviate WeaviateConfig `json:"weaviate"`
 }
 
+// ServerConfig contains HTTP server settings
 type ServerConfig struct {
 	Port         string        `json:"port"`
 	Host         string        `json:"host"`
@@ -19,6 +22,7 @@ type ServerConfig struct {
 	WriteTimeout time.Duration `json:"write_timeout"`
 }
 
+// LLMConfig contains language model provider settings
 type LLMConfig struct {
 	Provider        string `json:"provider"`
 	OpenAIAPIKey    string `json:"openai_api_key,omitempty"`
@@ -28,31 +32,44 @@ type LLMConfig struct {
 	CompletionModel string `json:"completion_model,omitempty"`
 }
 
+// WeaviateConfig contains vector database settings
 type WeaviateConfig struct {
 	URL    string `json:"url"`
 	APIKey string `json:"api_key,omitempty"`
 }
 
-// Load reads configuration from environment variables with defaults
+// Load reads configuration from environment variables with sensible defaults
 func Load() (*Config, error) {
+	viper.SetDefault("PORT", "8080")
+	viper.SetDefault("HOST", "0.0.0.0")
+	viper.SetDefault("READ_TIMEOUT", "30s")
+	viper.SetDefault("WRITE_TIMEOUT", "30s")
+	viper.SetDefault("LLM_PROVIDER", "ollama")
+	viper.SetDefault("OLLAMA_BASE_URL", "http://localhost:11434")
+	viper.SetDefault("EMBEDDING_MODEL", "nomic-embed-text")
+	viper.SetDefault("COMPLETION_MODEL", "llama3")
+	viper.SetDefault("WEAVIATE_URL", "http://localhost:8080")
+
+	viper.AutomaticEnv()
+
 	config := &Config{
 		Server: ServerConfig{
-			Port:         getEnv("PORT", "8080"),
-			Host:         getEnv("HOST", "0.0.0.0"),
-			ReadTimeout:  getDurationEnv("READ_TIMEOUT", 30*time.Second),
-			WriteTimeout: getDurationEnv("WRITE_TIMEOUT", 30*time.Second),
+			Port:         viper.GetString("PORT"),
+			Host:         viper.GetString("HOST"),
+			ReadTimeout:  viper.GetDuration("READ_TIMEOUT"),
+			WriteTimeout: viper.GetDuration("WRITE_TIMEOUT"),
 		},
 		LLM: LLMConfig{
-			Provider:        getEnv("LLM_PROVIDER", "ollama"),
-			OpenAIAPIKey:    getEnv("OPENAI_API_KEY", ""),
-			GroqAPIKey:      getEnv("GROQ_API_KEY", ""),
-			OllamaBaseURL:   getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
-			EmbeddingModel:  getEnv("EMBEDDING_MODEL", "nomic-embed-text"),
-			CompletionModel: getEnv("COMPLETION_MODEL", "llama3"),
+			Provider:        viper.GetString("LLM_PROVIDER"),
+			OpenAIAPIKey:    viper.GetString("OPENAI_API_KEY"),
+			GroqAPIKey:      viper.GetString("GROQ_API_KEY"),
+			OllamaBaseURL:   viper.GetString("OLLAMA_BASE_URL"),
+			EmbeddingModel:  viper.GetString("EMBEDDING_MODEL"),
+			CompletionModel: viper.GetString("COMPLETION_MODEL"),
 		},
 		Weaviate: WeaviateConfig{
-			URL:    getEnv("WEAVIATE_URL", "http://localhost:8080"),
-			APIKey: getEnv("WEAVIATE_API_KEY", ""),
+			URL:    viper.GetString("WEAVIATE_URL"),
+			APIKey: viper.GetString("WEAVIATE_API_KEY"),
 		},
 	}
 	
@@ -63,6 +80,7 @@ func Load() (*Config, error) {
 	return config, nil
 }
 
+// validate ensures required configuration values are present
 func (c *Config) validate() error {
 	switch c.LLM.Provider {
 	case "openai":
@@ -86,20 +104,4 @@ func (c *Config) validate() error {
 	}
 	
 	return nil
-}
-
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-func getDurationEnv(key string, defaultValue time.Duration) time.Duration {
-	if value := os.Getenv(key); value != "" {
-		if duration, err := time.ParseDuration(value); err == nil {
-			return duration
-		}
-	}
-	return defaultValue
 }

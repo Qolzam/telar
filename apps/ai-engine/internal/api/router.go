@@ -5,9 +5,13 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/qolzam/telar/apps/ai-engine/internal/knowledge"
 )
 
-func Router(handler *Handler) *fiber.App {
+// Router creates and configures the Fiber application with middleware and routes
+func Router(knowledgeService *knowledge.Service) *fiber.App {
+	handler := NewHandler(knowledgeService)
+	
 	app := fiber.New(fiber.Config{
 		AppName: "AI Engine v1.0.0",
 	})

@@ -1,0 +1,70 @@
+services:
+  # Weaviate Vector Database
+  weaviate:
+    image: semitechnologies/weaviate:1.27.0
+    container_name: telar-weaviate
+    restart: on-failure:0
+    environment:
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
+      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
+      DEFAULT_VECTORIZER_MODULE: 'none'
+      CLUSTER_HOSTNAME: 'node1'
+    ports:
+      - "8080:8080"
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/.well-known/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - telar-network
+
+  # AI Engine Service
+  ai-engine:
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+    container_name: telar-ai-engine
+    restart: unless-stopped
+    environment:
+      # Server Configuration
+      PORT: 8000
+      HOST: "0.0.0.0"
+      SERVER_ENV: "development"
+      
+      # LLM Configuration
+      LLM_PROVIDER: "ollama"
+      OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+      EMBEDDING_MODEL: "mxbai-embed-large"
+      
+      # Vector Database Configuration
+      WEAVIATE_URL: "http://weaviate:8080"
+      WEAVIATE_API_KEY: ""
+      
+      # Service Configuration
+      LOG_LEVEL: "info"
+      CORS_ENABLED: "true"
+      CORS_ORIGINS: "*"
+    ports:
+      - "8000:8000"
+    depends_on:
+      weaviate:
+        condition: service_healthy
+    networks:
+      - telar-network
+    volumes:
+      - ai_engine_logs:/app/logs
+
+volumes:
+  weaviate_data:
+    driver: local
+  ai_engine_logs:
+    driver: local
+
+networks:
+  telar-network:
+    driver: bridge

@@ -10,6 +10,7 @@ import (
 	"time"
 )
 
+// OllamaClient implements the LLM Client interface for Ollama API
 type OllamaClient struct {
 	baseURL         string
 	httpClient      *http.Client
@@ -17,6 +18,7 @@ type OllamaClient struct {
 	completionModel string
 }
 
+// OllamaConfig contains Ollama client configuration
 type OllamaConfig struct {
 	BaseURL         string
 	EmbeddingModel  string
@@ -24,6 +26,7 @@ type OllamaConfig struct {
 	Timeout         time.Duration
 }
 
+// NewOllamaClient creates a new Ollama client with sensible defaults
 func NewOllamaClient(config OllamaConfig) *OllamaClient {
 	if config.BaseURL == "" {
 		config.BaseURL = "http://localhost:11434"
@@ -48,6 +51,7 @@ func NewOllamaClient(config OllamaConfig) *OllamaClient {
 	}
 }
 
+// Ollama API request/response types
 type ollamaEmbeddingRequest struct {
 	Model  string `json:"model"`
 	Prompt string `json:"prompt"`
@@ -57,6 +61,7 @@ type ollamaEmbeddingResponse struct {
 	Embedding []float32 `json:"embedding"`
 }
 
+// GenerateEmbeddings creates vector embeddings for text
 func (c *OllamaClient) GenerateEmbeddings(ctx context.Context, text string) ([]float32, error) {
 	url := fmt.Sprintf("%s/api/embeddings", c.baseURL)
 	
@@ -107,6 +112,7 @@ type ollamaGenerateResponse struct {
 	Done     bool   `json:"done"`
 }
 
+// GenerateCompletion generates text completions from prompts
 func (c *OllamaClient) GenerateCompletion(ctx context.Context, prompt string) (string, error) {
 	url := fmt.Sprintf("%s/api/generate", c.baseURL)
 	
@@ -147,6 +153,7 @@ func (c *OllamaClient) GenerateCompletion(ctx context.Context, prompt string) (s
 	return genResp.Response, nil
 }
 
+// Health checks Ollama service availability
 func (c *OllamaClient) Health(ctx context.Context) error {
 	url := fmt.Sprintf("%s/api/tags", c.baseURL)
 	
