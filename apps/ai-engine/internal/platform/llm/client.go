@@ -8,6 +8,7 @@ import (
 type Client interface {
 	GenerateEmbeddings(ctx context.Context, text string) ([]float32, error)
 	GenerateCompletion(ctx context.Context, prompt string) (string, error)
+	Health(ctx context.Context) error
 }
 
 type EmbeddingRequest struct {

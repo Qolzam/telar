@@ -30,10 +30,10 @@ type QueryRequest struct {
 
 // QueryResponse represents a knowledge query response
 type QueryResponse struct {
-	Answer           string                    `json:"answer"`
-	Sources          []*weaviate.SearchResult  `json:"sources"`
-	ContextUsed      string                    `json:"context_used"`
-	RelevanceScore   float32                   `json:"relevance_score"`
+	Answer         string                   `json:"answer"`
+	Sources        []*weaviate.SearchResult `json:"sources"`
+	ContextUsed    string                   `json:"context_used"`
+	RelevanceScore float32                  `json:"relevance_score"`
 }
 
 // DocumentRequest represents a document storage request
@@ -131,9 +131,7 @@ func (s *Service) HealthCheck(ctx context.Context) error {
 		return fmt.Errorf("vector database health check failed: %w", err)
 	}
 
-	// Test LLM connectivity
-	_, err := s.llmClient.GenerateEmbeddings(ctx, "health check test")
-	if err != nil {
+	if err := s.llmClient.Health(ctx); err != nil {
 		return fmt.Errorf("LLM health check failed: %w", err)
 	}
 

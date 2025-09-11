@@ -3,6 +3,7 @@ package weaviate
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	"github.com/weaviate/weaviate-go-client/v4/weaviate"
 	"github.com/weaviate/weaviate-go-client/v4/weaviate/auth"
@@ -32,8 +33,14 @@ type SearchResult struct {
 
 // NewClient creates a new Weaviate client instance
 func NewClient(config Config) (*Client, error) {
+	parsedURL, err := url.Parse(config.URL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Weaviate URL: %w", err)
+	}
+
 	cfg := weaviate.Config{
-		Host: config.URL,
+		Host:   parsedURL.Host,
+		Scheme: parsedURL.Scheme,
 	}
 
 	if config.APIKey != "" {

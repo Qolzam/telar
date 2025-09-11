@@ -84,18 +84,18 @@ func (c *OllamaClient) GenerateEmbeddings(ctx context.Context, text string) ([]f
 	
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %w", err)
+		return nil, fmt.Errorf("ollama service is not available - please ensure ollama is running at %s: %w", c.baseURL, err)
 	}
 	defer resp.Body.Close()
 	
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("ollama API request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 	
 	var embResp ollamaEmbeddingResponse
 	if err := json.NewDecoder(resp.Body).Decode(&embResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+		return nil, fmt.Errorf("failed to decode ollama response: %w", err)
 	}
 	
 	return embResp.Embedding, nil
@@ -136,18 +136,18 @@ func (c *OllamaClient) GenerateCompletion(ctx context.Context, prompt string) (s
 	
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to make request: %w", err)
+		return "", fmt.Errorf("ollama service is not available - please ensure ollama is running at %s: %w", c.baseURL, err)
 	}
 	defer resp.Body.Close()
 	
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("ollama API request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 	
 	var genResp ollamaGenerateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w", err)
+		return "", fmt.Errorf("failed to decode ollama response: %w", err)
 	}
 	
 	return genResp.Response, nil
@@ -164,12 +164,12 @@ func (c *OllamaClient) Health(ctx context.Context) error {
 	
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to make health check request: %w", err)
+		return fmt.Errorf("ollama service is not available at %s - please ensure ollama is running: %w", c.baseURL, err)
 	}
 	defer resp.Body.Close()
 	
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ollama service not healthy, status: %d", resp.StatusCode)
+		return fmt.Errorf("ollama service not healthy at %s, status: %d", c.baseURL, resp.StatusCode)
 	}
 	
 	return nil

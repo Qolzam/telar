@@ -3,6 +3,7 @@ package api
 import (
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -75,6 +76,15 @@ func (h *Handler) Ingest(c *fiber.Ctx) error {
 
 	if err := h.knowledgeService.StoreDocument(c.Context(), docReq); err != nil {
 		log.Printf("Failed to store document: %v", err)
+
+		if strings.Contains(err.Error(), "ollama service is not available") {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"error":   "AI service temporarily unavailable",
+				"details": "Ollama LLM service is not running. Please ensure Ollama is started and accessible.",
+				"code":    "OLLAMA_UNAVAILABLE",
+			})
+		}
+
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error":   "Failed to store document",
 			"details": err.Error(),
@@ -108,6 +118,15 @@ func (h *Handler) Query(c *fiber.Ctx) error {
 	result, err := h.knowledgeService.QueryKnowledge(c.Context(), queryReq)
 	if err != nil {
 		log.Printf("Failed to query knowledge: %v", err)
+
+		if strings.Contains(err.Error(), "ollama service is not available") {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"error":   "AI service temporarily unavailable",
+				"details": "Ollama LLM service is not running. Please ensure Ollama is started and accessible.",
+				"code":    "OLLAMA_UNAVAILABLE",
+			})
+		}
+
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error":   "Failed to process query",
 			"details": err.Error(),
@@ -142,7 +161,7 @@ func (h *Handler) Health(c *fiber.Ctx) error {
 		log.Printf("Knowledge service health check failed: %v", err)
 		services["knowledge"] = "unhealthy"
 		services["details"] = err.Error()
-		
+
 		return c.Status(fiber.StatusServiceUnavailable).JSON(HealthResponse{
 			Status:   "unhealthy",
 			Services: services,
