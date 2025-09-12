@@ -47,7 +47,7 @@ func Load() (*Config, error) {
 	viper.SetDefault("LLM_PROVIDER", "ollama")
 	viper.SetDefault("OLLAMA_BASE_URL", "http://localhost:11434")
 	viper.SetDefault("EMBEDDING_MODEL", "nomic-embed-text")
-	viper.SetDefault("COMPLETION_MODEL", "llama3")
+	viper.SetDefault("COMPLETION_MODEL", "llama3:8b")
 	viper.SetDefault("WEAVIATE_URL", "http://localhost:8080")
 
 	viper.AutomaticEnv()

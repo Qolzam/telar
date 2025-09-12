@@ -34,7 +34,9 @@ func main() {
 	// Initialize dependencies
 	log.Printf("Initializing LLM client with provider: %s", cfg.LLM.Provider)
 	llmClient, err := ollama.NewClient(ollama.Config{
-		BaseURL: cfg.LLM.OllamaBaseURL,
+		BaseURL:         cfg.LLM.OllamaBaseURL,
+		EmbeddingModel:  cfg.LLM.EmbeddingModel,
+		CompletionModel: cfg.LLM.CompletionModel,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create LLM client: %v", err)

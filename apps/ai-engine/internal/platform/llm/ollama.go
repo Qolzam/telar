@@ -35,7 +35,7 @@ func NewOllamaClient(config OllamaConfig) *OllamaClient {
 		config.EmbeddingModel = "nomic-embed-text"
 	}
 	if config.CompletionModel == "" {
-		config.CompletionModel = "llama3"
+		config.CompletionModel = "llama3:8b"
 	}
 	if config.Timeout == 0 {
 		config.Timeout = 30 * time.Second

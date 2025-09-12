@@ -2,11 +2,10 @@ package api
 
 import (
 	"log"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/qolzam/telar/apps/ai-engine/internal/knowledge"
 )
 
@@ -66,7 +65,7 @@ func (h *Handler) Ingest(c *fiber.Ctx) error {
 		})
 	}
 
-	docID := "doc-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	docID := uuid.New().String()
 
 	docReq := &knowledge.DocumentRequest{
 		ID:       docID,
@@ -178,11 +177,4 @@ func (h *Handler) Health(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(response)
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

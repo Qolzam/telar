@@ -58,14 +58,12 @@ HOST=0.0.0.0
 LLM_PROVIDER=ollama
 OLLAMA_BASE_URL=http://host.docker.internal:11434
 EMBEDDING_MODEL=nomic-embed-text
-COMPLETION_MODEL=llama3
+COMPLETION_MODEL=llama3:8b
 
 # Vector Database Configuration
 WEAVIATE_URL=http://weaviate:8080
 WEAVIATE_API_KEY=
 ```
-
-> **Note:** We use `host.docker.internal` for the `OLLAMA_BASE_URL` so the Docker container can reach the Ollama service running on your host machine.
 
 ### 3. Run the Service
 
