@@ -100,7 +100,7 @@ Add a document to the knowledge base.
 *   **Body:**
     ```json
     {
-      "text": "The Telar platform is an open-source social network built with Go and Next.js.",
+      "text": "The Telar is an open-source, AI-powered community platform. Built with Go, Next.js, and architected for Kubernetes.",
       "metadata": {
         "source": "documentation",
         "type": "platform_info"
@@ -112,7 +112,7 @@ Add a document to the knowledge base.
     ```bash
     curl -X POST http://localhost:8000/api/v1/ingest \
     -H "Content-Type: application/json" \
-    -d '{"text": "The Telar platform is an open-source social network built with Go and Next.js.", "metadata": {"source": "documentation"}}'
+    -d '{"text": "The Telar is an open-source, AI-powered community platform. Built with Go, Next.js, and architected for Kubernetes.", "metadata": {"source": "documentation"}}'
     ```
 
 *   **Successful Response:**
@@ -154,7 +154,7 @@ Ask a question and get a synthesized answer based on the ingested content.
       "sources": [
         {
           "id": "doc-abc123...",
-          "text": "The Telar platform is an open-source social network built with Go and Next.js.",
+          "text": "The Telar platform is an open-source community built with Go and Next.js.",
           "score": 0.95,
           "metadata": {
             "source": "documentation"
