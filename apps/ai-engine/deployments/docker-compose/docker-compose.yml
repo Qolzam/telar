@@ -38,7 +38,7 @@ services:
       
       # LLM Configuration
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
-      OLLAMA_BASE_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       COMPLETION_MODEL: ${COMPLETION_MODEL:-llama3:8b}
       
