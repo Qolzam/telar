@@ -13,7 +13,7 @@ import (
 	"github.com/qolzam/telar/apps/ai-engine/internal/api"
 	"github.com/qolzam/telar/apps/ai-engine/internal/config"
 	"github.com/qolzam/telar/apps/ai-engine/internal/knowledge"
-	"github.com/qolzam/telar/apps/ai-engine/internal/platform/llm/ollama"
+	"github.com/qolzam/telar/apps/ai-engine/internal/platform/llm"
 	"github.com/qolzam/telar/apps/ai-engine/internal/platform/weaviate"
 )
 
@@ -33,13 +33,29 @@ func main() {
 
 	// Initialize dependencies
 	log.Printf("Initializing LLM client with provider: %s", cfg.LLM.Provider)
-	llmClient, err := ollama.NewClient(ollama.Config{
-		BaseURL:         cfg.LLM.OllamaBaseURL,
-		EmbeddingModel:  cfg.LLM.EmbeddingModel,
-		CompletionModel: cfg.LLM.CompletionModel,
-	})
-	if err != nil {
-		log.Fatalf("Failed to create LLM client: %v", err)
+	
+	var llmClient llm.Client
+
+	switch cfg.LLM.Provider {
+	case "groq":
+		llmClient, err = llm.NewGroqClient(llm.GroqConfig{
+			APIKey:          cfg.LLM.GroqAPIKey,
+			EmbeddingModel:  cfg.LLM.GroqEmbeddingModel,
+			CompletionModel: cfg.LLM.GroqModel,
+		})
+		if err != nil {
+			log.Fatalf("Failed to create Groq client: %v", err)
+		}
+		log.Println("Using Groq LLM provider")
+	case "ollama":
+		llmClient = llm.NewOllamaClient(llm.OllamaConfig{
+			BaseURL:         cfg.LLM.OllamaBaseURL,
+			EmbeddingModel:  cfg.LLM.EmbeddingModel,
+			CompletionModel: cfg.LLM.CompletionModel,
+		})
+		log.Println("Using Ollama LLM provider")
+	default:
+		log.Fatalf("Invalid LLM_PROVIDER specified: %s (supported: ollama, groq)", cfg.LLM.Provider)
 	}
 
 	log.Printf("Initializing Weaviate client at: %s", cfg.Weaviate.URL)

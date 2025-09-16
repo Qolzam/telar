@@ -60,6 +60,11 @@ OLLAMA_BASE_URL=http://host.docker.internal:11434
 EMBEDDING_MODEL=nomic-embed-text
 COMPLETION_MODEL=llama3:8b
 
+# Groq Provider Settings (for high-performance inference)
+GROQ_API_KEY=your-groq-api-key-here
+GROQ_MODEL=llama3-8b-8192
+GROQ_EMBEDDING_MODEL=text-embedding-3-small
+
 # Vector Database Configuration
 WEAVIATE_URL=http://weaviate:8080
 WEAVIATE_API_KEY=
@@ -177,6 +182,9 @@ This service is built with a focus on performance, flexibility, and production-r
 *   **Core Architectural Pattern:** **Provider-Agnostic LLM Abstraction**
     *   The engine is built around a central Go `interface` defined in `internal/platform/llm/client.go`.
     *   This allows the service to seamlessly switch between different LLM backends via a single configuration change (`LLM_PROVIDER`), without altering the core business logic.
+    *   **Supported Providers:**
+        *   **Ollama**: Local, private, cost-free development and small-scale deployments
+        *   **Groq**: High-performance cloud inference with blazing-fast response times
 
 ---
 
@@ -189,9 +197,10 @@ This project is being developed in deliberate phases to ensure a robust and feat
     -   Build the provider-agnostic `llm.Client` interface.
     -   Implement the **Ollama** client for local, cost-free development.
 
--   [ ] **Phase 2: High-Performance Showcase**
+-   [x] **Phase 2: High-Performance Showcase**
     -   Implement the **Groq** client for high-speed cloud inference.
     -   Create a "wow" demo showcasing near-instant RAG responses.
+    -   Demonstrate hybrid approach: Ollama for embeddings, Groq for inference.
 
 -   [ ] **Phase 3: Enterprise-Ready Refactor**
     -   Implement the **OpenAI** client for commercial API compatibility.

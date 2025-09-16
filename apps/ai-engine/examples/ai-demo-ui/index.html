@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telar AI Engine Demo</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .input-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #007bff;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #007bff;
+        }
+        .loading {
+            text-align: center;
+            color: #666;
+            font-style: italic;
+        }
+        .error {
+            background: #f8d7da;
+            border-left-color: #dc3545;
+            color: #721c24;
+        }
+        .success {
+            background: #d4edda;
+            border-left-color: #28a745;
+            color: #155724;
+        }
+        .provider-info {
+            text-align: center;
+            margin-bottom: 20px;
+            padding: 10px;
+            background: #e9ecef;
+            border-radius: 6px;
+            font-size: 14px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 Telar AI Engine Demo</h1>
+        
+        <div class="provider-info">
+            <strong>Current Provider:</strong> <span id="provider">Loading...</span>
+        </div>
+        
+        <div class="input-group">
+            <label for="question">Ask a question about Telar:</label>
+            <input type="text" id="question" placeholder="e.g., What is Telar built with?" />
+        </div>
+        
+        <button onclick="askQuestion()" id="askBtn">Ask Question</button>
+        
+        <div id="result" class="result" style="display: none;">
+            <div id="resultContent"></div>
+        </div>
+    </div>
+
+    <script>
+        let currentProvider = 'unknown';
+        
+        // check current provider
+        async function checkProvider() {
+            try {
+                const response = await fetch('http://localhost:8000/health');
+                const data = await response.json();
+                
+                // determine provider based on health status
+                if (data.status === 'healthy') {
+                    // if all services are healthy, it's likely Groq (faster)
+                    currentProvider = 'Groq';
+                } else if (data.services?.llm === 'healthy') {
+                    // if only LLM is healthy, it's likely Ollama
+                    currentProvider = 'Ollama';
+                } else {
+                    currentProvider = 'Unknown';
+                }
+                
+                document.getElementById('provider').textContent = currentProvider;
+            } catch (error) {
+                document.getElementById('provider').textContent = 'Unknown';
+            }
+        }
+        
+        async function askQuestion() {
+            const question = document.getElementById('question').value.trim();
+            if (!question) {
+                alert('Please enter a question');
+                return;
+            }
+            
+            const askBtn = document.getElementById('askBtn');
+            const resultDiv = document.getElementById('result');
+            const resultContent = document.getElementById('resultContent');
+            
+            // show loading state
+            askBtn.disabled = true;
+            askBtn.textContent = 'Thinking...';
+            resultDiv.style.display = 'block';
+            resultDiv.className = 'result loading';
+            resultContent.innerHTML = '🤔 Processing your question...';
+            
+            try {
+                const startTime = Date.now();
+                
+                const response = await fetch('http://localhost:8000/api/v1/query', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ question: question })
+                });
+                
+                const endTime = Date.now();
+                const responseTime = endTime - startTime;
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.details || errorData.error || 'Request failed');
+                }
+                
+                const data = await response.json();
+                
+                // show success result
+                resultDiv.className = 'result success';
+                resultContent.innerHTML = `
+                    <h3>Answer:</h3>
+                    <p>${data.answer}</p>
+                    <hr>
+                    <h4>Response Time: ${responseTime}ms</h4>
+                    <h4>Provider: ${currentProvider}</h4>
+                    ${data.sources ? `
+                        <h4>Sources (${data.sources.length}):</h4>
+                        <ul>
+                            ${data.sources.map(source => `
+                                <li>
+                                    <strong>Score:</strong> ${source.score.toFixed(3)}<br>
+                                    <strong>Text:</strong> ${source.text.substring(0, 100)}...
+                                </li>
+                            `).join('')}
+                        </ul>
+                    ` : ''}
+                `;
+                
+            } catch (error) {
+                // show error result
+                resultDiv.className = 'result error';
+                resultContent.innerHTML = `
+                    <h3>Error:</h3>
+                    <p>${error.message}</p>
+                    <hr>
+                    <p><strong>Provider:</strong> ${currentProvider}</p>
+                    <p><strong>Response Time:</strong> ${Date.now() - startTime}ms</p>
+                `;
+            } finally {
+                askBtn.disabled = false;
+                askBtn.textContent = 'Ask Question';
+            }
+        }
+        
+        // allow Enter key to submit
+        document.getElementById('question').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                askQuestion();
+            }
+        });
+        
+        // initialize
+        checkProvider();
+    </script>
+</body>
+</html>

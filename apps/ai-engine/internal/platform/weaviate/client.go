@@ -8,6 +8,7 @@ import (
 	"github.com/weaviate/weaviate-go-client/v4/weaviate"
 	"github.com/weaviate/weaviate-go-client/v4/weaviate/auth"
 	"github.com/weaviate/weaviate-go-client/v4/weaviate/graphql"
+	"github.com/weaviate/weaviate/entities/models"
 )
 
 // Client wraps the Weaviate Go client with AI Engine specific functionality
@@ -58,16 +59,24 @@ func NewClient(config Config) (*Client, error) {
 
 // StoreDocument saves a document with its vector embedding to Weaviate
 func (c *Client) StoreDocument(ctx context.Context, doc *Document, embedding []float32) error {
-	creator := c.client.Data().Creator().
-		WithClassName("Document").
-		WithID(doc.ID).
-		WithProperties(map[string]interface{}{
-			"text":     doc.Text,
-			"metadata": doc.Metadata,
-		}).
-		WithVector(embedding)
+	// extract source from metadata, provide a default if not present
+	source, ok := doc.Metadata["source"]
+	if !ok {
+		source = "unknown"
+	}
+	
+	properties := map[string]interface{}{
+		"text":   doc.Text,
+		"source": source,
+	}
 
-	_, err := creator.Do(ctx)
+	_, err := c.client.Data().Creator().
+		WithClassName("Document").
+		// withID is optional, Weaviate can generate one
+		WithProperties(properties).
+		WithVector(embedding).
+		Do(ctx)
+
 	if err != nil {
 		return fmt.Errorf("failed to store document: %w", err)
 	}
@@ -77,92 +86,73 @@ func (c *Client) StoreDocument(ctx context.Context, doc *Document, embedding []f
 
 // SearchSimilar finds documents similar to the query embedding using vector similarity search
 func (c *Client) SearchSimilar(ctx context.Context, embedding []float32, limit int) ([]*SearchResult, error) {
+	className := "Document"
 	if limit <= 0 {
 		limit = 5
 	}
 
-	// TODO: implementing proper vector similarity search
-	result, err := c.client.GraphQL().Get().
-		WithClassName("Document").
-		WithLimit(limit).
-		WithFields(
-			graphql.Field{Name: "text"},
-			graphql.Field{Name: "metadata", Fields: []graphql.Field{
-				{Name: "source"},
-			}},
-		).
-		Do(ctx)
+	// define the fields we want to retrieve
+	fields := []graphql.Field{
+		graphql.Field{Name: "text"},
+		graphql.Field{Name: "metadata", Fields: []graphql.Field{
+			{Name: "source"},
+		}},
+		graphql.Field{Name: "_additional", Fields: []graphql.Field{
+			{Name: "id"},
+			{Name: "certainty"}, // certainty is Weaviate's score (0 to 1)
+		}},
+	}
 
+	// build the nearVector operator
+	nearVector := c.client.GraphQL().NearVectorArgBuilder().
+		WithVector(embedding)
+
+	// execute the query
+	response, err := c.client.GraphQL().Get().
+		WithClassName(className).
+		WithFields(fields...).
+		WithNearVector(nearVector).
+		WithLimit(limit).
+		Do(ctx)
 	if err != nil {
-		return []*SearchResult{
-			{
-				Document: &Document{
-					ID:   "error-fallback",
-					Text: fmt.Sprintf("Search error: %v", err),
-					Metadata: map[string]string{
-						"source": "error-fallback",
-						"error":  err.Error(),
-					},
-				},
-				Score: 0.1,
-			},
-		}, nil
+		return nil, fmt.Errorf("failed to perform vector search: %w", err)
 	}
 
 	var searchResults []*SearchResult
+	if getResult, ok := response.Data["Get"].(map[string]interface{}); ok {
+		if documents, ok := getResult[className].([]interface{}); ok {
+			for _, docRaw := range documents {
+				docMap := docRaw.(map[string]interface{})
 
-	if result.Data != nil {
-		if getResult, ok := result.Data["Get"].(map[string]interface{}); ok {
-			if documents, ok := getResult["Document"].([]interface{}); ok {
-				for i, doc := range documents {
-					docMap := doc.(map[string]interface{})
-
-					text, _ := docMap["text"].(string)
-
-					metadata := map[string]string{
-						"source": "weaviate-search",
+				text := docMap["text"].(string)
+				
+				// extract source from nested metadata structure
+				source := "unknown"
+				if metadata, ok := docMap["metadata"].(map[string]interface{}); ok {
+					if sourceVal, ok := metadata["source"].(string); ok {
+						source = sourceVal
 					}
-					if metadataObj, ok := docMap["metadata"].(map[string]interface{}); ok {
-						if source, ok := metadataObj["source"].(string); ok {
-							metadata["source"] = source
-						}
-					}
-
-					// TODO: implement proper vector search
-					score := 1.0 - (float32(i) * 0.1)
-					if score < 0.1 {
-						score = 0.1
-					}
-
-					docID := fmt.Sprintf("doc-%d", i)
-
-					searchResults = append(searchResults, &SearchResult{
-						Document: &Document{
-							ID:       docID,
-							Text:     text,
-							Metadata: metadata,
-						},
-						Score: score,
-					})
 				}
+
+				var id string
+				var certainty float32
+				if additional, ok := docMap["_additional"].(map[string]interface{}); ok {
+					id = additional["id"].(string)
+					certainty = float32(additional["certainty"].(float64))
+				}
+
+				searchResults = append(searchResults, &SearchResult{
+					Document: &Document{
+						ID:   id,
+						Text: text,
+						Metadata: map[string]string{
+							"source": source,
+						},
+					},
+					Score: certainty,
+				})
 			}
 		}
-	}
-
-	if len(searchResults) == 0 {
-		return []*SearchResult{
-			{
-				Document: &Document{
-					ID:   "no-results-found",
-					Text: "No documents found in the knowledge base. The Weaviate vector search completed but returned no results.",
-					Metadata: map[string]string{
-						"source": "system-message",
-						"note":   "Documents may exist but vector similarity search returned empty",
-					},
-				},
-				Score: 0.1,
-			},
-		}, nil
 	}
 
 	return searchResults, nil
@@ -184,12 +174,41 @@ func (c *Client) Health(ctx context.Context) error {
 
 // EnsureSchema creates the required Weaviate schema for AI Engine
 func (c *Client) EnsureSchema(ctx context.Context) error {
+	className := "Document"
 
-	// TODO: explicitly define the schema
-
-	_, err := c.client.Schema().Getter().Do(ctx)
+	// check if the class already exists
+	exists, err := c.client.Schema().ClassExistenceChecker().WithClassName(className).Do(ctx)
 	if err != nil {
+		return fmt.Errorf("failed to check class existence: %w", err)
+	}
+	if exists {
+		// class already exists, no need to create it
 		return nil
+	}
+
+	// define the class object
+	classObj := &models.Class{
+		Class:       className,
+		Description: "A document containing text and metadata for the AI Engine",
+		Vectorizer:  "none", // VERY IMPORTANT: We provide our own vectors
+		Properties: []*models.Property{
+			{
+				Name:        "text",
+				DataType:    []string{"text"},
+				Description: "The main content of the document",
+			},
+			{
+				Name:        "source",
+				DataType:    []string{"text"},
+				Description: "The source of the document (e.g., URL, filename)",
+			},
+		},
+	}
+
+	// create the class
+	err = c.client.Schema().ClassCreator().WithClass(classObj).Do(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create schema: %w", err)
 	}
 
 	return nil

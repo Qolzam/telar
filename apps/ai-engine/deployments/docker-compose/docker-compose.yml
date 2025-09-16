@@ -42,6 +42,11 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       COMPLETION_MODEL: ${COMPLETION_MODEL:-llama3:8b}
       
+      # Groq Configuration
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-llama3-8b-8192}
+      GROQ_EMBEDDING_MODEL: ${GROQ_EMBEDDING_MODEL:-text-embedding-3-small}
+      
       # Vector Database Configuration
       WEAVIATE_URL: "http://weaviate:8080"
       WEAVIATE_API_KEY: ${WEAVIATE_API_KEY:-}

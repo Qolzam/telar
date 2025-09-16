@@ -27,6 +27,8 @@ type LLMConfig struct {
 	Provider        string `json:"provider"`
 	OpenAIAPIKey    string `json:"openai_api_key,omitempty"`
 	GroqAPIKey      string `json:"groq_api_key,omitempty"`
+	GroqModel       string `json:"groq_model,omitempty"`
+	GroqEmbeddingModel string `json:"groq_embedding_model,omitempty"`
 	OllamaBaseURL   string `json:"ollama_base_url,omitempty"`
 	EmbeddingModel  string `json:"embedding_model,omitempty"`
 	CompletionModel string `json:"completion_model,omitempty"`
@@ -48,6 +50,8 @@ func Load() (*Config, error) {
 	viper.SetDefault("OLLAMA_BASE_URL", "http://localhost:11434")
 	viper.SetDefault("EMBEDDING_MODEL", "nomic-embed-text")
 	viper.SetDefault("COMPLETION_MODEL", "llama3:8b")
+	viper.SetDefault("GROQ_MODEL", "llama3-8b-8192")
+	viper.SetDefault("GROQ_EMBEDDING_MODEL", "text-embedding-3-small")
 	viper.SetDefault("WEAVIATE_URL", "http://localhost:8080")
 
 	viper.AutomaticEnv()
@@ -63,6 +67,8 @@ func Load() (*Config, error) {
 			Provider:        viper.GetString("LLM_PROVIDER"),
 			OpenAIAPIKey:    viper.GetString("OPENAI_API_KEY"),
 			GroqAPIKey:      viper.GetString("GROQ_API_KEY"),
+			GroqModel:       viper.GetString("GROQ_MODEL"),
+			GroqEmbeddingModel: viper.GetString("GROQ_EMBEDDING_MODEL"),
 			OllamaBaseURL:   viper.GetString("OLLAMA_BASE_URL"),
 			EmbeddingModel:  viper.GetString("EMBEDDING_MODEL"),
 			CompletionModel: viper.GetString("COMPLETION_MODEL"),
