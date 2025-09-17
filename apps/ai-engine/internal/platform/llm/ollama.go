@@ -18,6 +18,10 @@ type OllamaClient struct {
 	completionModel string
 }
 
+// Ensure OllamaClient satisfies both interfaces
+var _ EmbeddingClient = (*OllamaClient)(nil)
+var _ CompletionClient = (*OllamaClient)(nil)
+
 // OllamaConfig contains Ollama client configuration
 type OllamaConfig struct {
 	BaseURL         string

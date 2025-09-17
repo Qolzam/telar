@@ -94,9 +94,7 @@ func (c *Client) SearchSimilar(ctx context.Context, embedding []float32, limit i
 	// define the fields we want to retrieve
 	fields := []graphql.Field{
 		graphql.Field{Name: "text"},
-		graphql.Field{Name: "metadata", Fields: []graphql.Field{
-			{Name: "source"},
-		}},
+		graphql.Field{Name: "source"}, // source is stored directly, not in metadata
 		graphql.Field{Name: "_additional", Fields: []graphql.Field{
 			{Name: "id"},
 			{Name: "certainty"}, // certainty is Weaviate's score (0 to 1)
@@ -126,12 +124,10 @@ func (c *Client) SearchSimilar(ctx context.Context, embedding []float32, limit i
 
 				text := docMap["text"].(string)
 				
-				// extract source from nested metadata structure
+				// extract source 
 				source := "unknown"
-				if metadata, ok := docMap["metadata"].(map[string]interface{}); ok {
-					if sourceVal, ok := metadata["source"].(string); ok {
-						source = sourceVal
-					}
+				if sourceVal, ok := docMap["source"].(string); ok {
+					source = sourceVal
 				}
 
 				var id string

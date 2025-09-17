@@ -9,18 +9,18 @@ import (
 	"time"
 )
 
-// GroqClient implements the Client interface for the Groq API.
+
 type GroqClient struct {
-	apiKey         string
-	httpClient     *http.Client
-	embeddingModel string
+	apiKey          string
+	httpClient      *http.Client
 	completionModel string
 }
+
+var _ CompletionClient = (*GroqClient)(nil)
 
 // GroqConfig contains Groq client configuration
 type GroqConfig struct {
 	APIKey          string
-	EmbeddingModel  string
 	CompletionModel string
 	Timeout         time.Duration
 }
@@ -40,7 +40,6 @@ func NewGroqClient(config GroqConfig) (*GroqClient, error) {
 	return &GroqClient{
 		apiKey:          config.APIKey,
 		httpClient:      &http.Client{Timeout: config.Timeout},
-		embeddingModel:  config.EmbeddingModel,
 		completionModel: config.CompletionModel,
 	}, nil
 }
@@ -64,17 +63,6 @@ type groqCompletionResponse struct {
 	Usage *Usage `json:"usage,omitempty"`
 }
 
-type groqEmbeddingRequest struct {
-	Model string `json:"model"`
-	Input string `json:"input"`
-}
-
-type groqEmbeddingResponse struct {
-	Data []struct {
-		Embedding []float32 `json:"embedding"`
-	} `json:"data"`
-	Usage *Usage `json:"usage,omitempty"`
-}
 
 // GenerateCompletion sends a prompt to the Groq API and gets a completion.
 func (c *GroqClient) GenerateCompletion(ctx context.Context, prompt string) (string, error) {
@@ -124,57 +112,6 @@ func (c *GroqClient) GenerateCompletion(ctx context.Context, prompt string) (str
 	return groqResp.Choices[0].Message.Content, nil
 }
 
-// GenerateEmbeddings sends text to the Groq API and gets embeddings.
-// Note: Groq supports embeddings through their OpenAI-compatible API
-func (c *GroqClient) GenerateEmbeddings(ctx context.Context, text string) ([]float32, error) {
-	// For this implementation, we'll use Groq's embedding support
-	// If no embedding model is specified, we'll return an error to highlight the architectural point
-	if c.embeddingModel == "" {
-		return nil, fmt.Errorf("Groq client requires embedding model to be configured; set GROQ_EMBEDDING_MODEL environment variable")
-	}
-
-	apiURL := "https://api.groq.com/openai/v1/embeddings"
-
-	reqBody := groqEmbeddingRequest{
-		Model: c.embeddingModel,
-		Input: text,
-	}
-
-	jsonBody, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal groq embedding request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(jsonBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create groq embedding request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send embedding request to groq: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := json.Marshal(resp.Body)
-		return nil, fmt.Errorf("groq embedding API returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var groqResp groqEmbeddingResponse
-	if err := json.NewDecoder(resp.Body).Decode(&groqResp); err != nil {
-		return nil, fmt.Errorf("failed to decode groq embedding response: %w", err)
-	}
-
-	if len(groqResp.Data) == 0 {
-		return nil, fmt.Errorf("received no embedding data from groq")
-	}
-
-	return groqResp.Data[0].Embedding, nil
-}
 
 // Health checks Groq service availability
 func (c *GroqClient) Health(ctx context.Context) error {

@@ -12,7 +12,8 @@ import (
 
 // Service provides knowledge management and retrieval functionality
 type Service struct {
-	llmClient      llm.Client
+	embedClient    llm.EmbeddingClient
+	compClient     llm.CompletionClient
 	vectorClient   *weaviate.Client
 	embeddingModel string
 }
@@ -44,9 +45,10 @@ type DocumentRequest struct {
 }
 
 // NewService creates a new knowledge service instance
-func NewService(llmClient llm.Client, vectorClient *weaviate.Client, config Config) *Service {
+func NewService(embedClient llm.EmbeddingClient, compClient llm.CompletionClient, vectorClient *weaviate.Client, config Config) *Service {
 	return &Service{
-		llmClient:      llmClient,
+		embedClient:    embedClient,
+		compClient:     compClient,
 		vectorClient:   vectorClient,
 		embeddingModel: config.EmbeddingModel,
 	}
@@ -56,7 +58,7 @@ func NewService(llmClient llm.Client, vectorClient *weaviate.Client, config Conf
 func (s *Service) StoreDocument(ctx context.Context, req *DocumentRequest) error {
 	log.Printf("Storing document: %s", req.ID)
 
-	embedding, err := s.llmClient.GenerateEmbeddings(ctx, req.Text)
+	embedding, err := s.embedClient.GenerateEmbeddings(ctx, req.Text)
 	if err != nil {
 		return fmt.Errorf("failed to generate embeddings: %w", err)
 	}
@@ -79,8 +81,7 @@ func (s *Service) StoreDocument(ctx context.Context, req *DocumentRequest) error
 func (s *Service) QueryKnowledge(ctx context.Context, req *QueryRequest) (*QueryResponse, error) {
 	log.Printf("Processing knowledge query: %s", req.Query)
 
-	// Generate query embeddings
-	queryEmbedding, err := s.llmClient.GenerateEmbeddings(ctx, req.Query)
+	queryEmbedding, err := s.embedClient.GenerateEmbeddings(ctx, req.Query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate query embeddings: %w", err)
 	}
@@ -106,10 +107,9 @@ func (s *Service) QueryKnowledge(ctx context.Context, req *QueryRequest) (*Query
 
 	context := strings.Join(contextParts, "\n\n")
 
-	// Generate answer using LLM with retrieved context
 	prompt := s.buildRAGPrompt(req.Query, context, req.Context)
 
-	completion, err := s.llmClient.GenerateCompletion(ctx, prompt)
+	completion, err := s.compClient.GenerateCompletion(ctx, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate completion: %w", err)
 	}
@@ -131,8 +131,12 @@ func (s *Service) HealthCheck(ctx context.Context) error {
 		return fmt.Errorf("vector database health check failed: %w", err)
 	}
 
-	if err := s.llmClient.Health(ctx); err != nil {
-		return fmt.Errorf("LLM health check failed: %w", err)
+	if err := s.embedClient.Health(ctx); err != nil {
+		return fmt.Errorf("embedding client health check failed: %w", err)
+	}
+
+	if err := s.compClient.Health(ctx); err != nil {
+		return fmt.Errorf("completion client health check failed: %w", err)
 	}
 
 	return nil

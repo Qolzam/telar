@@ -31,31 +31,41 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Initialize dependencies
-	log.Printf("Initializing LLM client with provider: %s", cfg.LLM.Provider)
+	log.Println("=== Initializing Hybrid LLM Architecture ===")
 	
-	var llmClient llm.Client
 
-	switch cfg.LLM.Provider {
+	log.Printf("Initializing Ollama embedding client at: %s", cfg.LLM.OllamaBaseURL)
+	embeddingClient := llm.NewOllamaClient(llm.OllamaConfig{
+		BaseURL:         cfg.LLM.OllamaBaseURL,
+		EmbeddingModel:  cfg.LLM.EmbeddingModel,
+		CompletionModel: cfg.LLM.CompletionModel,
+	})
+	log.Printf("✓ Embedding provider: Ollama (model: %s)", cfg.LLM.EmbeddingModel)
+
+	var completionClient llm.CompletionClient
+	completionProvider := cfg.LLM.CompletionProvider
+	if completionProvider == "" {
+		// fall back to legacy provider field for backward compatibility
+		completionProvider = cfg.LLM.Provider
+	}
+
+	log.Printf("Initializing completion client with provider: %s", completionProvider)
+	switch completionProvider {
 	case "groq":
-		llmClient, err = llm.NewGroqClient(llm.GroqConfig{
+		completionClient, err = llm.NewGroqClient(llm.GroqConfig{
 			APIKey:          cfg.LLM.GroqAPIKey,
-			EmbeddingModel:  cfg.LLM.GroqEmbeddingModel,
 			CompletionModel: cfg.LLM.GroqModel,
 		})
 		if err != nil {
-			log.Fatalf("Failed to create Groq client: %v", err)
+			log.Fatalf("Failed to create Groq completion client: %v", err)
 		}
-		log.Println("Using Groq LLM provider")
+		log.Printf("✓ Completion provider: Groq (model: %s)", cfg.LLM.GroqModel)
 	case "ollama":
-		llmClient = llm.NewOllamaClient(llm.OllamaConfig{
-			BaseURL:         cfg.LLM.OllamaBaseURL,
-			EmbeddingModel:  cfg.LLM.EmbeddingModel,
-			CompletionModel: cfg.LLM.CompletionModel,
-		})
-		log.Println("Using Ollama LLM provider")
+		// reuse the same Ollama client for completions
+		completionClient = embeddingClient
+		log.Printf("✓ Completion provider: Ollama (model: %s)", cfg.LLM.CompletionModel)
 	default:
-		log.Fatalf("Invalid LLM_PROVIDER specified: %s (supported: ollama, groq)", cfg.LLM.Provider)
+		log.Fatalf("Invalid COMPLETION_PROVIDER specified: %s (supported: ollama, groq)", completionProvider)
 	}
 
 	log.Printf("Initializing Weaviate client at: %s", cfg.Weaviate.URL)
@@ -71,10 +81,11 @@ func main() {
 		log.Printf("Warning: Failed to ensure Weaviate schema: %v", err)
 	}
 
-	log.Printf("Initializing knowledge service with embedding model: %s", cfg.LLM.EmbeddingModel)
-	knowledgeService := knowledge.NewService(llmClient, weaviateClient, knowledge.Config{
+	log.Printf("Initializing hybrid knowledge service...")
+	knowledgeService := knowledge.NewService(embeddingClient, completionClient, weaviateClient, knowledge.Config{
 		EmbeddingModel: cfg.LLM.EmbeddingModel,
 	})
+	log.Println("✓ Knowledge service initialized with specialized clients")
 
 	// Health check before startup
 	log.Println("Performing health checks...")
@@ -91,7 +102,7 @@ func main() {
 	go func() {
 		addr := fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port)
 		log.Printf("Starting %s %s on %s", serviceName, serviceVersion, addr)
-		log.Printf("LLM Provider: %s", cfg.LLM.Provider)
+		log.Printf("Architecture: Hybrid (Embedding: Ollama, Completion: %s)", completionProvider)
 		log.Printf("Weaviate URL: %s", cfg.Weaviate.URL)
 		
 		if err := app.Listen(addr); err != nil {

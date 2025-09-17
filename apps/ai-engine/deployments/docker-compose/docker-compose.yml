@@ -34,18 +34,21 @@ services:
       # Server Configuration
       PORT: ${SERVER_PORT:-8000}
       HOST: "0.0.0.0"
-      SERVER_ENV: "development"
+      SERVER_HOST: ${SERVER_HOST:-localhost}
+      SERVER_ENV: ${SERVER_ENV:-development}
       
-      # LLM Configuration
-      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      # Hybrid LLM Configuration
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}                   
+      COMPLETION_PROVIDER: ${COMPLETION_PROVIDER:-ollama} 
+      
+      # Ollama Configuration 
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       COMPLETION_MODEL: ${COMPLETION_MODEL:-llama3:8b}
       
-      # Groq Configuration
+      # Groq Configuration (Optional completion provider)
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GROQ_MODEL: ${GROQ_MODEL:-llama3-8b-8192}
-      GROQ_EMBEDDING_MODEL: ${GROQ_EMBEDDING_MODEL:-text-embedding-3-small}
       
       # Vector Database Configuration
       WEAVIATE_URL: "http://weaviate:8080"
