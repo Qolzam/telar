@@ -1,190 +1,99 @@
+
 # AI Engine
 
 ## 🎯 Core Responsibility
 
-The AI Engine is a standalone Go microservice responsible for all Retrieval-Augmented Generation (RAG) and Large Language Model (LLM) operations within the Telar platform.
+The AI Engine is a standalone Go microservice responsible for all Large Language Model (LLM) operations within the Telar platform, including Retrieval-Augmented Generation (RAG).
 
-Its primary purpose is to decouple the core social platform from the complexities of AI orchestration, allowing for independent scaling, development, and flexible integration with various AI providers. It provides a simple, stateless API for ingesting knowledge and answering questions based on that knowledge.
+Its primary purpose is to decouple the core social platform from the complexities of AI orchestration. This allows for independent scaling, development, and a flexible, provider-agnostic architecture that can adapt to any deployment need, from fully local and private to enterprise-grade cloud native.
 
 ---
 
 ## 🏁 Getting Started
 
-This service is designed to run locally using Docker and Ollama.
+This guide provides the steps to get the AI Engine and its dependencies running locally with a single command.
 
 ### Prerequisites
 
 1.  **Docker & Docker Compose:** [Install Docker](https://docs.docker.com/get-docker/)
-2.  **Ollama:** [Install Ollama](https://ollama.com/)
+2.  **Ollama:** [Install Ollama](https://ollama.com/) (Required for local development scenarios)
 
-### 1. Pull the Necessary AI Models
+### 1. Configure Your Environment
 
-For the RAG pipeline to function, you need two types of models: one for generating embeddings and one for generating chat responses.
-
-**Important**: Ollama must be running to pull models and to use the AI features:
+First, copy the example environment file from the deployment directory to the repository root.
 
 ```bash
-# Start Ollama service first
-ollama serve
+# Run this from the root of the 'telar' repository
+cp apps/ai-engine/deployments/docker-compose/.env.example .env
 ```
 
-Then in a new terminal, pull the required models:
+Now, open the `.env` file and configure your desired AI providers. For a quick start, the default "Fully Local" scenario requires no changes. For other scenarios (like using Groq or OpenAI), you must add your API keys.
+
+### 2. Run the Service
+
+With your configuration in place, start the entire AI Engine stack.
 
 ```bash
-# Pull the recommended embedding model
-ollama pull nomic-embed-text
-
-# Pull the recommended chat model
-ollama pull llama3:8b
-```
-
-### 2. Configure Environment Variables
-
-Copy the example environment file and modify as needed:
-
-```bash
-cd apps/ai-engine/deployments/docker-compose/
-cp .env.example .env
-```
-
-Key environment variables for the AI Engine:
-
-```ini
-# Server Configuration
-PORT=8000
-HOST=0.0.0.0
-
-# LLM Provider Configuration
-LLM_PROVIDER=ollama
-OLLAMA_BASE_URL=http://host.docker.internal:11434
-EMBEDDING_MODEL=nomic-embed-text
-COMPLETION_MODEL=llama3:8b
-
-# Groq Provider Settings (for high-performance inference)
-GROQ_API_KEY=your-groq-api-key-here
-GROQ_MODEL=llama3-8b-8192
-GROQ_EMBEDDING_MODEL=text-embedding-3-small
-
-# Vector Database Configuration
-WEAVIATE_URL=http://weaviate:8080
-WEAVIATE_API_KEY=
-```
-
-### 3. Run the Service
-
-You can run the AI Engine and its required database from the docker-compose directory:
-
-```bash
-cd apps/ai-engine/deployments/docker-compose/
-docker compose up
+# This command must be run from the root of the 'telar' repository
+docker-compose -f apps/ai-engine/deployments/docker-compose/docker-compose.yml up --build -d
 ```
 
 The AI Engine API will now be available at `http://localhost:8000`.
 
----
+### 3. Test the System
 
-## ⚙️ API Usage
 
-Interact with the engine using its REST API. All endpoints are prefixed with `/api/v1`.
+You can test the API directly with `curl`. Ensure Ollama is running if you are using it as a provider.
 
-### Health Check
+```bash
+# Health check
+curl http://localhost:8000/health
 
-Check if the service and its dependencies are running correctly.
+# Ingest a document
+curl -X POST http://localhost:8000/api/v1/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"text": "The Telar platform is built with Go and Next.js.", "metadata": {"source": "docs"}}'
 
-*   **Endpoint:** `GET /health`
-*   **Example `curl`:**
-    ```bash
-    curl http://localhost:8000/health
-    ```
-
-### Ingest Content
-
-Add a document to the knowledge base.
-
-*   **Endpoint:** `POST /api/v1/ingest`
-*   **Body:**
-    ```json
-    {
-      "text": "The Telar is an open-source, AI-powered community platform. Built with Go, Next.js, and architected for Kubernetes.",
-      "metadata": {
-        "source": "documentation",
-        "type": "platform_info"
-      }
-    }
-    ```
-
-*   **Example `curl`:**
-    ```bash
-    curl -X POST http://localhost:8000/api/v1/ingest \
-    -H "Content-Type: application/json" \
-    -d '{"text": "The Telar is an open-source, AI-powered community platform. Built with Go, Next.js, and architected for Kubernetes.", "metadata": {"source": "documentation"}}'
-    ```
-
-*   **Successful Response:**
-    ```json
-    {
-      "status": "success",
-      "message": "Document ingested successfully",
-      "id": "doc-abc123..."
-    }
-    ```
-
-### Query the Knowledge Base
-
-Ask a question and get a synthesized answer based on the ingested content.
-
-*   **Endpoint:** `POST /api/v1/query`
-*   **Body:**
-    ```json
-    {
-      "question": "What is Telar built with?",
-      "limit": 5,
-      "context": {
-        "user_intent": "technical_inquiry"
-      }
-    }
-    ```
-
-*   **Example `curl`:**
-    ```bash
-    curl -X POST http://localhost:8000/api/v1/query \
-    -H "Content-Type: application/json" \
-    -d '{"question": "What is Telar built with?"}'
-    ```
-
-*   **Successful Response:**
-    ```json
-    {
-      "answer": "The Telar platform is built using Go and Next.js.",
-      "sources": [
-        {
-          "id": "doc-abc123...",
-          "text": "The Telar platform is an open-source community built with Go and Next.js.",
-          "score": 0.95,
-          "metadata": {
-            "source": "documentation"
-          }
-        }
-      ]
-    }
-    ```
+# Query the knowledge base
+curl -X POST http://localhost:8000/api/v1/query \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What is Telar built with?"}'
+```
 
 ---
 
-## 🛠️ Tech Stack & Design
+## 🏛️ Architecture & Tech Stack
 
-This service is built with a focus on performance, flexibility, and production-readiness.
+This service is architected for performance, flexibility, and production-readiness.
 
 *   **Language:** Go (Golang)
 *   **Web Framework:** Fiber
-*   **Configuration:** Viper (from environment variables)
-*   **Vector Database Client:** Weaviate Go Client
-*   **Core Architectural Pattern:** **Provider-Agnostic LLM Abstraction**
-    *   The engine is built around a central Go `interface` defined in `internal/platform/llm/client.go`.
-    *   This allows the service to seamlessly switch between different LLM backends via a single configuration change (`LLM_PROVIDER`), without altering the core business logic.
-    *   **Supported Providers:**
-        *   **Ollama**: Local, private, cost-free development and small-scale deployments
-        *   **Groq**: High-performance cloud inference with blazing-fast response times
+*   **LLM Orchestration:** LangChainGo for prompt management and LLM abstraction
+*   **Core Architectural Pattern:** **Fully Provider-Agnostic LLM Architecture**
+    *   The engine features **independently configurable backends** for both embedding and completion tasks, allowing a user to mix and match providers based on specific needs (cost, performance, privacy).
+    *   **Embedding Providers:** Ollama (local), OpenAI (cloud)
+    *   **Completion Providers:** Ollama (local), Groq (high-speed cloud), OpenAI (enterprise cloud), OpenRouter (cost-effective cloud)
+
+### In-Depth Architectural Documentation
+
+For a complete breakdown of the system design, data flows, and deployment scenarios, please see our comprehensive documentation:
+
+*   **[📄 Comprehensive Flow Analysis](./docs/comprehensive-flow-analysis.md)** - The complete technical analysis with data flow diagrams and performance matrices.
+*   **[⚙️ Configuration Guide](./docs/configuration-guide.md)** - A step-by-step setup guide for all supported deployment scenarios.
+*   **[🎨 Visual Flow Diagrams](./docs/visual-flow-diagrams.md)** - At-a-glance diagrams of the system architecture.
+
+### Supported Deployment Scenarios
+
+The AI Engine supports multiple deployment scenarios, each optimized for a different use case.
+
+| Scenario | Embedding | Completion | Use Case | Performance | Cost |
+|:---|:---|:---|:---|:---|:---|
+| **Local Development** | Ollama | Ollama | Development & Testing | Medium | Free |
+| **High-Speed Hybrid** | Ollama | Groq | Demos & Prototyping | Ultra-Fast | Low |
+| **Enterprise Production** | OpenAI | OpenAI | Production Workloads | High | High |
+| **Mixed Enterprise** | OpenAI | Groq | High-Speed Production | Ultra-Fast | High |
+
+> **📚 For complete details on all scenarios, see our [Configuration Guide](./docs/configuration-guide.md)**.
 
 ---
 
@@ -192,17 +101,15 @@ This service is built with a focus on performance, flexibility, and production-r
 
 This project is being developed in deliberate phases to ensure a robust and feature-complete architecture.
 
--   [x] **Phase 1: Local-First Foundation**
-    -   Implement manual RAG pipeline.
-    -   Build the provider-agnostic `llm.Client` interface.
-    -   Implement the **Ollama** client for local, cost-free development.
+-   [x] **Phase 1: Local-First Foundation** - Implemented a manual RAG pipeline with a provider-agnostic interface using Ollama.
+-   [x] **Phase 2: High-Performance Showcase** - Integrated the Groq client and evolved the architecture to a specialized hybrid model (embeddings vs. completions).
+-   [x] **Phase 3: Enterprise-Ready Refactor** - Integrated OpenAI, refactored orchestration to LangChainGo, and built a comprehensive, enterprise-grade testing suite.
+-   [ ] **Phase 4: Product-First Feature Launch** - Leverage the engine to build the first user-facing AI feature: the "Community Ignition Toolkit" for generating high-quality conversation starters.
 
--   [x] **Phase 2: High-Performance Showcase**
-    -   Implement the **Groq** client for high-speed cloud inference.
-    -   Create a "wow" demo showcasing near-instant RAG responses.
-    -   Demonstrate hybrid approach: Ollama for embeddings, Groq for inference.
+---
 
--   [ ] **Phase 3: Enterprise-Ready Refactor**
-    -   Implement the **OpenAI** client for commercial API compatibility.
-    -   Refactor the manual RAG orchestration to use **LangChainGo**.
-    -   Add comprehensive unit tests with mocked interfaces.
+## 🔧 Troubleshooting & Support
+
+For common issues and solutions, please refer to the troubleshooting section in our detailed **[Configuration Guide](./docs/configuration-guide.md)**.
+
+```

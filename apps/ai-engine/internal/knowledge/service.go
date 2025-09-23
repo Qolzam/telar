@@ -8,13 +8,15 @@ import (
 
 	"github.com/qolzam/telar/apps/ai-engine/internal/platform/llm"
 	"github.com/qolzam/telar/apps/ai-engine/internal/platform/weaviate"
+	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/prompts"
 )
 
 // Service provides knowledge management and retrieval functionality
 type Service struct {
-	embedClient    llm.EmbeddingClient
-	compClient     llm.CompletionClient
-	vectorClient   *weaviate.Client
+	embedClient  llm.EmbeddingClient
+	compClient   llms.Model
+	vectorClient *weaviate.Client
 	embeddingModel string
 }
 
@@ -45,7 +47,7 @@ type DocumentRequest struct {
 }
 
 // NewService creates a new knowledge service instance
-func NewService(embedClient llm.EmbeddingClient, compClient llm.CompletionClient, vectorClient *weaviate.Client, config Config) *Service {
+func NewService(embedClient llm.EmbeddingClient, compClient llms.Model, vectorClient *weaviate.Client, config Config) *Service {
 	return &Service{
 		embedClient:    embedClient,
 		compClient:     compClient,
@@ -92,12 +94,16 @@ func (s *Service) QueryKnowledge(ctx context.Context, req *QueryRequest) (*Query
 		return nil, fmt.Errorf("failed to search similar documents: %w", err)
 	}
 
-	// Build context from retrieved documents
-	var contextParts []string
-	var avgRelevance float32
+	prompt := prompts.NewPromptTemplate(
+		"You are an expert Q&A system. Use the following pieces of context to answer the question at the end. If you don't know the answer, just say that you don't know, don't try to make up an answer.\n\nContext:\n{{.context}}\n\nQuestion: {{.question}}\n\nHelpful Answer:",
+		[]string{"context", "question"},
+	)
 
+	var contextBuilder strings.Builder
+	var avgRelevance float32
+	
 	for i, result := range searchResults {
-		contextParts = append(contextParts, fmt.Sprintf("Source %d: %s", i+1, result.Document.Text))
+		contextBuilder.WriteString(fmt.Sprintf("Source %d: %s\n", i+1, result.Document.Text))
 		avgRelevance += result.Score
 	}
 
@@ -105,11 +111,15 @@ func (s *Service) QueryKnowledge(ctx context.Context, req *QueryRequest) (*Query
 		avgRelevance = avgRelevance / float32(len(searchResults))
 	}
 
-	context := strings.Join(contextParts, "\n\n")
+	formattedPrompt, err := prompt.Format(map[string]any{
+		"context":  contextBuilder.String(),
+		"question": req.Query,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to format prompt template: %w", err)
+	}
 
-	prompt := s.buildRAGPrompt(req.Query, context, req.Context)
-
-	completion, err := s.compClient.GenerateCompletion(ctx, prompt)
+	completion, err := s.generateCompletion(ctx, formattedPrompt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate completion: %w", err)
 	}
@@ -117,12 +127,16 @@ func (s *Service) QueryKnowledge(ctx context.Context, req *QueryRequest) (*Query
 	response := &QueryResponse{
 		Answer:         completion,
 		Sources:        searchResults,
-		ContextUsed:    context,
+		ContextUsed:    contextBuilder.String(),
 		RelevanceScore: avgRelevance,
 	}
 
 	log.Printf("Successfully generated answer for query: %s", req.Query)
 	return response, nil
+}
+
+func (s *Service) generateCompletion(ctx context.Context, prompt string) (string, error) {
+	return llms.GenerateFromSinglePrompt(ctx, s.compClient, prompt)
 }
 
 // HealthCheck verifies connectivity to all external dependencies
@@ -135,38 +149,10 @@ func (s *Service) HealthCheck(ctx context.Context) error {
 		return fmt.Errorf("embedding client health check failed: %w", err)
 	}
 
-	if err := s.compClient.Health(ctx); err != nil {
+	_, err := llms.GenerateFromSinglePrompt(ctx, s.compClient, "test")
+	if err != nil {
 		return fmt.Errorf("completion client health check failed: %w", err)
 	}
 
 	return nil
-}
-
-// buildRAGPrompt constructs an optimized prompt for retrieval-augmented generation
-func (s *Service) buildRAGPrompt(query, retrievedContext string, userContext map[string]string) string {
-	var prompt strings.Builder
-
-	prompt.WriteString("You are an AI assistant that answers questions based on provided context. ")
-	prompt.WriteString("Use the following retrieved information to answer the user's question accurately. ")
-	prompt.WriteString("If the retrieved context doesn't contain relevant information, say so clearly.\n\n")
-
-	if retrievedContext != "" {
-		prompt.WriteString("Retrieved Context:\n")
-		prompt.WriteString(retrievedContext)
-		prompt.WriteString("\n\n")
-	}
-
-	if len(userContext) > 0 {
-		prompt.WriteString("Additional Context:\n")
-		for key, value := range userContext {
-			prompt.WriteString(fmt.Sprintf("%s: %s\n", key, value))
-		}
-		prompt.WriteString("\n")
-	}
-
-	prompt.WriteString("Question: ")
-	prompt.WriteString(query)
-	prompt.WriteString("\n\nAnswer:")
-
-	return prompt.String()
 }
