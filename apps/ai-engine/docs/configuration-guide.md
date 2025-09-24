@@ -79,7 +79,7 @@ GROQ_MODEL=llama-3.1-8b-instant
 ### **Infrastructure Settings**
 - `WEAVIATE_URL`: Vector database URL (default: `http://weaviate:8080`)
 - `WEAVIATE_API_KEY`: Vector database API key (optional)
-- `SERVER_PORT`: Service port (default: `8000`)
+- `AI_ENGINE_PORT`: Service port (default: `8000`)
 - `SERVER_ENV`: Environment (default: `development`)
 
 ## ✅ **Configuration Validation**

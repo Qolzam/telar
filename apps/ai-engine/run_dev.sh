@@ -1,10 +1,14 @@
 #!/bin/bash
 
 # Telar AI Engine Development Runner
-# This script starts both the Docker Compose backend services and the demo UI server
+# This script starts the Docker Compose backend services
 # It works from any directory by auto-detecting the project structure
 
 set -e  # Exit on any error
+
+# Default port configuration
+AI_ENGINE_PORT=${AI_ENGINE_PORT:-8000}
+WEAVIATE_PORT=${WEAVIATE_PORT:-8080}
 
 # Colors for output
 RED='\033[0;31m'
@@ -99,7 +103,7 @@ wait_for_services() {
     local attempt=1
     
     while [[ $attempt -le $max_attempts ]]; do
-        if curl -s http://localhost:8000/health >/dev/null 2>&1; then
+        if curl -s http://localhost:${AI_ENGINE_PORT}/health >/dev/null 2>&1; then
             print_success "AI Engine is healthy and ready!"
             break
         fi
@@ -117,33 +121,15 @@ wait_for_services() {
     echo ""
 }
 
-# Function to start demo UI server
-start_demo_ui() {
-    local demo_ui_dir="$1/apps/ai-engine/examples/ai-demo-ui"
+# Function to check if demo UI is accessible
+check_demo_ui() {
+    print_status "Checking demo UI..."
     
-    if [[ ! -f "$demo_ui_dir/index.html" ]]; then
-        print_error "Demo UI not found at $demo_ui_dir/index.html"
-        exit 1
-    fi
-    
-    print_status "Starting demo UI server..."
-    cd "$demo_ui_dir"
-    
-    # Kill any existing Python server on port 3000
-    pkill -f "python.*http.server.*3000" >/dev/null 2>&1 || true
-    
-    # Start Python HTTP server in background
-    python3 -m http.server 3000 >/dev/null 2>&1 &
-    local server_pid=$!
-    
-    # Wait a moment and check if server started
-    sleep 2
-    if kill -0 $server_pid >/dev/null 2>&1; then
-        print_success "Demo UI server started (PID: $server_pid)"
-        echo $server_pid > /tmp/telar_demo_server.pid
+    if curl -s http://localhost:${AI_ENGINE_PORT}/ >/dev/null 2>&1; then
+        print_success "Demo UI is accessible"
     else
-        print_error "Failed to start demo UI server"
-        exit 1
+        print_error "Demo UI is not accessible"
+        return 1
     fi
 }
 
@@ -160,29 +146,30 @@ show_service_info() {
     echo "📍 Project Root: $project_root"
     echo ""
     echo "🌐 Service URLs:"
-    echo "  • Demo UI:        http://localhost:3000"
-    echo "  • AI Engine API:  http://localhost:8000"
-    echo "  • Health Check:   http://localhost:8000/health"
-    echo "  • Weaviate:       http://localhost:8080"
+    echo "  • Demo UI:        http://localhost:${AI_ENGINE_PORT}"
+    echo "  • AI Engine API:  http://localhost:${AI_ENGINE_PORT}/api/v1"
+    echo "  • Health Check:   http://localhost:${AI_ENGINE_PORT}/health"
+    echo "  • Status Check:   http://localhost:${AI_ENGINE_PORT}/status"
+    echo "  • Weaviate:       http://localhost:${WEAVIATE_PORT}"
     echo ""
     echo "📋 Service Status:"
     
-    # Check AI Engine
-    if curl -s http://localhost:8000/health >/dev/null 2>&1; then
+    # Check AI Engine 
+    if curl -s http://localhost:${AI_ENGINE_PORT}/health >/dev/null 2>&1; then
         echo -e "  • AI Engine:      ${GREEN}✅ Running${NC}"
     else
         echo -e "  • AI Engine:      ${RED}❌ Not responding${NC}"
     fi
     
-    # Check Demo UI
-    if curl -s http://localhost:3000 >/dev/null 2>&1; then
-        echo -e "  • Demo UI:        ${GREEN}✅ Running${NC}"
+    # Check Demo UI 
+    if curl -s http://localhost:${AI_ENGINE_PORT}/ >/dev/null 2>&1; then
+        echo -e "  • Demo UI:        ${GREEN}✅ Running ${NC}"
     else
         echo -e "  • Demo UI:        ${RED}❌ Not responding${NC}"
     fi
     
     # Check Weaviate
-    if curl -s http://localhost:8080/v1/.well-known/ready >/dev/null 2>&1; then
+    if curl -s http://localhost:${WEAVIATE_PORT}/v1/.well-known/ready >/dev/null 2>&1; then
         echo -e "  • Weaviate:       ${GREEN}✅ Running${NC}"
     else
         echo -e "  • Weaviate:       ${RED}❌ Not responding${NC}"
@@ -195,10 +182,11 @@ show_service_info() {
     echo "  • Restart:        docker compose restart"
     echo ""
     echo "📖 Demo Instructions:"
-    echo "  1. Open http://localhost:3000 in your browser"
-    echo "  2. Use 'Load README.md' to ingest knowledge"
-    echo "  3. Ask questions to test the RAG system"
-    echo "  4. Check the 'Sources Used' section for RAG evidence"
+    echo "  1. Open http://localhost:${AI_ENGINE_PORT} in your browser"
+    echo "  2. Use 'Load README.md' to ingest Telar documentation"
+    echo "  3. Ask questions like 'What is Telar?' to test the RAG system"
+    echo "  4. Try the Content Generation tab for conversation starters"
+    echo "  5. Watch the flow diagrams animate during operations"
     echo ""
     echo "⚠️  To stop all services, run: $0 stop"
     echo "=========================================="
@@ -219,18 +207,6 @@ stop_services() {
         print_success "Docker services stopped"
     fi
     
-    # Stop demo UI server
-    if [[ -f /tmp/telar_demo_server.pid ]]; then
-        local server_pid=$(cat /tmp/telar_demo_server.pid)
-        if kill -0 $server_pid >/dev/null 2>&1; then
-            kill $server_pid
-            rm -f /tmp/telar_demo_server.pid
-            print_success "Demo UI server stopped"
-        fi
-    fi
-    
-    # Kill any remaining Python servers on port 3000
-    pkill -f "python.*http.server.*3000" >/dev/null 2>&1 || true
     
     print_success "All services stopped"
 }
@@ -256,15 +232,6 @@ reset_services() {
     cd "$docker_compose_dir"
     docker compose down -v
     
-    # Stop demo UI server
-    if [[ -f /tmp/telar_demo_server.pid ]]; then
-        local server_pid=$(cat /tmp/telar_demo_server.pid)
-        if kill -0 $server_pid >/dev/null 2>&1; then
-            kill $server_pid
-            rm -f /tmp/telar_demo_server.pid
-        fi
-    fi
-    pkill -f "python.*http.server.*3000" >/dev/null 2>&1 || true
     
     print_success "All data cleared and services stopped"
     
@@ -289,12 +256,16 @@ show_usage() {
     echo "  status   Show service status"
     echo "  help     Show this help message"
     echo ""
+    echo "Environment Variables:"
+    echo "  AI_ENGINE_PORT  Port for AI Engine service (default: 8000)"
+    echo "  WEAVIATE_PORT   Port for Weaviate service (default: 8080)"
+    echo ""
     echo "Examples:"
-    echo "  $0           # Start all services"
-    echo "  $0 start     # Start all services"
-    echo "  $0 stop      # Stop all services"
-    echo "  $0 restart   # Restart all services"
-    echo "  $0 reset     # Clear all Weaviate data and restart"
+    echo "  $0                    # Start all services with default ports"
+    echo "  AI_ENGINE_PORT=9000 $0 start  # Start with custom AI Engine port"
+    echo "  $0 stop               # Stop all services"
+    echo "  $0 restart            # Restart all services"
+    echo "  $0 reset              # Clear all Weaviate data and restart"
 }
 
 # Main execution
@@ -315,7 +286,7 @@ main() {
             # Start services
             start_docker_services "$project_root"
             wait_for_services
-            start_demo_ui "$project_root"
+            check_demo_ui
             
             # Show status
             show_service_info "$project_root"

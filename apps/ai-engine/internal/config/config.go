@@ -45,7 +45,7 @@ type WeaviateConfig struct {
 
 // Load reads configuration from environment variables with sensible defaults
 func Load() (*Config, error) {
-	viper.SetDefault("PORT", "8080")
+	viper.SetDefault("PORT", "8000")
 	viper.SetDefault("HOST", "0.0.0.0")
 	viper.SetDefault("READ_TIMEOUT", "30s")
 	viper.SetDefault("WRITE_TIMEOUT", "30s")

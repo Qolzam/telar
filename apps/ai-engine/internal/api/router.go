@@ -24,7 +24,14 @@ func Router(knowledgeService *knowledge.Service) *fiber.App {
 		AllowHeaders: "Content-Type,Authorization",
 	}))
 	
+	// API routes
 	app.Get("/health", handler.Health)
+	app.Get("/status", handler.GetStatus)
+	
+	// Serve static files from public directory
+	app.Static("/", "./public", fiber.Static{
+		Index: "index.html",
+	})
 	
 	v1 := app.Group("/api/v1")
 	v1.Post("/ingest", handler.Ingest)
