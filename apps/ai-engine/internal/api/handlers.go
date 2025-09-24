@@ -1,7 +1,10 @@
 package api
 
 import (
+	"io/ioutil"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -53,6 +56,12 @@ type SourceChunk struct {
 type HealthResponse struct {
 	Status   string            `json:"status"`
 	Services map[string]string `json:"services"`
+}
+
+type StatusResponse struct {
+	Status             string `json:"status"`
+	EmbeddingProvider  string `json:"embedding_provider"`
+	CompletionProvider string `json:"completion_provider"`
 }
 
 // Ingest processes document ingestion requests
@@ -177,4 +186,38 @@ func (h *Handler) Health(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(response)
+}
+
+// GetStatus returns the current configuration status
+func (h *Handler) GetStatus(c *fiber.Ctx) error {
+	embeddingProvider := os.Getenv("EMBEDDING_PROVIDER")
+	if embeddingProvider == "" {
+		embeddingProvider = "ollama"
+	}
+
+	completionProvider := os.Getenv("COMPLETION_PROVIDER")
+	if completionProvider == "" {
+		completionProvider = "ollama"
+	}
+
+	response := StatusResponse{
+		Status:             "healthy",
+		EmbeddingProvider:  embeddingProvider,
+		CompletionProvider: completionProvider,
+	}
+
+	return c.JSON(response)
+}
+
+// ServeDemo serves the demo UI
+func (h *Handler) ServeDemo(c *fiber.Ctx) error {
+	indexPath := filepath.Join("./public", "index.html")
+	content, err := ioutil.ReadFile(indexPath)
+	if err != nil {
+		log.Printf("Failed to read index.html: %v", err)
+		return c.Status(fiber.StatusInternalServerError).SendString("Demo UI not available")
+	}
+	
+	c.Set("Content-Type", "text/html")
+	return c.Send(content)
 }

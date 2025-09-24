@@ -33,6 +33,14 @@ Now, open the `.env` file and configure your desired AI providers. For a quick s
 
 With your configuration in place, start the entire AI Engine stack.
 
+**Option A: Quick Start (Recommended)**
+```bash
+# Run from the ai-engine directory - starts everything with one command
+cd apps/ai-engine
+./run_dev.sh start
+```
+
+**Option B: Manual Docker Compose**
 ```bash
 # This command must be run from the root of the 'telar' repository
 docker-compose -f apps/ai-engine/deployments/docker-compose/docker-compose.yml up --build -d
@@ -42,8 +50,14 @@ The AI Engine API will now be available at `http://localhost:8000`.
 
 ### 3. Test the System
 
+**Option A: Interactive Demo UI**
+```bash
+# Open your browser and navigate to:
+http://localhost:8000
+```
 
-You can test the API directly with `curl`. Ensure Ollama is running if you are using it as a provider.
+
+**Option B: Direct API Testing**
 
 ```bash
 # Health check

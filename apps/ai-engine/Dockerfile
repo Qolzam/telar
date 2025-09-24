@@ -35,8 +35,13 @@ WORKDIR /root/
 # Copy the binary from builder stage
 COPY --from=builder /app/ai-engine .
 
+# Copy the public directory for static files
+COPY --from=builder /app/public ./public
+
 # Change ownership to non-root user
-RUN chown appuser:appgroup ai-engine
+RUN chown -R appuser:appgroup ai-engine public && \
+    chmod -R 755 public && \
+    chmod 755 .
 
 # Switch to non-root user
 USER appuser

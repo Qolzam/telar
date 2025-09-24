@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Engine Control Panel</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Header with Status Bar -->
+        <header class="header">
+            <h1>🤖 AI Engine Control Panel</h1>
+            <div class="status-bar">
+                <span id="embedding-status">Embedding: <span id="embedding-provider">Loading...</span></span>
+                <span id="completion-status">Completion: <span id="completion-provider">Loading...</span></span>
+                <span id="service-status">Status: <span id="status-indicator">●</span> <span id="status-text">Loading...</span></span>
+            </div>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <nav class="nav-tabs">
+            <button class="tab-button active" onclick="showTab('rag')">Knowledge Base (RAG)</button>
+            <button class="tab-button" onclick="showTab('generation')">Content Generation</button>
+        </nav>
+
+        <!-- RAG Tab -->
+        <div id="rag-tab" class="tab-content active">
+            <!-- RAG Pipeline Flow Diagram -->
+            <div class="flow-diagram">
+                <div class="flow-title">RAG Pipeline Status</div>
+                <div class="flow-container">
+                    <span class="flow-step idle" id="step-ingest">
+                        <div class="flow-step-content">
+                            <div class="flow-step-icon">📄</div>
+                            <div class="flow-step-name">INGEST</div>
+                            <div class="flow-step-tech">Go API</div>
+                        </div>
+                    </span>
+                    <span class="flow-arrow">→</span>
+                    <span class="flow-step idle" id="step-embed">
+                        <div class="flow-step-content">
+                            <div class="flow-step-icon">🧠</div>
+                            <div class="flow-step-name">EMBED</div>
+                            <div class="flow-step-tech" id="embed-tech">Ollama</div>
+                        </div>
+                    </span>
+                    <span class="flow-arrow">→</span>
+                    <span class="flow-step idle" id="step-store">
+                        <div class="flow-step-content">
+                            <div class="flow-step-icon">🗄️</div>
+                            <div class="flow-step-name">STORE</div>
+                            <div class="flow-step-tech">Weaviate</div>
+                        </div>
+                    </span>
+                    <span class="flow-arrow">→</span>
+                    <span class="flow-step idle" id="step-query">
+                        <div class="flow-step-content">
+                            <div class="flow-step-icon">❓</div>
+                            <div class="flow-step-name">QUERY</div>
+                            <div class="flow-step-tech">Go API</div>
+                        </div>
+                    </span>
+                    <span class="flow-arrow">→</span>
+                    <span class="flow-step idle" id="step-retrieve">
+                        <div class="flow-step-content">
+                            <div class="flow-step-icon">🔍</div>
+                            <div class="flow-step-name">RETRIEVE</div>
+                            <div class="flow-step-tech">Weaviate</div>
+                        </div>
+                    </span>
+                    <span class="flow-arrow">→</span>
+                    <span class="flow-step idle" id="step-generate">
+                        <div class="flow-step-content">
+                            <div class="flow-step-icon">⚡</div>
+                            <div class="flow-step-name">GENERATE</div>
+                            <div class="flow-step-tech" id="completion-tech">Ollama</div>
+                        </div>
+                    </span>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>📄 1. Ingest Knowledge</h2>
+                <div class="input-group">
+                    <label for="document-text">Paste document content here:</label>
+                    <textarea id="document-text" placeholder="Paste Telar documentation, API specs, or any content about the platform you want to add to the knowledge base..."></textarea>
+                </div>
+                <div class="quick-content">
+                    <strong>Quick Load:</strong>
+                    <button onclick="loadReadme()">Load README.md</button>
+                    <button onclick="loadContributing()">Load CONTRIBUTING.md</button>
+                    <button onclick="loadCodeOfConduct()">Load CODE_OF_CONDUCT.md</button>
+                    <button onclick="clearDocument()">Clear</button>
+                </div>
+                <div class="input-group">
+                    <label for="source-metadata">Source (metadata):</label>
+                    <input type="text" id="source-metadata" placeholder="docs/readme.md" value="demo/document">
+                </div>
+                <button id="ingest-btn" onclick="handleIngest()">📥 Ingest Knowledge</button>
+                <div id="ingest-status" class="status-message"></div>
+            </div>
+
+            <div class="section">
+                <h2>❓ 2. Query Knowledge Base</h2>
+                <div class="input-group">
+                    <label for="query-input">Ask a question about the ingested knowledge:</label>
+                    <input type="text" id="query-input" placeholder="e.g., What is Telar? What are the AI-powered features? What is the tech stack?">
+                </div>
+                <button id="query-btn" onclick="handleQuery()">🔍 Ask Question</button>
+            </div>
+
+            <div class="section">
+                <h2>💡 3. Results</h2>
+                <div class="result-container">
+                    <h3>Answer:</h3>
+                    <div id="answer-display" class="answer-box markdown-content"></div>
+                </div>
+                <div class="result-container" id="sources-section" style="display: none;">
+                    <h3>📚 Sources Used (RAG Evidence):</h3>
+                    <div id="sources-display" class="sources-box"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Generation Tab -->
+        <div id="generation-tab" class="tab-content">
+            <!-- Content Generation Flow Diagram -->
+            <div class="flow-diagram">
+                <div class="flow-title">Content Generation Pipeline Status</div>
+                <div class="flow-container">
+                    <span class="flow-step idle" id="gen-step-input">
+                        <div class="flow-step-content">
+                            <div class="flow-step-icon">📝</div>
+                            <div class="flow-step-name">INPUT</div>
+                            <div class="flow-step-tech">User Input</div>
+                        </div>
+                    </span>
+                    <span class="flow-arrow">→</span>
+                    <span class="flow-step idle" id="gen-step-process">
+                        <div class="flow-step-content">
+                            <div class="flow-step-icon">⚙️</div>
+                            <div class="flow-step-name">PROCESS</div>
+                            <div class="flow-step-tech">Go API</div>
+                        </div>
+                    </span>
+                    <span class="flow-arrow">→</span>
+                    <span class="flow-step idle" id="gen-step-generate">
+                        <div class="flow-step-content">
+                            <div class="flow-step-icon">🎨</div>
+                            <div class="flow-step-name">GENERATE</div>
+                            <div class="flow-step-tech" id="gen-completion-tech">Ollama</div>
+                        </div>
+                    </span>
+                    <span class="flow-arrow">→</span>
+                    <span class="flow-step idle" id="gen-step-format">
+                        <div class="flow-step-content">
+                            <div class="flow-step-icon">📋</div>
+                            <div class="flow-step-name">FORMAT</div>
+                            <div class="flow-step-tech">Go API</div>
+                        </div>
+                    </span>
+                    <span class="flow-arrow">→</span>
+                    <span class="flow-step idle" id="gen-step-output">
+                        <div class="flow-step-content">
+                            <div class="flow-step-icon">✨</div>
+                            <div class="flow-step-name">OUTPUT</div>
+                            <div class="flow-step-tech">UI Display</div>
+                        </div>
+                    </span>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>🎨 Generate Conversation Starters</h2>
+                <div class="input-group">
+                    <label for="community-topic">Community Topic:</label>
+                    <input type="text" id="community-topic" placeholder="e.g., AI-powered social features, Go backend development, Open-source platforms">
+                </div>
+                <div class="input-group">
+                    <label for="style-preference">Style:</label>
+                    <input type="text" id="style-preference" placeholder="e.g., Developer-friendly, Community-focused, Technical" value="Developer-friendly">
+                </div>
+                <button id="generate-btn" onclick="handleGenerate()">Generate Ideas</button>
+                <div id="generate-status" class="status-message"></div>
+            </div>
+
+            <div class="section">
+                <h2>Generated Starters</h2>
+                <div id="generated-starters" class="starters-box"></div>
+            </div>
+        </div>
+
+        <!-- Status Log -->
+        <div class="status-log">
+            <h3>Status Log</h3>
+            <div id="log-container" class="log-content"></div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
