@@ -1,7 +1,6 @@
 package api
 
 import (
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -9,18 +8,24 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"github.com/qolzam/telar/apps/ai-engine/internal/config"
+	"github.com/qolzam/telar/apps/ai-engine/internal/generator"
 	"github.com/qolzam/telar/apps/ai-engine/internal/knowledge"
 )
 
 // Handler contains HTTP handlers for AI Engine endpoints
 type Handler struct {
 	knowledgeService *knowledge.Service
+	generatorService *generator.Service 
+	config           *config.Config
 }
 
 // NewHandler creates a new handler instance
-func NewHandler(knowledgeService *knowledge.Service) *Handler {
+func NewHandler(knowledgeService *knowledge.Service, generatorService *generator.Service, config *config.Config) *Handler {
 	return &Handler{
 		knowledgeService: knowledgeService,
+		generatorService: generatorService,
+		config:           config,
 	}
 }
 
@@ -62,6 +67,30 @@ type StatusResponse struct {
 	Status             string `json:"status"`
 	EmbeddingProvider  string `json:"embedding_provider"`
 	CompletionProvider string `json:"completion_provider"`
+}
+
+// GenerateRequest represents a request to generate conversation starters
+type GenerateRequest struct {
+	Topic string `json:"topic" binding:"required"`
+	Style string `json:"style,omitempty"` 
+	Count int    `json:"count,omitempty"`
+}
+
+// GenerateResponse represents the generated conversation starters
+type GenerateResponse struct {
+	Topic    string           `json:"topic"`
+	Style    string           `json:"style"`
+	Starters []string         `json:"starters"`
+	Metadata GenerateMetadata `json:"metadata"`
+}
+
+// GenerateMetadata provides additional information about the generation
+type GenerateMetadata struct {
+	GeneratedAt      string `json:"generated_at"`
+	Model            string `json:"model"`
+	ResponseTimeMs   int64  `json:"response_time_ms"`
+	PromptTokens     int    `json:"prompt_tokens,omitempty"`
+	CompletionTokens int    `json:"completion_tokens,omitempty"`
 }
 
 // Ingest processes document ingestion requests
@@ -159,6 +188,80 @@ func (h *Handler) Query(c *fiber.Ctx) error {
 	return c.JSON(response)
 }
 
+// GenerateConversationStarters creates engaging prompts for a community.
+func (h *Handler) GenerateConversationStarters(c *fiber.Ctx) error {
+	var req struct {
+		CommunityTopic string `json:"community_topic"`
+		Style          string `json:"style"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+	}
+
+	starters, err := h.generatorService.GenerateConversationStarters(c.Context(), req.CommunityTopic, req.Style)
+	if err != nil {
+		log.Printf("Generator service error: %v", err)
+		
+		if strings.Contains(err.Error(), "server is currently processing too many requests") {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error": "server is currently processing too many requests",
+				"details": "Please try again in a moment. The server is limiting concurrent requests to prevent overload.",
+				"retry_after": "5 seconds",
+			})
+		}
+		
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate conversation starters", "details": err.Error()})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(starters)
+}
+
+// GetConcurrentStatus returns the current concurrent request status
+func (h *Handler) GetConcurrentStatus(c *fiber.Ctx) error {
+	status := h.generatorService.GetConcurrentStatus()
+	return c.JSON(fiber.Map{
+		"status": "success",
+		"data":   status,
+	})
+}
+
+// GetModelConfig returns the current model configuration
+func (h *Handler) GetModelConfig(c *fiber.Ctx) error {
+	llmConfig := h.config.LLM
+	
+	var currentModel string
+	var provider string
+	
+	switch llmConfig.CompletionProvider {
+	case "openai":
+		provider = "OpenAI"
+		currentModel = llmConfig.OpenAIModel
+	case "groq":
+		provider = "Groq"
+		currentModel = llmConfig.GroqModel
+	case "ollama":
+		provider = "Ollama"
+		currentModel = llmConfig.CompletionModel
+	default:
+		provider = "Unknown"
+		currentModel = "Unknown"
+	}
+	
+	config := fiber.Map{
+		"provider":           llmConfig.CompletionProvider,
+		"provider_display":   provider,
+		"model":              currentModel,
+		"embedding_provider": llmConfig.EmbeddingProvider,
+		"embedding_model":    llmConfig.EmbeddingModel,
+		"max_concurrent":     llmConfig.MaxConcurrent,
+	}
+	
+	return c.JSON(fiber.Map{
+		"status": "success",
+		"data":   config,
+	})
+}
+
 // Health returns service health status and dependency checks
 func (h *Handler) Health(c *fiber.Ctx) error {
 	services := map[string]string{
@@ -212,12 +315,12 @@ func (h *Handler) GetStatus(c *fiber.Ctx) error {
 // ServeDemo serves the demo UI
 func (h *Handler) ServeDemo(c *fiber.Ctx) error {
 	indexPath := filepath.Join("./public", "index.html")
-	content, err := ioutil.ReadFile(indexPath)
+	content, err := os.ReadFile(indexPath)
 	if err != nil {
 		log.Printf("Failed to read index.html: %v", err)
 		return c.Status(fiber.StatusInternalServerError).SendString("Demo UI not available")
 	}
-	
+
 	c.Set("Content-Type", "text/html")
 	return c.Send(content)
 }

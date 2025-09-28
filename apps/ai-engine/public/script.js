@@ -1,11 +1,95 @@
 // AI Engine Control Panel JavaScript
 let currentTab = 'rag';
 
+// theme management
+let isDarkTheme = false;
+
+// model configuration
+let modelConfig = {
+    provider: 'Unknown',
+    model: 'Unknown'
+};
+
 // Initialize the application
 document.addEventListener('DOMContentLoaded', function() {
     logMessage('AI Engine Control Panel initialized');
     loadStatus();
+    initializeTheme();
+    loadConcurrentStatus(); 
+    loadModelConfig(); 
 });
+
+// Theme toggle functionality
+function toggleTheme() {
+    isDarkTheme = !isDarkTheme;
+    document.body.classList.toggle('dark-theme', isDarkTheme);
+    
+    const themeIcon = document.getElementById('theme-icon');
+    themeIcon.textContent = isDarkTheme ? '☀️' : '🌙';
+    
+    localStorage.setItem('ai-engine-theme', isDarkTheme ? 'dark' : 'light');
+    
+    logMessage(`Switched to ${isDarkTheme ? 'dark' : 'light'} theme`);
+}
+
+// Load concurrent request status (Phase 4 feature)
+async function loadConcurrentStatus() {
+    try {
+        const response = await fetch('/api/v1/concurrent-status');
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            document.getElementById('max-concurrent').textContent = data.data.max_concurrent;
+            document.getElementById('active-requests').textContent = data.data.active_requests;
+            document.getElementById('available-slots').textContent = data.data.available_slots;
+            document.getElementById('can-accept-request').textContent = data.data.can_accept_request ? 'Yes' : 'No';
+            
+            const canAcceptElement = document.getElementById('can-accept-request');
+            canAcceptElement.style.color = data.data.can_accept_request ? '#4CAF50' : '#f44336';
+            
+            logMessage(`Concurrent status updated: ${data.data.active_requests}/${data.data.max_concurrent} active requests`);
+        } else {
+            logMessage('Failed to load concurrent status', 'error');
+        }
+    } catch (error) {
+        logMessage(`Error loading concurrent status: ${error.message}`, 'error');
+    }
+}
+
+// Load model configuration (Phase 4 feature)
+async function loadModelConfig() {
+    try {
+        const response = await fetch('/api/v1/model-config');
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            modelConfig = {
+                provider: data.data.provider_display,
+                model: data.data.model
+            };
+            
+            logMessage(`Model configuration loaded: ${modelConfig.provider} (${modelConfig.model})`);
+        } else {
+            logMessage('Failed to load model configuration', 'error');
+        }
+    } catch (error) {
+        logMessage(`Error loading model configuration: ${error.message}`, 'error');
+    }
+}
+
+// Initialize theme from localStorage
+function initializeTheme() {
+    const savedTheme = localStorage.getItem('ai-engine-theme');
+    if (savedTheme === 'dark') {
+        isDarkTheme = true;
+        document.body.classList.add('dark-theme');
+        document.getElementById('theme-icon').textContent = '☀️';
+    } else {
+        isDarkTheme = false;
+        document.body.classList.remove('dark-theme');
+        document.getElementById('theme-icon').textContent = '🌙';
+    }
+}
 
 // Tab switching logic
 function showTab(tabName) {
@@ -314,10 +398,9 @@ async function handleQuery() {
     }
 }
 
-// Handle content generation (placeholder for future feature)
 async function handleGenerate() {
     const topic = document.getElementById('community-topic').value.trim();
-    const style = document.getElementById('style-preference').value.trim();
+    const style = document.getElementById('style-preference').value.trim() || 'engaging';
     
     if (!topic) {
         showStatus('generate-status', 'Please enter a community topic', 'error');
@@ -332,7 +415,7 @@ async function handleGenerate() {
     
     // Step 1: Input
     highlightFlowStep('gen-step-input');
-    logMessage(`Starting content generation for topic: "${topic}"`, 'info');
+    logMessage(`Starting content generation for topic: "${topic}" with style: "${style}"`, 'info');
     
     try {
         const startTime = Date.now();
@@ -342,50 +425,67 @@ async function handleGenerate() {
         highlightFlowStep('gen-step-process');
         logMessage('Processing input parameters...', 'info');
         
-        // Simulate processing delay for visual effect
-        await new Promise(resolve => setTimeout(resolve, 300));
-        
-        // Step 3: Generate
+        // Step 3: Generate 
         completeFlowStep('gen-step-process');
         highlightFlowStep('gen-step-generate');
-        logMessage('Generating content with AI...', 'info');
+        logMessage('Generating conversation starters with AI...', 'info');
         
-        // Simulate generation delay for visual effect
-        await new Promise(resolve => setTimeout(resolve, 800));
+        const response = await fetch('/api/v1/generate/conversation-starters', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                community_topic: topic,
+                style: style.toLowerCase()
+            })
+        });
         
         // Step 4: Format
         completeFlowStep('gen-step-generate');
         highlightFlowStep('gen-step-format');
-        logMessage('Formatting output...', 'info');
-        
-        // Simulate formatting delay for visual effect
-        await new Promise(resolve => setTimeout(resolve, 200));
-        
-        // Step 5: Output
-        completeFlowStep('gen-step-format');
-        highlightFlowStep('gen-step-output');
+        logMessage('Formatting conversation starters...', 'info');
         
         const endTime = Date.now();
         const responseTime = endTime - startTime;
         
-        // Complete the generation flow
-        completeFlowStep('gen-step-output');
+        const data = await response.json();
         
-        showStatus('generate-status', `✅ Content generated successfully! (${responseTime}ms)`, 'success');
-        logMessage(`Content generation complete for topic: "${topic}" (${responseTime}ms)`);
-        
-        // Placeholder for future implementation
-        document.getElementById('generated-starters').innerHTML = `
-            <div class="placeholder success">
-                <h4>🎉 Generated Conversation Starters</h4>
-                <p><strong>Topic:</strong> ${topic}</p>
-                <p><strong>Style:</strong> ${style}</p>
-                <p><strong>Response Time:</strong> ${responseTime}ms</p>
-                <hr>
-                <p><em>Note: This is a demo of the flow diagram. The actual content generation feature will be implemented in Phase 4.</em></p>
-                <p>This will generate conversation starters based on community topics using the configured completion provider.</p>
-            </div>
-        `;
+        if (response.ok) {
+            // Step 5: Output
+            completeFlowStep('gen-step-format');
+            highlightFlowStep('gen-step-output');
+            logMessage('Displaying generated content...', 'info');
+            
+            // Complete the generation flow
+            completeFlowStep('gen-step-output');
+            
+            // The API returns the array directly, not wrapped in a 'starters' property
+            const starters = Array.isArray(data) ? data : [];
+            showStatus('generate-status', `✅ Generated ${starters.length} conversation starters! (${responseTime}ms)`, 'success');
+            logMessage(`Content generation complete: ${starters.length} starters for "${topic}" (${responseTime}ms)`);
+            
+            // Display the actual generated conversation starters
+            displayGeneratedStarters(starters, topic, style, responseTime);
+            
+        } else {
+            // Mark current step as error
+            const activeStep = document.querySelector('.flow-step.active');
+            if (activeStep) {
+                errorFlowStep(activeStep.id);
+            }
+            showStatus('generate-status', `❌ Error: ${data.error || 'Unknown error'}`, 'error');
+            logMessage(`Content generation failed: ${data.error}`, 'error');
+            
+            // Show error in the starters container
+            document.getElementById('generated-starters').innerHTML = `
+                <div class="placeholder error">
+                    <h4>❌ Generation Failed</h4>
+                    <p><strong>Error:</strong> ${data.error || 'Unknown error occurred'}</p>
+                    <p><strong>Details:</strong> ${data.details || 'No additional details available'}</p>
+                </div>
+            `;
+        }
         
     } catch (error) {
         // Mark current step as error
@@ -393,11 +493,159 @@ async function handleGenerate() {
         if (activeStep) {
             errorFlowStep(activeStep.id);
         }
-        showStatus('generate-status', `❌ Generation failed: ${error.message}`, 'error');
-        logMessage(`Content generation error: ${error.message}`, 'error');
+        showStatus('generate-status', `❌ Network error: ${error.message}`, 'error');
+        logMessage(`Content generation network error: ${error.message}`, 'error');
+        
+        // Show network error
+        document.getElementById('generated-starters').innerHTML = `
+            <div class="placeholder error">
+                <h4>❌ Network Error</h4>
+                <p><strong>Error:</strong> ${error.message}</p>
+                <p>Please check your network connection and try again.</p>
+            </div>
+        `;
     } finally {
         generateBtn.disabled = false;
         generateBtn.textContent = '🎨 Generate Ideas';
+    }
+}
+
+// Display generated conversation starters
+function displayGeneratedStarters(starters, topic, style, responseTime) {
+    const startersContainer = document.getElementById('generated-starters');
+    
+    let html = `
+        <div class="starters-header">
+            <h4>✨ Generated Conversation Starters</h4>
+            <div class="generation-metadata">
+                <span><strong>Topic:</strong> ${topic}</span>
+                <span><strong>Style:</strong> ${style}</span>
+                <span><strong>Count:</strong> ${starters.length}</span>
+                <span><strong>Response Time:</strong> ${responseTime}ms</span>
+                <span><strong>Model:</strong> ${modelConfig.provider} (${modelConfig.model})</span>
+            </div>
+        </div>
+        <div class="starters-list">
+    `;
+    
+    starters.forEach((starter, index) => {
+        const starterId = `starter-${index}`;
+        html += `
+            <div class="starter-item" data-starter-id="${index}">
+                <div class="starter-number">${index + 1}</div>
+                <div class="starter-content" id="${starterId}">${starter}</div>
+                <div class="starter-actions">
+                    <button onclick="copyStarter('${starterId}')" class="copy-btn" title="Copy to clipboard">
+                        📋 Copy
+                    </button>
+                    <button onclick="shareStarter('${starter.replace(/'/g, "\\'")}', '${topic}')" class="share-btn" title="Share starter">
+                        🔗 Share
+                    </button>
+                </div>
+            </div>
+        `;
+    });
+    
+    html += `
+        </div>
+        <div class="starters-footer">
+            <button onclick="copyAllStarters()" class="copy-all-btn">📋 Copy All Starters</button>
+            <button onclick="regenerateStarters()" class="regenerate-btn">🔄 Generate More</button>
+        </div>
+    `;
+    
+    startersContainer.innerHTML = html;
+}
+
+// Copy individual starter to clipboard
+async function copyStarter(starterId) {
+    const element = document.getElementById(starterId);
+    const text = element.textContent;
+    
+    try {
+        await navigator.clipboard.writeText(text);
+        logMessage(`Copied starter: "${text.substring(0, 50)}..."`, 'info');
+        
+        // Visual feedback
+        const copyBtn = element.parentElement.querySelector('.copy-btn');
+        const originalText = copyBtn.textContent;
+        copyBtn.textContent = '✅ Copied!';
+        copyBtn.style.background = '#4CAF50';
+        
+        setTimeout(() => {
+            copyBtn.textContent = originalText;
+            copyBtn.style.background = '';
+        }, 2000);
+        
+    } catch (error) {
+        logMessage(`Failed to copy starter: ${error.message}`, 'error');
+        // Fallback for older browsers
+        element.select();
+        document.execCommand('copy');
+    }
+}
+
+// Share starter (opens share dialog or copies link)
+function shareStarter(starter, topic) {
+    const shareText = `Community conversation starter for "${topic}":\n\n${starter}\n\n#CommunityEngagement #${topic.replace(/\s+/g, '')}`;
+    
+    if (navigator.share) {
+        // Use native share API if available
+        navigator.share({
+            title: `Conversation Starter: ${topic}`,
+            text: shareText
+        }).then(() => {
+            logMessage('Starter shared successfully', 'info');
+        }).catch((error) => {
+            logMessage(`Share failed: ${error.message}`, 'error');
+        });
+    } else {
+        // Fallback: copy to clipboard
+        navigator.clipboard.writeText(shareText).then(() => {
+            logMessage('Share text copied to clipboard', 'info');
+            alert('Share text copied to clipboard!');
+        }).catch((error) => {
+            logMessage(`Failed to copy share text: ${error.message}`, 'error');
+        });
+    }
+}
+
+// Copy all starters to clipboard
+async function copyAllStarters() {
+    const starterElements = document.querySelectorAll('.starter-content');
+    const starters = Array.from(starterElements).map((el, index) => `${index + 1}. ${el.textContent}`);
+    const allText = starters.join('\n\n');
+    
+    try {
+        await navigator.clipboard.writeText(allText);
+        logMessage(`Copied all ${starters.length} conversation starters`, 'info');
+        
+        // Visual feedback
+        const copyAllBtn = document.querySelector('.copy-all-btn');
+        const originalText = copyAllBtn.textContent;
+        copyAllBtn.textContent = '✅ All Copied!';
+        copyAllBtn.style.background = '#4CAF50';
+        
+        setTimeout(() => {
+            copyAllBtn.textContent = originalText;
+            copyAllBtn.style.background = '';
+        }, 2000);
+        
+    } catch (error) {
+        logMessage(`Failed to copy all starters: ${error.message}`, 'error');
+    }
+}
+
+// Regenerate starters with same parameters
+function regenerateStarters() {
+    const topic = document.getElementById('community-topic').value.trim();
+    const style = document.getElementById('style-preference').value.trim();
+    
+    if (topic) {
+        logMessage(`Regenerating starters for: "${topic}"`, 'info');
+        handleGenerate();
+    } else {
+        showStatus('generate-status', 'Please enter a topic to regenerate starters', 'error');
     }
 }
 

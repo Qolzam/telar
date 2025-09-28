@@ -10,8 +10,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/qolzam/telar/apps/ai-engine/internal/api"
 	"github.com/qolzam/telar/apps/ai-engine/internal/config"
+	"github.com/qolzam/telar/apps/ai-engine/internal/generator"
 	"github.com/qolzam/telar/apps/ai-engine/internal/knowledge"
 	"github.com/qolzam/telar/apps/ai-engine/internal/platform/llm"
 	"github.com/qolzam/telar/apps/ai-engine/internal/platform/weaviate"
@@ -25,6 +27,10 @@ const (
 )
 
 func main() {
+	if err := godotenv.Load(); err != nil {
+		log.Printf("Warning: No .env file found or failed to load: %v", err)
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
@@ -166,6 +172,10 @@ func main() {
 	})
 	log.Println("✓ Knowledge service initialized")
 
+	log.Printf("Initializing generator service...")
+	generatorService := generator.NewService(completionClient, cfg.LLM.MaxConcurrent)
+	log.Printf("✓ Generator service initialized (max concurrent: %d)", cfg.LLM.MaxConcurrent)
+
 	log.Println("Performing health checks...")
 	if err := knowledgeService.HealthCheck(ctx); err != nil {
 		log.Printf("Warning: Health check failed: %v", err)
@@ -174,7 +184,7 @@ func main() {
 		log.Println("All health checks passed")
 	}
 
-	app := api.Router(knowledgeService)
+	app := api.Router(knowledgeService, generatorService, cfg)
 
 	go func() {
 		addr := fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port)
