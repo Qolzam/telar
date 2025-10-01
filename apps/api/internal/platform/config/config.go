@@ -12,61 +12,62 @@ import (
 
 // Config represents the new, clean configuration structure
 type Config struct {
-	Server   ServerConfig   `json:"server"`
-	Database DatabaseConfig `json:"database"`
-	JWT      JWTConfig      `json:"jwt"`
-	HMAC     HMACConfig     `json:"hmac"`
-	Email    EmailConfig    `json:"email"`
-	Security SecurityConfig `json:"security"`
-	App      AppConfig      `json:"app"`
-	External ExternalConfig `json:"external"`
-	Cache    CacheConfig    `json:"cache"`
+	Server     ServerConfig     `json:"server"`
+	Database   DatabaseConfig   `json:"database"`
+	JWT        JWTConfig        `json:"jwt"`
+	HMAC       HMACConfig       `json:"hmac"`
+	Email      EmailConfig      `json:"email"`
+	Security   SecurityConfig   `json:"security"`
+	App        AppConfig        `json:"app"`
+	External   ExternalConfig   `json:"external"`
+	Cache      CacheConfig      `json:"cache"`
+	RateLimits RateLimitsConfig `json:"rateLimits"`
 }
 
 // ServerConfig holds server-related configuration
 type ServerConfig struct {
-	Host             string `json:"host"`
-	Port             int    `json:"port"`
-	BaseRoute        string `json:"baseRoute"`
-	Gateway          string `json:"gateway"`
-	InternalGateway  string `json:"internalGateway"`
-	WebDomain        string `json:"webDomain"`
-	Debug            bool   `json:"debug"`
+	Host            string `json:"host"`
+	Port            int    `json:"port"`
+	BaseRoute       string `json:"baseRoute"`
+	Gateway         string `json:"gateway"`
+	InternalGateway string `json:"internalGateway"`
+	WebDomain       string `json:"webDomain"`
+	Debug           bool   `json:"debug"`
 }
 
 // DatabaseConfig holds database-related configuration
 type DatabaseConfig struct {
-	Type                   string          `json:"type"`
-	MongoDB                MongoDBConfig   `json:"mongodb"`
-	Postgres               PostgreSQLConfig `json:"postgres"`
-	ForceNonTransactional  bool            `json:"forceNonTransactional"`
+	Type                  string           `json:"type"`
+	MongoDB               MongoDBConfig    `json:"mongodb"`
+	Postgres              PostgreSQLConfig `json:"postgres"`
+	ForceNonTransactional bool             `json:"forceNonTransactional"`
 }
 
 // MongoDBConfig holds MongoDB-specific configuration
 type MongoDBConfig struct {
+	Host           string        `json:"host"`
+	Port           int           `json:"port"`
+	Username       string        `json:"username"`
+	Password       string        `json:"password"`
+	Database       string        `json:"database"`
+	URI            string        `json:"uri"`
+	MaxPoolSize    int           `json:"maxPoolSize"`
+	ConnectTimeout time.Duration `json:"connectTimeout"`
+	SocketTimeout  time.Duration `json:"socketTimeout"`
+}
+
+// PostgreSQLConfig holds PostgreSQL-specific configuration
+type PostgreSQLConfig struct {
 	Host            string        `json:"host"`
 	Port            int           `json:"port"`
 	Username        string        `json:"username"`
 	Password        string        `json:"password"`
 	Database        string        `json:"database"`
-	URI             string        `json:"uri"`
-	MaxPoolSize     int           `json:"maxPoolSize"`
-	ConnectTimeout  time.Duration `json:"connectTimeout"`
-	SocketTimeout   time.Duration `json:"socketTimeout"`
-}
-
-// PostgreSQLConfig holds PostgreSQL-specific configuration
-type PostgreSQLConfig struct {
-	Host             string        `json:"host"`
-	Port             int           `json:"port"`
-	Username         string        `json:"username"`
-	Password         string        `json:"password"`
-	Database         string        `json:"database"`
-	DSN              string        `json:"dsn"`
-	SSLMode          string        `json:"sslMode"`
-	MaxOpenConns     int           `json:"maxOpenConns"`
-	MaxIdleConns     int           `json:"maxIdleConns"`
-	ConnMaxLifetime  time.Duration `json:"connMaxLifetime"`
+	DSN             string        `json:"dsn"`
+	SSLMode         string        `json:"sslMode"`
+	MaxOpenConns    int           `json:"maxOpenConns"`
+	MaxIdleConns    int           `json:"maxIdleConns"`
+	ConnMaxLifetime time.Duration `json:"connMaxLifetime"`
 }
 
 // JWTConfig holds JWT-related configuration
@@ -109,24 +110,39 @@ type AppConfig struct {
 
 // ExternalConfig holds external service configuration
 type ExternalConfig struct {
-	GitHubClientID     string `json:"githubClientId"`
-	GitHubSecret       string `json:"githubSecret"`
-	GoogleClientID     string `json:"googleClientId"`
-	GoogleSecret       string `json:"googleSecret"`
-	PhoneSourceNumber  string `json:"phoneSourceNumber"`
-	PhoneAuthToken     string `json:"phoneAuthToken"`
-	PhoneAuthId        string `json:"phoneAuthId"`
+	GitHubClientID    string `json:"githubClientId"`
+	GitHubSecret      string `json:"githubSecret"`
+	GoogleClientID    string `json:"googleClientId"`
+	GoogleSecret      string `json:"googleSecret"`
+	PhoneSourceNumber string `json:"phoneSourceNumber"`
+	PhoneAuthToken    string `json:"phoneAuthToken"`
+	PhoneAuthId       string `json:"phoneAuthId"`
 }
 
 // CacheConfig holds cache-related configuration
 type CacheConfig struct {
-	MaxMemory       int64        `json:"maxMemory"`
+	MaxMemory       int64         `json:"maxMemory"`
 	TTL             time.Duration `json:"ttl"`
-	Enabled         bool         `json:"enabled"`
-	Backend         string       `json:"backend"`
-	Prefix          string       `json:"prefix"`
+	Enabled         bool          `json:"enabled"`
+	Backend         string        `json:"backend"`
+	Prefix          string        `json:"prefix"`
 	CleanupInterval time.Duration `json:"cleanupInterval"`
-	Redis           RedisConfig  `json:"redis"`
+	Redis           RedisConfig   `json:"redis"`
+}
+
+// RateLimitConfig holds rate limiting configuration for a specific endpoint
+type RateLimitConfig struct {
+	Enabled  bool          `json:"enabled"`
+	Max      int           `json:"max"`
+	Duration time.Duration `json:"duration"`
+}
+
+// RateLimitsConfig holds rate limiting configuration for all endpoints
+type RateLimitsConfig struct {
+	Signup        RateLimitConfig `json:"signup"`
+	Login         RateLimitConfig `json:"login"`
+	PasswordReset RateLimitConfig `json:"passwordReset"`
+	Verification  RateLimitConfig `json:"verification"`
 }
 
 // RedisConfig holds Redis-specific configuration
@@ -164,12 +180,12 @@ func LoadFromEnv() (*Config, error) {
 	// This automatically creates the correct precedence.
 	// Try multiple possible locations for .env file
 	envPaths := []string{
-		".env",                    // Current directory
-		"apps/api/.env",          // From project root
-		"../.env",                // From internal/platform/config
-		"../../.env",             // From internal/platform/config
+		".env",          // Current directory
+		"apps/api/.env", // From project root
+		"../.env",       // From internal/platform/config
+		"../../.env",    // From internal/platform/config
 	}
-	
+
 	var loadErr error
 	for _, envPath := range envPaths {
 		loadErr = godotenv.Load(envPath)
@@ -177,7 +193,7 @@ func LoadFromEnv() (*Config, error) {
 			break // Successfully loaded
 		}
 	}
-	
+
 	if loadErr != nil {
 		// It's not an error if the .env file doesn't exist.
 		// We can log a warning for clarity.
@@ -189,39 +205,39 @@ func LoadFromEnv() (*Config, error) {
 	// automatically see the values that were loaded from the .env file.
 	config := &Config{
 		Server: ServerConfig{
-			Host:             getEnvOrDefault("HOST", "localhost"),
-			Port:             getEnvAsInt("SERVER_PORT", 8080),
-			BaseRoute:        getEnvOrDefault("BASE_ROUTE", "/api"),
-			Gateway:          getEnvOrDefault("GATEWAY", "http://localhost:8080"),
-			InternalGateway:  getEnvOrDefault("INTERNAL_GATEWAY", "http://localhost:8080"),
-			WebDomain:        getEnvOrDefault("WEB_DOMAIN", "http://localhost:3000"),
-			Debug:            getEnvAsBool("DEBUG", false),
+			Host:            getEnvOrDefault("HOST", "localhost"),
+			Port:            getEnvAsInt("SERVER_PORT", 8080),
+			BaseRoute:       getEnvOrDefault("BASE_ROUTE", "/api"),
+			Gateway:         getEnvOrDefault("GATEWAY", "http://localhost:8080"),
+			InternalGateway: getEnvOrDefault("INTERNAL_GATEWAY", "http://localhost:8080"),
+			WebDomain:       getEnvOrDefault("WEB_DOMAIN", "http://localhost:3000"),
+			Debug:           getEnvAsBool("DEBUG", false),
 		},
 		Database: DatabaseConfig{
-			Type:                  getEnvOrDefault("DB_TYPE", "mongo"),
+			Type:                  getEnvOrDefault("DB_TYPE", "mongodb"),
 			ForceNonTransactional: getEnvAsBool("FORCE_NON_TRANSACTIONAL", false),
 			MongoDB: MongoDBConfig{
-				Host:            getEnvOrDefaultWithFallback("MONGODB_HOST", "MONGO_HOST", "localhost"),
-				Port:            getEnvAsInt("MONGODB_PORT", 27017),
-				Username:        getEnvOrDefault("MONGODB_USERNAME", ""),
-				Password:        getEnvOrDefault("MONGODB_PASSWORD", ""),
-				Database:        getEnvOrDefaultWithFallback("MONGODB_DATABASE", "MONGO_DATABASE", "telar"),
-				MaxPoolSize:     getEnvAsInt("MONGODB_MAX_POOL_SIZE", 100),
-				ConnectTimeout:  time.Duration(getEnvAsInt("MONGODB_CONNECT_TIMEOUT", 10)) * time.Second,
-				SocketTimeout:   time.Duration(getEnvAsInt("MONGODB_SOCKET_TIMEOUT", 10)) * time.Second,
-				URI:             getEnvOrDefault("MONGO_URI", "mongodb://localhost:27017/telar_social_test"),
+				Host:           getEnvOrDefaultWithFallback("MONGODB_HOST", "MONGO_HOST", "localhost"),
+				Port:           getEnvAsInt("MONGODB_PORT", 27017),
+				Username:       getEnvOrDefault("MONGODB_USERNAME", ""),
+				Password:       getEnvOrDefault("MONGODB_PASSWORD", ""),
+				Database:       getEnvOrDefaultWithFallback("MONGODB_DATABASE", "MONGO_DATABASE", "telar"),
+				MaxPoolSize:    getEnvAsInt("MONGODB_MAX_POOL_SIZE", 100),
+				ConnectTimeout: time.Duration(getEnvAsInt("MONGODB_CONNECT_TIMEOUT", 10)) * time.Second,
+				SocketTimeout:  time.Duration(getEnvAsInt("MONGODB_SOCKET_TIMEOUT", 10)) * time.Second,
+				URI:            getEnvOrDefault("MONGO_URI", "mongodb://localhost:27017/telar_social_test"),
 			},
 			Postgres: PostgreSQLConfig{
-				Host:             getEnvOrDefault("POSTGRES_HOST", "localhost"),
-				Port:             getEnvAsInt("POSTGRES_PORT", 5432),
-				Username:         getEnvOrDefault("POSTGRES_USERNAME", ""),
-				Password:         getEnvOrDefault("POSTGRES_PASSWORD", ""),
-				Database:         getEnvOrDefault("POSTGRES_DATABASE", "telar"),
-				DSN:              getEnvOrDefault("POSTGRES_DSN", "postgres://postgres:postgres@localhost:5432/telar_social_test?sslmode=disable&search_path=public"),
-				SSLMode:          getEnvOrDefault("POSTGRES_SSL_MODE", "disable"),
-				MaxOpenConns:     getEnvAsInt("POSTGRES_MAX_OPEN_CONNS", 25),
-				MaxIdleConns:     getEnvAsInt("POSTGRES_MAX_IDLE_CONNS", 25),
-				ConnMaxLifetime:  time.Duration(getEnvAsInt("POSTGRES_CONN_MAX_LIFETIME", 300)) * time.Second,
+				Host:            getEnvOrDefault("POSTGRES_HOST", "localhost"),
+				Port:            getEnvAsInt("POSTGRES_PORT", 5432),
+				Username:        getEnvOrDefault("POSTGRES_USERNAME", ""),
+				Password:        getEnvOrDefault("POSTGRES_PASSWORD", ""),
+				Database:        getEnvOrDefault("POSTGRES_DATABASE", "telar"),
+				DSN:             getEnvOrDefault("POSTGRES_DSN", "postgres://postgres:postgres@localhost:5432/telar_social_test?sslmode=disable&search_path=public"),
+				SSLMode:         getEnvOrDefault("POSTGRES_SSL_MODE", "disable"),
+				MaxOpenConns:    getEnvAsInt("POSTGRES_MAX_OPEN_CONNS", 25),
+				MaxIdleConns:    getEnvAsInt("POSTGRES_MAX_IDLE_CONNS", 25),
+				ConnMaxLifetime: time.Duration(getEnvAsInt("POSTGRES_CONN_MAX_LIFETIME", 300)) * time.Second,
 			},
 		},
 		JWT: JWTConfig{
@@ -263,7 +279,7 @@ func LoadFromEnv() (*Config, error) {
 		},
 		Cache: CacheConfig{
 			MaxMemory:       getEnvAsInt64("CACHE_MAX_MEMORY", 100*1024*1024), // 100MB default
-			TTL:             getEnvAsDuration("CACHE_TTL", 1*time.Hour), // 1 hour default
+			TTL:             getEnvAsDuration("CACHE_TTL", 1*time.Hour),       // 1 hour default
 			Enabled:         getEnvAsBool("CACHE_ENABLED", true),
 			Backend:         getEnvOrDefault("CACHE_BACKEND", "memory"),
 			Prefix:          getEnvOrDefault("CACHE_PREFIX", "telar:"),
@@ -285,6 +301,28 @@ func LoadFromEnv() (*Config, error) {
 					Enabled:   getEnvAsBool("REDIS_CLUSTER_ENABLED", false),
 					Addresses: []string{getEnvOrDefault("REDIS_CLUSTER_ADDRESSES", "localhost:6379")},
 				},
+			},
+		},
+		RateLimits: RateLimitsConfig{
+			Signup: RateLimitConfig{
+				Enabled:  getEnvAsBool("RATE_LIMIT_SIGNUP_ENABLED", true),
+				Max:      getEnvAsInt("RATE_LIMIT_SIGNUP_MAX", 10),
+				Duration: getEnvAsDuration("RATE_LIMIT_SIGNUP_DURATION", 1*time.Hour),
+			},
+			Login: RateLimitConfig{
+				Enabled:  getEnvAsBool("RATE_LIMIT_LOGIN_ENABLED", true),
+				Max:      getEnvAsInt("RATE_LIMIT_LOGIN_MAX", 5),
+				Duration: getEnvAsDuration("RATE_LIMIT_LOGIN_DURATION", 15*time.Minute),
+			},
+			PasswordReset: RateLimitConfig{
+				Enabled:  getEnvAsBool("RATE_LIMIT_PASSWORD_RESET_ENABLED", true),
+				Max:      getEnvAsInt("RATE_LIMIT_PASSWORD_RESET_MAX", 3),
+				Duration: getEnvAsDuration("RATE_LIMIT_PASSWORD_RESET_DURATION", 1*time.Hour),
+			},
+			Verification: RateLimitConfig{
+				Enabled:  getEnvAsBool("RATE_LIMIT_VERIFICATION_ENABLED", true),
+				Max:      getEnvAsInt("RATE_LIMIT_VERIFICATION_MAX", 10),
+				Duration: getEnvAsDuration("RATE_LIMIT_VERIFICATION_DURATION", 15*time.Minute),
 			},
 		},
 	}
@@ -382,39 +420,39 @@ func LoadFromMap(envMap map[string]string) (*Config, error) {
 
 	config := &Config{
 		Server: ServerConfig{
-			Host:             get("HOST", "localhost"),
-			Port:             getInt("SERVER_PORT", 8080),
-			BaseRoute:        get("BASE_ROUTE", "/api"),
-			Gateway:          get("GATEWAY", "http://localhost:8080"),
-			InternalGateway:  get("INTERNAL_GATEWAY", "http://localhost:8080"),
-			WebDomain:        get("WEB_DOMAIN", "http://localhost:3000"),
-			Debug:            getBool("DEBUG", false),
+			Host:            get("HOST", "localhost"),
+			Port:            getInt("SERVER_PORT", 8080),
+			BaseRoute:       get("BASE_ROUTE", "/api"),
+			Gateway:         get("GATEWAY", "http://localhost:8080"),
+			InternalGateway: get("INTERNAL_GATEWAY", "http://localhost:8080"),
+			WebDomain:       get("WEB_DOMAIN", "http://localhost:3000"),
+			Debug:           getBool("DEBUG", false),
 		},
 		Database: DatabaseConfig{
-			Type:                  get("DB_TYPE", "mongo"),
+			Type:                  get("DB_TYPE", "mongodb"),
 			ForceNonTransactional: getBool("FORCE_NON_TRANSACTIONAL", false),
 			MongoDB: MongoDBConfig{
-				Host:            getWithFallback("MONGODB_HOST", "MONGO_HOST", "localhost"),
-				Port:            getInt("MONGODB_PORT", 27017),
-				Username:        get("MONGODB_USERNAME", ""),
-				Password:        get("MONGODB_PASSWORD", ""),
-				Database:        getWithFallback("MONGODB_DATABASE", "MONGO_DATABASE", "telar"),
-				MaxPoolSize:     getInt("MONGODB_MAX_POOL_SIZE", 100),
-				ConnectTimeout:  time.Duration(getInt("MONGODB_CONNECT_TIMEOUT", 10)) * time.Second,
-				SocketTimeout:   time.Duration(getInt("MONGODB_SOCKET_TIMEOUT", 10)) * time.Second,
-				URI:             mongoURI,
+				Host:           getWithFallback("MONGODB_HOST", "MONGO_HOST", "localhost"),
+				Port:           getInt("MONGODB_PORT", 27017),
+				Username:       get("MONGODB_USERNAME", ""),
+				Password:       get("MONGODB_PASSWORD", ""),
+				Database:       getWithFallback("MONGODB_DATABASE", "MONGO_DATABASE", "telar"),
+				MaxPoolSize:    getInt("MONGODB_MAX_POOL_SIZE", 100),
+				ConnectTimeout: time.Duration(getInt("MONGODB_CONNECT_TIMEOUT", 10)) * time.Second,
+				SocketTimeout:  time.Duration(getInt("MONGODB_SOCKET_TIMEOUT", 10)) * time.Second,
+				URI:            mongoURI,
 			},
 			Postgres: PostgreSQLConfig{
-				Host:             get("POSTGRES_HOST", "localhost"),
-				Port:             getInt("POSTGRES_PORT", 5432),
-				Username:         get("POSTGRES_USERNAME", ""),
-				Password:         get("POSTGRES_PASSWORD", ""),
-				Database:         get("POSTGRES_DATABASE", "telar"),
-				DSN:              get("POSTGRES_DSN", "postgres://postgres:postgres@localhost:5432/telar_social_test?sslmode=disable&search_path=public"),
-				SSLMode:          get("POSTGRES_SSL_MODE", "disable"),
-				MaxOpenConns:     getInt("POSTGRES_MAX_OPEN_CONNS", 25),
-				MaxIdleConns:     getInt("POSTGRES_MAX_IDLE_CONNS", 25),
-				ConnMaxLifetime:  time.Duration(getInt("POSTGRES_CONN_MAX_LIFETIME", 300)) * time.Second,
+				Host:            get("POSTGRES_HOST", "localhost"),
+				Port:            getInt("POSTGRES_PORT", 5432),
+				Username:        get("POSTGRES_USERNAME", ""),
+				Password:        get("POSTGRES_PASSWORD", ""),
+				Database:        get("POSTGRES_DATABASE", "telar"),
+				DSN:             get("POSTGRES_DSN", "postgres://postgres:postgres@localhost:5432/telar_social_test?sslmode=disable&search_path=public"),
+				SSLMode:         get("POSTGRES_SSL_MODE", "disable"),
+				MaxOpenConns:    getInt("POSTGRES_MAX_OPEN_CONNS", 25),
+				MaxIdleConns:    getInt("POSTGRES_MAX_IDLE_CONNS", 25),
+				ConnMaxLifetime: time.Duration(getInt("POSTGRES_CONN_MAX_LIFETIME", 300)) * time.Second,
 			},
 		},
 		JWT: JWTConfig{
@@ -456,7 +494,7 @@ func LoadFromMap(envMap map[string]string) (*Config, error) {
 		},
 		Cache: CacheConfig{
 			MaxMemory:       getInt64("CACHE_MAX_MEMORY", 100*1024*1024), // 100MB default
-			TTL:             getDuration("CACHE_TTL", 1*time.Hour), // 1 hour default
+			TTL:             getDuration("CACHE_TTL", 1*time.Hour),       // 1 hour default
 			Enabled:         getBool("CACHE_ENABLED", true),
 			Backend:         get("CACHE_BACKEND", "memory"),
 			Prefix:          get("CACHE_PREFIX", "telar:"),

@@ -184,6 +184,67 @@ func New(config Config) fiber.Handler {
 	return limiter.New(limiterConfig)
 }
 
+// NewWithConfig creates a rate limiter with explicit configuration.
+// This is the recommended generic function for configuring rate limits.
+//
+// Parameters:
+//   - enabled: Whether rate limiting is enabled
+//   - max: Maximum number of requests allowed
+//   - duration: Time window for the rate limit
+//   - endpointName: Human-readable name for logging (e.g., "login", "signup", "api-calls")
+//
+// Returns a pass-through handler if disabled, otherwise returns configured rate limiter.
+//
+// Example:
+//   limiter := ratelimit.NewWithConfig(true, 5, 15*time.Minute, "login")
+func NewWithConfig(enabled bool, max int, duration time.Duration, endpointName string) fiber.Handler {
+	if !enabled {
+		return func(c *fiber.Ctx) error {
+			return c.Next()
+		}
+	}
+
+	return limiter.New(limiter.Config{
+		Max:        max,
+		Expiration: duration,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return c.IP() + ":" + c.Path()
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			log.Warn("[RateLimit] Rate limit exceeded for %s from IP: %s", endpointName, c.IP())
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error":     "Rate limit exceeded",
+				"code":      "RATE_LIMIT_EXCEEDED",
+				"message":   fmt.Sprintf("Too many %s attempts. Please try again later.", endpointName),
+				"retryAfter": int(duration.Seconds()),
+			})
+		},
+	})
+}
+
+// NewConditional creates a rate limiter with conditional enabling and full config control.
+// Use this when you need to conditionally enable rate limiting based on environment/config.
+//
+// Parameters:
+//   - enabled: Whether rate limiting is enabled
+//   - config: Full Config struct for advanced customization
+//
+// Returns a pass-through handler if disabled, otherwise returns configured rate limiter.
+//
+// Example:
+//   limiter := ratelimit.NewConditional(cfg.RateLimitEnabled, ratelimit.Config{
+//       EndpointType: ratelimit.EndpointLogin,
+//       Limits: customLimits,
+//   })
+func NewConditional(enabled bool, config Config) fiber.Handler {
+	if !enabled {
+		return func(c *fiber.Ctx) error {
+			return c.Next()
+		}
+	}
+	return New(config)
+}
+
 // NewLoginLimiter creates a rate limiter specifically for login endpoints
 func NewLoginLimiter(customLimits *EndpointLimits) fiber.Handler {
 	return New(Config{
@@ -191,6 +252,7 @@ func NewLoginLimiter(customLimits *EndpointLimits) fiber.Handler {
 		Limits:       customLimits,
 	})
 }
+
 
 // NewPasswordResetLimiter creates a rate limiter specifically for password reset endpoints
 func NewPasswordResetLimiter(customLimits *EndpointLimits) fiber.Handler {
@@ -200,6 +262,7 @@ func NewPasswordResetLimiter(customLimits *EndpointLimits) fiber.Handler {
 	})
 }
 
+
 // NewSignupLimiter creates a rate limiter specifically for signup endpoints
 func NewSignupLimiter(customLimits *EndpointLimits) fiber.Handler {
 	return New(Config{
@@ -208,6 +271,7 @@ func NewSignupLimiter(customLimits *EndpointLimits) fiber.Handler {
 	})
 }
 
+
 // NewVerificationLimiter creates a rate limiter specifically for verification endpoints
 func NewVerificationLimiter(customLimits *EndpointLimits) fiber.Handler {
 	return New(Config{
@@ -215,6 +279,7 @@ func NewVerificationLimiter(customLimits *EndpointLimits) fiber.Handler {
 		Limits:       customLimits,
 	})
 }
+
 
 // NewVerificationByIDLimiter creates a rate limiter for verification attempts by verification ID
 // This provides additional protection against brute force attacks on specific verification codes

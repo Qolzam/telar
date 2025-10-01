@@ -65,41 +65,6 @@ func NewBaseService(ctx context.Context, cfg *platformconfig.Config) (*BaseServi
 	}, nil
 }
 
-// NewBaseServiceFromLegacyConfig creates a new base service instance from legacy config
-// This function is kept for backward compatibility during the transition
-func NewBaseServiceFromLegacyConfig(ctx context.Context, config *ServiceConfig) (*BaseService, error) {
-	if config == nil {
-		return nil, fmt.Errorf("service configuration is required")
-	}
-
-	// Create repository factory
-	factoryConfig := &interfaces.RepositoryConfig{
-		DatabaseType:     config.DatabaseType,
-		ConnectionString: config.ConnectionString,
-		DatabaseName:     config.DatabaseName,
-		MongoConfig:      config.MongoConfig,
-		PostgresConfig:   config.PostgreSQLConfig,
-	}
-
-	factory := factory.NewRepositoryFactory(factoryConfig)
-
-	// Validate configuration
-	if err := factory.ValidateConfig(); err != nil {
-		return nil, fmt.Errorf("invalid repository configuration: %w", err)
-	}
-
-	// Create repository
-	repository, err := factory.CreateRepository(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create repository: %w", err)
-	}
-
-	return &BaseService{
-		Repository: repository,
-		config:     config,
-	}, nil
-}
-
 // getDatabaseNameFromConfig extracts database name from platform config
 func getDatabaseNameFromConfig(cfg *platformconfig.Config) string {
 	switch cfg.Database.Type {
@@ -245,7 +210,30 @@ func (b *ServiceBuilder) WithRetries(maxRetries int) *ServiceBuilder {
 
 // Build creates the service instance
 func (b *ServiceBuilder) Build(ctx context.Context) (*BaseService, error) {
-	return NewBaseServiceFromLegacyConfig(ctx, b.config)
+	// Create repository factory
+	factoryConfig := &interfaces.RepositoryConfig{
+		DatabaseType:     b.config.DatabaseType,
+		ConnectionString: b.config.ConnectionString,
+		DatabaseName:     b.config.DatabaseName,
+		MongoConfig:      b.config.MongoConfig,
+		PostgresConfig:   b.config.PostgreSQLConfig,
+	}
+
+	repositoryFactory := factory.NewRepositoryFactory(factoryConfig)
+
+	if err := repositoryFactory.ValidateConfig(); err != nil {
+		return nil, fmt.Errorf("invalid repository configuration: %w", err)
+	}
+
+	repository, err := repositoryFactory.CreateRepository(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create repository: %w", err)
+	}
+
+	return &BaseService{
+		Repository: repository,
+		config:     b.config,
+	}, nil
 }
 
 // Common utility functions for services

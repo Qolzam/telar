@@ -19,7 +19,7 @@ func TestLoadFromMap(t *testing.T) {
 
 	t.Run("Loads all provided values correctly", func(t *testing.T) {
 		t.Parallel()
-		
+
 		// 1. Define the entire test environment as a simple map.
 		testEnv := map[string]string{
 			"HMAC_SECRET":     "test-secret",
@@ -68,7 +68,7 @@ func TestLoadFromMap(t *testing.T) {
 
 	t.Run("Returns error for missing required values", func(t *testing.T) {
 		t.Parallel()
-		
+
 		// Missing MONGO_URI
 		testEnv := map[string]string{
 			"HMAC_SECRET":     "test-secret",
@@ -82,11 +82,11 @@ func TestLoadFromMap(t *testing.T) {
 
 	t.Run("Returns error for missing JWT_PRIVATE_KEY", func(t *testing.T) {
 		t.Parallel()
-		
+
 		testEnv := map[string]string{
-			"HMAC_SECRET":     "test-secret",
-			"JWT_PUBLIC_KEY":  "test-public-key",
-			"MONGO_URI":       "mongodb://localhost:27017",
+			"HMAC_SECRET":    "test-secret",
+			"JWT_PUBLIC_KEY": "test-public-key",
+			"MONGO_URI":      "mongodb://localhost:27017",
 		}
 
 		_, err := LoadFromMap(testEnv)
@@ -96,7 +96,7 @@ func TestLoadFromMap(t *testing.T) {
 
 	t.Run("Returns error for missing JWT_PUBLIC_KEY", func(t *testing.T) {
 		t.Parallel()
-		
+
 		testEnv := map[string]string{
 			"HMAC_SECRET":     "test-secret",
 			"JWT_PRIVATE_KEY": "test-private-key",
@@ -110,7 +110,7 @@ func TestLoadFromMap(t *testing.T) {
 
 	t.Run("Returns error for missing HMAC_SECRET", func(t *testing.T) {
 		t.Parallel()
-		
+
 		testEnv := map[string]string{
 			"JWT_PRIVATE_KEY": "test-private-key",
 			"JWT_PUBLIC_KEY":  "test-public-key",
@@ -124,7 +124,7 @@ func TestLoadFromMap(t *testing.T) {
 
 	t.Run("Handles integer parsing errors gracefully", func(t *testing.T) {
 		t.Parallel()
-		
+
 		testEnv := map[string]string{
 			"HMAC_SECRET":     "test-secret",
 			"JWT_PRIVATE_KEY": "test-private-key",
@@ -141,7 +141,7 @@ func TestLoadFromMap(t *testing.T) {
 
 	t.Run("Handles boolean parsing errors gracefully", func(t *testing.T) {
 		t.Parallel()
-		
+
 		testEnv := map[string]string{
 			"HMAC_SECRET":     "test-secret",
 			"JWT_PRIVATE_KEY": "test-private-key",
@@ -158,7 +158,7 @@ func TestLoadFromMap(t *testing.T) {
 
 	t.Run("Handles duration parsing errors gracefully", func(t *testing.T) {
 		t.Parallel()
-		
+
 		testEnv := map[string]string{
 			"HMAC_SECRET":     "test-secret",
 			"JWT_PRIVATE_KEY": "test-private-key",
@@ -175,7 +175,7 @@ func TestLoadFromMap(t *testing.T) {
 
 	t.Run("Handles fallback environment variables", func(t *testing.T) {
 		t.Parallel()
-		
+
 		testEnv := map[string]string{
 			"HMAC_SECRET":     "test-secret",
 			"JWT_PRIVATE_KEY": "test-private-key",
@@ -194,11 +194,11 @@ func TestLoadFromMap(t *testing.T) {
 func TestLoadFromEnv(t *testing.T) {
 	// This test is intentionally NOT parallel to avoid conflicts with environment variables
 	// It tests the actual LoadFromEnv function which reads from the real environment
-	
+
 	// Note: This test will only work if the required environment variables are set
 	// In CI/CD, these should be set by the environment
 	// For local development, they should be in the .env file
-	
+
 	cfg, err := LoadFromEnv()
 	if err != nil {
 		t.Skipf("LoadFromEnv test skipped: %v (this is expected if environment variables are not set)", err)

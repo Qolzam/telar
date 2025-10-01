@@ -23,5 +23,3 @@ func (f *FakeRecaptchaVerifier) Verify(ctx context.Context, token string) (bool,
 	}
 	return false, nil
 }
-
-

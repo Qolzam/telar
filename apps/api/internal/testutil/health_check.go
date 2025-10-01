@@ -7,15 +7,16 @@ import (
 
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
 	platform "github.com/qolzam/telar/apps/api/internal/platform"
+	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 )
 
 // HealthChecker provides database health checking functionality
 type HealthChecker struct {
-	config *TestConfig
+	config *platformconfig.Config
 }
 
 // NewHealthChecker creates a new health checker
-func NewHealthChecker(config *TestConfig) *HealthChecker {
+func NewHealthChecker(config *platformconfig.Config) *HealthChecker {
 	return &HealthChecker{
 		config: config,
 	}
@@ -38,14 +39,11 @@ func (hc *HealthChecker) CheckDatabaseHealth(ctx context.Context, dbType string)
 		Details:      make(map[string]interface{}),
 	}
 
-	// Create platform config from test config
-	platformConfig := hc.config.ToPlatformConfig(dbType)
-	
 	// Create base service with timeout
 	checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	
-	base, err := platform.NewBaseService(checkCtx, platformConfig)
+	base, err := platform.NewBaseService(checkCtx, hc.config)
 	if err != nil {
 		result.Error = fmt.Errorf("failed to create base service: %w", err)
 		result.IsHealthy = false
@@ -147,12 +145,12 @@ func (hc *HealthChecker) CheckAllDatabases(ctx context.Context) map[string]*Heal
 	results := make(map[string]*HealthCheckResult)
 
 	// Check MongoDB if configured
-	if hc.config.MongoHost != "" {
+	if hc.config.Database.MongoDB.Host != "" {
 		results[dbi.DatabaseTypeMongoDB] = hc.CheckDatabaseHealth(ctx, dbi.DatabaseTypeMongoDB)
 	}
 
 	// Check PostgreSQL if configured
-	if hc.config.PGHost != "" {
+	if hc.config.Database.Postgres.Host != "" {
 		results[dbi.DatabaseTypePostgreSQL] = hc.CheckDatabaseHealth(ctx, dbi.DatabaseTypePostgreSQL)
 	}
 

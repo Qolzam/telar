@@ -1,0 +1,123 @@
+# 🚨 SECURITY: Sensitive Data Protection
+# ======================================
+
+# Environment files with sensitive data
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+.env.*.local
+
+# API Keys, Secrets, and Tokens
+*.key
+*.pem
+*.crt
+*.cert
+secrets.json
+config/secrets.yml
+**/secrets/**
+
+# Database credentials and connection strings
+# (These are already in .env but added here for extra safety)
+*password*
+*secret*
+*token*
+*credential*
+
+# Build artifacts and binaries
+/bin/
+/dist/
+/build/
+/target/
+*.exe
+*.dll
+*.so
+*.dylib
+ai-engine
+
+# Test coverage and profiling
+*.out
+coverage.txt
+*.prof
+*.test
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.pid
+*.seed
+*.pid.lock
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Go specific
+vendor/
+*.mod.sum.bak
+
+# Docker
+.dockerignore
+
+# Logs and runtime data
+logs/
+tmp/
+temp/
+*.log
+
+# Backup files
+*.backup
+*.bak
+*~
+
+# Air live reload
+tmp/
+
+# Node.js (if any frontend code exists)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn-integrity
+
+# Terraform (if using infrastructure as code)
+*.tfstate
+*.tfstate.*
+.terraform/
+terraform.tfvars
+
+# AWS (if using AWS services)
+.aws/
+*.pem
+
+# Kubernetes secrets (if using k8s)
+*secret*.yaml
+*secret*.yml
+
+# Database files (local development)
+*.db
+*.sqlite
+*.sqlite3
+
+# Documentation builds
+/docs/_build/
+/docs/build/
+/*.md.bak

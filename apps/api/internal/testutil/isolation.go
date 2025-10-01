@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -15,12 +16,11 @@ import (
 )
 
 // IsolatedTest provides a truly isolated environment for a single test.
-// CONFIG-FIRST: IsolatedTest now holds both platform config and legacy config.
+// CONFIG-FIRST: IsolatedTest now holds platform config.
 type IsolatedTest struct {
-	t            *testing.T
-	Repo         dbi.Repository
-	Config       *platformconfig.Config // CONFIG-FIRST: Primary config for dependency injection
-	LegacyConfig *TestConfig            // Keep for backward compatibility during transition
+	t      *testing.T
+	Repo   dbi.Repository
+	Config *platformconfig.Config // CONFIG-FIRST: Primary config for dependency injection
 }
 
 // NewIsolatedTest creates a new isolated test environment.
@@ -61,18 +61,18 @@ func setupPostgresIsolatedTest(t *testing.T, isoTest *IsolatedTest) {
 	uniqueSuffix := strings.ReplaceAll(uuid.Must(uuid.NewV4()).String(), "-", "")[:16]
 	uniqueSchema := fmt.Sprintf("test_%s_%s", sanitizedName, uniqueSuffix)
 	
-	// Load legacy config for backward compatibility
-	legacyCfg, err := LoadTestConfig()
-	if err != nil {
-		t.Fatalf("Failed to load legacy config for isolated test: %v", err)
+	// Create database config directly from platform config
+	dbCfg := &dbi.PostgreSQLConfig{
+		Host:     isoTest.Config.Database.Postgres.Host,
+		Port:     isoTest.Config.Database.Postgres.Port,
+		Database: isoTest.Config.Database.Postgres.Database,
+		Username: isoTest.Config.Database.Postgres.Username,
+		Password: isoTest.Config.Database.Postgres.Password,
+		Schema:   uniqueSchema,
+		SSLMode:  isoTest.Config.Database.Postgres.SSLMode,
 	}
-	isoTest.LegacyConfig = legacyCfg
 	
-	// CONFIG-FIRST: Modify the local copy of the config with unique schema
-	isoTest.LegacyConfig.PGSchema = uniqueSchema
-
 	// 2. Create a NEW, dedicated PostgreSQL client and repository for this test from the modified config.
-	dbCfg := legacyCfg.ToServiceConfig(dbi.DatabaseTypePostgreSQL).PostgreSQLConfig
 	// Use the base database name, not the schema name for the repository
 	postgresRepo, err := postgresql.NewPostgreSQLRepository(context.Background(), dbCfg, dbCfg.Database)
 	if err != nil {
@@ -98,14 +98,14 @@ func setupMongoDatabasePerTest(t *testing.T, isoTest *IsolatedTest) {
 	isoTest.Config.Database.MongoDB.URI = updateURIWithDatabase(isoTest.Config.Database.MongoDB.URI, uniqueName)
 
 	// 2. Create a NEW, dedicated MongoDB client and repository for this test from the modified config.
-	// Load legacy config for backward compatibility
-	legacyCfg, err := LoadTestConfig()
-	if err != nil {
-		t.Fatalf("Failed to load legacy config for isolated test: %v", err)
+	// Create database config directly from platform config
+	dbCfg := &dbi.MongoDBConfig{
+		Host:     isoTest.Config.Database.MongoDB.Host,
+		Port:     isoTest.Config.Database.MongoDB.Port,
+		Username: isoTest.Config.Database.MongoDB.Username,
+		Password: isoTest.Config.Database.MongoDB.Password,
 	}
-	isoTest.LegacyConfig = legacyCfg
 	
-	dbCfg := legacyCfg.ToServiceConfig(dbi.DatabaseTypeMongoDB).MongoConfig
 	mongoRepo, err := mongodb.NewMongoRepository(context.Background(), dbCfg, uniqueName)
 	if err != nil {
 		t.Fatalf("Failed to create isolated MongoDB repository for database %s: %v", uniqueName, err)
@@ -132,6 +132,24 @@ func updateURIWithDatabase(uri, dbName string) string {
 		}
 	}
 	return uri + "/" + dbName
+}
+
+// SanitizeTestName sanitizes a test name for use as a database identifier
+func SanitizeTestName(name string) string {
+	name = strings.ReplaceAll(name, "/", "_")
+	name = strings.ReplaceAll(name, " ", "_")
+	reg := regexp.MustCompile(`[^a-zA-Z0-9_]+`)
+	name = strings.ToLower(reg.ReplaceAllString(name, ""))
+
+	// Enforce length limits for database naming compatibility
+	// MongoDB has a 63-character limit, reserve 22 chars for "test_" prefix + "_" + 16-char UUID
+	// This leaves 41 characters maximum for the sanitized test name
+	const maxTestNameLength = 41
+	if len(name) > maxTestNameLength {
+		name = name[:maxTestNameLength]
+	}
+
+	return name
 }
 
 // --- DEPRECATED COMPONENTS ---

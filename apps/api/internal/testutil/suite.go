@@ -22,7 +22,6 @@ type Suite struct {
 	postgresConnection dbi.Repository
 	initialized        bool
 	config             *platformconfig.Config // CONFIG-FIRST: Use platform config as source of truth
-	legacyConfig       *TestConfig            // Keep for backward compatibility during transition
 }
 
 var (
@@ -53,7 +52,7 @@ func Setup(t *testing.T) *Suite {
 					Secret: "test-secret",
 				},
 				Database: platformconfig.DatabaseConfig{
-					Type: "mongo",
+					Type: "mongodb",
 					MongoDB: platformconfig.MongoDBConfig{
 						Host:     "localhost",
 						Port:     27017,
@@ -77,13 +76,6 @@ func Setup(t *testing.T) *Suite {
 		}
 		globalSuite.config = cfg
 
-		// Load legacy test config for backward compatibility during transition
-		legacyCfg, err := LoadTestConfig()
-		if err != nil {
-			t.Fatalf("Failed to load legacy test configuration: %v", err)
-		}
-		globalSuite.legacyConfig = legacyCfg
-
 		// Create shared connections with connection pooling.
 		if err := globalSuite.createSharedConnections(); err != nil {
 			t.Logf("Warning: Not all database connections were available: %v", err)
@@ -94,11 +86,11 @@ func Setup(t *testing.T) *Suite {
 	
 	// Re-check connections if they are nil, in case a previous package's
 	// non-standard cleanup closed them. This makes the suite resilient.
-	if globalSuite.mongoConnection == nil && globalSuite.legacyConfig.MongoHost != "" {
+	if globalSuite.mongoConnection == nil && globalSuite.config.Database.MongoDB.Host != "" {
 		t.Log("Mongo connection lost, attempting to reconnect...")
 		_ = globalSuite.createSharedConnections()
 	}
-	if globalSuite.postgresConnection == nil && globalSuite.legacyConfig.PGHost != "" {
+	if globalSuite.postgresConnection == nil && globalSuite.config.Database.Postgres.Host != "" {
 		t.Log("Postgres connection lost, attempting to reconnect...")
 		_ = globalSuite.createSharedConnections()
 	}
@@ -120,7 +112,7 @@ func (s *Suite) createSharedConnections() error {
 	defer cancel()
 
 	// Perform health checks before creating connections
-	healthChecker := NewHealthChecker(s.legacyConfig)
+	healthChecker := NewHealthChecker(s.config)
 	if err := healthChecker.ValidateTestEnvironment(ctx); err != nil {
 		return fmt.Errorf("test environment validation failed: %w", err)
 	}
@@ -132,8 +124,7 @@ func (s *Suite) createSharedConnections() error {
 
 	go func() {
 		defer wg.Done()
-		pc := s.legacyConfig.ToPlatformConfig(dbi.DatabaseTypeMongoDB)
-		if base, err := platform.NewBaseService(ctx, pc); err == nil {
+		if base, err := platform.NewBaseService(ctx, s.config); err == nil {
 			s.mu.Lock()
 			s.mongoConnection = base.Repository
 			s.mu.Unlock()
@@ -144,8 +135,7 @@ func (s *Suite) createSharedConnections() error {
 
 	go func() {
 		defer wg.Done()
-		pc := s.legacyConfig.ToPlatformConfig(dbi.DatabaseTypePostgreSQL)
-		if base, err := platform.NewBaseService(ctx, pc); err == nil {
+		if base, err := platform.NewBaseService(ctx, s.config); err == nil {
 			s.mu.Lock()
 			s.postgresConnection = base.Repository
 			s.mu.Unlock()
