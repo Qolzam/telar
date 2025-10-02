@@ -200,19 +200,12 @@ func TestAuth_Admin_Signup_Persistence(t *testing.T) {
 	suite := testutil.Setup(t)
 
 	// 2. Make a local copy of the config for test-specific overrides.
-	localConfig := suite.Config()
-	localConfig.JWT.PrivateKey = "-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIF9p6oRkqKp7qkQGJJ4lmHn9qI7a1g7S0t7y2sYgHnQeoAoGCCqGSM49\nAwEHoUQDQgAEtq2jh2Qyq5gS5i8Eac1Q5E8p5i2vVh7mQmCw5HqB8w+f2h1O3F6C\n2wzJ6QJk0p8xgS6j4XGxqkF6J8nXGm+3vw==\n-----END EC PRIVATE KEY-----"
-	localConfig.JWT.PublicKey = "-----BEGIN PUBLIC KEY-----\nMFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAEtq2jh2Qyq5gS5i8Eac1Q5E8p5i2vVh7m\nQmCw5HqB8w+f2h1O3F6C2wzJ6QJk0p8xgS6j4XGxqkF6J8nXGm+3vw==\n-----END PUBLIC KEY-----"
+	localConfig := *suite.Config()
 	localConfig.Server.WebDomain = "http://localhost"
-	// NOTE: Any other config needed by the handler/service must be set on `localConfig` here.
 
 	// 3. Create a SINGLE isolated test environment. This creates a unique, temporary
 	//    database and returns a repository connected to it. THIS IS OUR SOURCE OF TRUTH.
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, localConfig)
-
-	// --- THE CRITICAL FIX ---
-	// DO NOT create a separate BaseService. Instead, use the isolated repository
-	// to build the dependencies for the test.
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, &localConfig)
 
 	// 4. Create the application dependencies by INJECTING the ISOLATED repository.
 	serviceCfg := &platform.ServiceConfig{
@@ -231,10 +224,8 @@ func TestAuth_Admin_Signup_Persistence(t *testing.T) {
 	baseService := platform.NewBaseServiceWithRepo(iso.Repo, serviceCfg)
 	app := newAuthAppForTest(t, baseService, iso.Config)
 
-	// --- END OF CRITICAL FIX ---
 
 	// 5. Prepare and execute the request.
-	// The `app` is now running with a handler that uses the isolated database.
 	httpHelper := testutil.NewHTTPHelper(t, app)
 
 	email := fmt.Sprintf("admin+persist-%d@example.com", time.Now().UnixNano())

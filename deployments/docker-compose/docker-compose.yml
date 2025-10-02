@@ -48,3 +48,5 @@ services:
 volumes:
   telar-mongo-data:
   telar-postgres-data:
+
+

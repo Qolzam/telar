@@ -5,11 +5,13 @@ import (
 
 	"github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
+	"github.com/qolzam/telar/apps/api/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
 func TestVerifySignup_AccessTokenGeneration(t *testing.T) {
-	// Create service config
+	suite := testutil.Setup(t)
+	
 	config := &ServiceConfig{
 		JWTConfig: platformconfig.JWTConfig{
 			PublicKey:  "test-public-key",
@@ -24,20 +26,12 @@ func TestVerifySignup_AccessTokenGeneration(t *testing.T) {
 		},
 	}
 
-	// Create a mock base service for testing
-	base := &platform.BaseService{} // Minimal setup for testing
+	base := &platform.BaseService{}
 
-	// Test keys (these should be from test suite)
-	privateKey := `-----BEGIN EC PRIVATE KEY-----
-MHcCAQEEIKj1H/8K8NVKFbAWJZRAGT9ePBPGcPJy7gZs+YgHSr8ooAoGCCqGSM49
-AwEHoUQDQgAEr/W+cGqZqwpwvC3T4rGxzW7GvKVjL9hEKZc+9mFHyQN1/Q6Fq0Cp
-cY3sZ5zKxgqL7r3n5jrBdJm2tTgP1DKz7w==
------END EC PRIVATE KEY-----`
+	publicKey, privateKey := suite.GenerateUniqueJWTKeys(t)
 
-	// Create service with JWT generation capability
 	service := NewServiceWithKeys(base, config, privateKey, "Telar", "http://localhost")
 
-	// Test that service is properly configured
 	require.NotNil(t, service.privateKey)
 	require.Equal(t, "Telar", service.orgName)
 	require.Equal(t, "http://localhost", service.webDomain)
@@ -46,7 +40,6 @@ cY3sZ5zKxgqL7r3n5jrBdJm2tTgP1DKz7w==
 }
 
 func TestVerifySignupResult_Structure(t *testing.T) {
-	// Test that VerifySignupResult has all required fields
 	result := &VerifySignupResult{
 		AccessToken: "test-token",
 		TokenType:   "Bearer",

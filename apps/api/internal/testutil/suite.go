@@ -14,14 +14,12 @@ import (
 )
 
 // Suite manages shared, pooled database connections for high-performance testing.
-// It is a singleton designed solely to minimize connection overhead across test packages.
-// CONFIG-FIRST: Suite now holds the canonical platform config instead of legacy TestConfig.
 type Suite struct {
 	mu                 sync.RWMutex
 	mongoConnection    dbi.Repository
 	postgresConnection dbi.Repository
 	initialized        bool
-	config             *platformconfig.Config // CONFIG-FIRST: Use platform config as source of truth
+	config             *platformconfig.Config
 }
 
 var (
@@ -30,23 +28,16 @@ var (
 )
 
 // Setup initializes the global suite with shared connections. It's safe to call
-// from multiple tests and packages; it will only run its logic once.
-// CONFIG-FIRST: Load platform config once and use it as the source of truth.
 func Setup(t *testing.T) *Suite {
 	t.Helper()
 	
 	suiteOnce.Do(func() {
 		globalSuite = &Suite{}
-		
-		// CONFIG-FIRST: Load the canonical platform config ONCE inside suiteOnce.Do
-		// This eliminates all os.Setenv calls and makes the suite parallel-safe
+
 		cfg, err := platformconfig.LoadFromEnv()
 		if err != nil {
-			// If loading from env fails, create a default config for testing
 			cfg = &platformconfig.Config{
 				JWT: platformconfig.JWTConfig{
-					PublicKey:  "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE1ISIQzdrnaTaiyqpQRWgK/pXLGyi\nUq5ssFd6Ay55mGWyqb9X0NrDjwc5kziI74j+nhgRxXFQCHeGCBIIDSR+Jg==\n-----END PUBLIC KEY-----",
-					PrivateKey: "-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIEXoWfqfRGBwIinSGPae2+2/FbHj5J6m5qufrLM+mEjboAoGCCqGSM49\nAwEHoUQDQgAE1ISIQzdrnaTaiyqpQRWgK/pXLGyiUq5ssFd6Ay55mGWyqb9X0NrD\njwc5kziI74j+nhgRxXFQCHeGCBIIDSR+Jg==\n-----END EC PRIVATE KEY-----",
 				},
 				HMAC: platformconfig.HMACConfig{
 					Secret: "test-secret",
@@ -76,7 +67,6 @@ func Setup(t *testing.T) *Suite {
 		}
 		globalSuite.config = cfg
 
-		// Create shared connections with connection pooling.
 		if err := globalSuite.createSharedConnections(); err != nil {
 			t.Logf("Warning: Not all database connections were available: %v", err)
 		}
@@ -84,8 +74,6 @@ func Setup(t *testing.T) *Suite {
 		globalSuite.initialized = true
 	})
 	
-	// Re-check connections if they are nil, in case a previous package's
-	// non-standard cleanup closed them. This makes the suite resilient.
 	if globalSuite.mongoConnection == nil && globalSuite.config.Database.MongoDB.Host != "" {
 		t.Log("Mongo connection lost, attempting to reconnect...")
 		_ = globalSuite.createSharedConnections()
@@ -99,11 +87,23 @@ func Setup(t *testing.T) *Suite {
 }
 
 // Config returns the canonical platform config for dependency injection.
-// CONFIG-FIRST: This is the primary method for accessing configuration in tests.
 func (s *Suite) Config() *platformconfig.Config {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.config
+}
+
+// GetTestJWTConfig provides direct access to the centralized JWT configuration for tests.
+func (s *Suite) GetTestJWTConfig() platformconfig.JWTConfig {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.config.JWT
+}
+
+// GenerateUniqueJWTKeys provides a new, unique ECDSA key pair for a single test.
+func (s *Suite) GenerateUniqueJWTKeys(t *testing.T) (publicKeyPEM string, privateKeyPEM string) {
+	t.Helper()
+	return GenerateECDSAKeyPairPEM(t)
 }
 
 // createSharedConnections attempts to connect to both databases concurrently.
@@ -111,7 +111,6 @@ func (s *Suite) createSharedConnections() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Perform health checks before creating connections
 	healthChecker := NewHealthChecker(s.config)
 	if err := healthChecker.ValidateTestEnvironment(ctx); err != nil {
 		return fmt.Errorf("test environment validation failed: %w", err)
@@ -167,7 +166,6 @@ func (s *Suite) GetPostgresPool() dbi.Repository {
 }
 
 // ShouldRunDatabaseTests checks if database tests should be executed.
-// This replaces direct os.Getenv("RUN_DB_TESTS") checks with a centralized approach.
 func ShouldRunDatabaseTests() bool {
 	return os.Getenv("RUN_DB_TESTS") == "1"
 }

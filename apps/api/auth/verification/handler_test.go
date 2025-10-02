@@ -7,14 +7,15 @@ import (
 
 	"strings"
 
+	"github.com/qolzam/telar/apps/api/internal/testutil"
 	"github.com/qolzam/telar/apps/api/internal/types"
 
 	"github.com/gofiber/fiber/v2"
 )
 
 func TestVerification_Handle_Get_OK(t *testing.T) {
-	// Create handler with local test configuration
-	pub := "-----BEGIN PUBLIC KEY-----\nMFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAEtq2jh2Qyq5gS5i8Eac1Q5E8p5i2vVh7m\nQmCw5HqB8w+f2h1O3F6C2wzJ6QJk0p8xgS6j4XGxqkF6J8nXGm+3vw==\n-----END PUBLIC KEY-----"
+	suite := testutil.Setup(t)
+	pub := suite.GetTestJWTConfig().PublicKey
 	org := "Telar"
 	webDomain := "http://localhost"
 
@@ -37,7 +38,8 @@ func TestVerification_Handle_Get_OK(t *testing.T) {
 }
 
 func TestVerification_SSR_InvalidToken(t *testing.T) {
-	pub := "-----BEGIN PUBLIC KEY-----\nMFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAEtq2jh2Qyq5gS5i8Eac1Q5E8p5i2vVh7m\nQmCw5HqB8w+f2h1O3F6C2wzJ6QJk0p8xgS6j4XGxqkF6J8nXGm+3vw==\n-----END PUBLIC KEY-----"
+	suite := testutil.Setup(t)
+	pub := suite.GetTestJWTConfig().PublicKey
 	org := "Telar"
 	webDomain := "http://localhost"
 
