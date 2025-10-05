@@ -11,7 +11,14 @@
     <div class="container">
         <!-- Header with Status Bar -->
         <header class="header">
-            <h1>🤖 AI Engine Control Panel</h1>
+            <div class="header-top">
+                <h1>🤖 AI Engine Control Panel</h1>
+                <div class="theme-toggle">
+                    <button id="theme-toggle-btn" onclick="toggleTheme()" title="Toggle Dark/Light Theme">
+                        <span id="theme-icon">🌙</span>
+                    </button>
+                </div>
+            </div>
             <div class="status-bar">
                 <span id="embedding-status">Embedding: <span id="embedding-provider">Loading...</span></span>
                 <span id="completion-status">Completion: <span id="completion-provider">Loading...</span></span>
@@ -184,6 +191,31 @@
                 </div>
                 <button id="generate-btn" onclick="handleGenerate()">Generate Ideas</button>
                 <div id="generate-status" class="status-message"></div>
+            </div>
+
+            <div class="section">
+                <h2>📊 Concurrent Request Status</h2>
+                <div class="input-group">
+                    <button id="status-btn" onclick="loadConcurrentStatus()">Refresh Status</button>
+                </div>
+                <div id="concurrent-status-display" class="status-box">
+                    <div class="status-item">
+                        <span class="status-label">Max Concurrent:</span>
+                        <span id="max-concurrent">-</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Active Requests:</span>
+                        <span id="active-requests">-</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Available Slots:</span>
+                        <span id="available-slots">-</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Can Accept Request:</span>
+                        <span id="can-accept-request">-</span>
+                    </div>
+                </div>
             </div>
 
             <div class="section">

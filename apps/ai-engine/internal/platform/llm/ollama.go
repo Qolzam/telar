@@ -42,7 +42,7 @@ func NewOllamaClient(config OllamaConfig) *OllamaClient {
 		config.CompletionModel = "llama3:8b"
 	}
 	if config.Timeout == 0 {
-		config.Timeout = 30 * time.Second
+		config.Timeout = 60 * time.Second
 	}
 
 	return &OllamaClient{

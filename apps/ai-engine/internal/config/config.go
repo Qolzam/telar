@@ -35,6 +35,7 @@ type LLMConfig struct {
 	OllamaBaseURL      string `json:"ollama_base_url,omitempty"`
 	EmbeddingModel     string `json:"embedding_model,omitempty"`
 	CompletionModel    string `json:"completion_model,omitempty"`
+	MaxConcurrent      int    `json:"max_concurrent,omitempty"`
 }
 
 // WeaviateConfig contains vector database settings
@@ -58,6 +59,7 @@ func Load() (*Config, error) {
 	viper.SetDefault("GROQ_MODEL", "llama3-8b-8192")
 	viper.SetDefault("OPENAI_BASE_URL", "https://api.openai.com/v1")
 	viper.SetDefault("OPENAI_MODEL", "gpt-3.5-turbo")
+	viper.SetDefault("MAX_CONCURRENT", "2")
 	viper.SetDefault("WEAVIATE_URL", "http://localhost:8080")
 
 	viper.AutomaticEnv()
@@ -81,6 +83,7 @@ func Load() (*Config, error) {
 			OllamaBaseURL:      viper.GetString("OLLAMA_BASE_URL"),
 			EmbeddingModel:     viper.GetString("EMBEDDING_MODEL"),
 			CompletionModel:    viper.GetString("COMPLETION_MODEL"),
+			MaxConcurrent:      viper.GetInt("MAX_CONCURRENT"),
 		},
 		Weaviate: WeaviateConfig{
 			URL:    viper.GetString("WEAVIATE_URL"),
