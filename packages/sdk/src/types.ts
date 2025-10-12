@@ -168,15 +168,16 @@ export interface ForgotPasswordRequest {
  * Reset password request
  */
 export interface ResetPasswordRequest {
-  token: string;
+  verifyId: string;
   newPassword: string;
+  confirmPassword: string;
 }
 
 /**
  * Change password request
  */
 export interface ChangePasswordRequest {
-  oldPassword: string;
+  currentPassword: string;
   newPassword: string;
   confirmPassword: string;
 }

@@ -2,7 +2,6 @@ import type { Metadata } from 'next';
 import { roboto } from '@/lib/theme/theme';
 import ThemeRegistry from '@/components/ThemeRegistry/ThemeRegistry';
 import QueryProvider from '@/lib/react-query/QueryProvider';
-import { PluginProvider } from '@/plugins';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -20,9 +19,7 @@ export default function RootLayout({
       <body className={roboto.className}>
         <QueryProvider>
           <ThemeRegistry>
-            <PluginProvider>
-              {children}
-            </PluginProvider>
+            {children}
           </ThemeRegistry>
         </QueryProvider>
       </body>
