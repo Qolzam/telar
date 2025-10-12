@@ -16,7 +16,8 @@
         report open-report clean-reports \
         bench bench-env bench-calibrated bench-summary open-profiles \
         up-both-replica test-transactions \
-        lint lint-fix
+        lint lint-fix \
+        run-api run-web run-both local-run-both
 
 # --- Configuration Variables ---
 PARALLEL ?= 8
@@ -25,13 +26,8 @@ REPORT_DIR := reports
 PROFILES_DIR := $(REPORT_DIR)/profiles
 TEST_ENV_SCRIPT := tools/dev/test_env.sh
 
-# Centralized Go test flags for consistency and easy modification.
-# -race: Essential for detecting concurrency issues.
-# -count=1: Disables test caching, ensuring fresh runs every time.
-# -covermode=atomic: Required for accurate coverage in parallel tests.
 GO_TEST_FLAGS := -count=1 -v -race -covermode=atomic -timeout=$(TIMEOUT) -parallel=$(PARALLEL)
 
-# The only environment variable needed to enable database-dependent tests.
 TEST_ENV_VARS := RUN_DB_TESTS=1
 
 # --- Linting & Code Quality ---
@@ -43,8 +39,7 @@ lint-fix:
 	@echo "Running golangci-lint with auto-fix..."
 	@cd apps/api && golangci-lint run --config=../../.golangci.yml --fix
 
-# --- Docker & Database Management (No Changes Needed) ---
-# These targets correctly manage the external test environment.
+# --- Docker & Database Management ---
 up-mongo:
 	@$(TEST_ENV_SCRIPT) up mongo
 
@@ -88,10 +83,8 @@ docker-start:
 		echo "Docker is running."; \
 	fi
 
-# Default `make` or `make all` will run all tests.
 all: test-all
 
-# Runs all tests in a specific microservice package against both databases.
 test-posts: up-both
 	@echo "Testing 'posts' microservice..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./posts $(GO_TEST_FLAGS)
@@ -144,18 +137,14 @@ test-storage: up-both
 	@echo "Testing 'storage' microservice..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./storage $(GO_TEST_FLAGS)
 
-
-# Non-DB tests can be run without `up-both`.
 test-cache:
 	@echo "Testing internal cache..."
 	@cd apps/api && go test ./internal/cache $(GO_TEST_FLAGS)
 
-# The primary target for running all tests across the entire repository.
 test-all: up-both
 	@echo "Running all tests for all microservices with parallelism $(PARALLEL)..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./... $(GO_TEST_FLAGS)
 
-# Race detector target for comprehensive concurrency testing
 test-all-race: up-both
 	@echo "Running all tests with race detector..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./... -count=1 -v -race -timeout=20m -parallel=8
@@ -164,19 +153,15 @@ local-test-all: docker-start test-all
 
 # --- CI/CD Targets ---
 
-# ci-fast: Core services for a quick feedback loop.
 ci-fast: up-both test-posts test-comments test-votes test-userrels test-admin
 
-# ci-test: Standard validation for pull requests, includes all key services.
 ci-test: up-both test-posts test-comments test-votes test-userrels test-auth test-profile test-circles test-setting test-admin test-gallery test-notifications test-actions test-storage test-cache
 
-# ci-full: Used for release branches, equivalent to ci-test.
 ci-full: ci-test
 
-# ci-nightly: The most comprehensive run, equivalent to test-all.
 ci-nightly: test-all
 
-# --- Reporting & Profiling (Maintained & Cleaned) ---
+# --- Reporting & Profiling ---
 
 report: up-both
 	@echo "Generating test and coverage reports..."
@@ -195,7 +180,8 @@ clean-reports:
 	@echo "Cleaning reports directory..."
 	@rm -rf $(REPORT_DIR)
 
-# Default benchmark target.
+local-run-both: docker-start status run-both
+
 bench: bench-calibrated
 
 bench-env: | $(REPORT_DIR)
@@ -235,10 +221,8 @@ open-profiles:
 	@echo "To inspect CPU profile: go tool pprof -http=:0 $(PROFILES_DIR)/all_cpu.pprof"
 	@echo "To inspect Memory profile: go tool pprof -http=:0 $(PROFILES_DIR)/all_mem.pprof"
 
-# --- Transaction Testing Commands ---
-# Enterprise transaction management testing with MongoDB replica set support
+# --- Transaction Testing ---
 
-# Start databases with MongoDB replica set for transaction testing
 up-both-replica:
 	@echo "Starting databases with MongoDB replica set for transaction testing..."
 	@$(TEST_ENV_SCRIPT) down both 2>/dev/null || true
@@ -249,7 +233,6 @@ up-both-replica:
 	@docker exec telar-mongo mongosh --eval "rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'localhost:27017'}]})" || echo "Replica set already initialized"
 	@echo "MongoDB replica set initialized for transaction testing"
 
-# Enterprise transaction tests with real databases
 test-transactions: up-both-replica
 	@echo "Testing enterprise transaction management..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./internal/database/ -v -run TestTransactionSuite $(GO_TEST_FLAGS)
@@ -318,10 +301,32 @@ help:
 	@echo "  up-both-replica   - Start databases with MongoDB replica set for transactions."
 	@echo "  test-transactions - Run enterprise transaction management tests."
 	@echo ""
+	@echo "Development Servers:"
+	@echo "  run-api           - Start the Telar API server (requires databases)."
+	@echo "  run-web           - Start the Next.js web frontend development server."
+	@echo "  run-both          - Start both API and web frontend servers concurrently."
+	@echo "  local-run-both    - ONE-COMMAND LOCAL DEV: Ensure Docker → Check status → Start all services."
+	@echo ""
 	@echo "Options:"
 	@echo "  PARALLEL=<N>      - Set the number of parallel tests to run (default: 8)."
 	@echo "  TIMEOUT=<duration>  - Set the test timeout (default: 15m)."
-# Run API server
+
+# --- Development Servers ---
+
 run-api: up-both
 	@echo "Starting Telar API server..."
 	@cd apps/api && go run cmd/server/main.go
+
+run-web:
+	@echo "Starting Next.js web frontend development server..."
+	@cd apps/web && pnpm dev
+
+run-both: up-both
+	@echo "Starting both API and web frontend servers..."
+	@echo "API server will be available at: http://localhost:8080"
+	@echo "Web frontend will be available at: http://localhost:3000"
+	@echo ""
+	@trap 'kill 0' EXIT; \
+	(cd apps/api && go run cmd/server/main.go) & \
+	(cd apps/web && pnpm dev) & \
+	wait
