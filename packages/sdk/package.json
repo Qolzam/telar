@@ -1,0 +1,18 @@
+{
+  "name": "@telar/sdk",
+  "version": "1.0.0",
+  "description": "TypeScript SDK for Telar Social Platform API",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "keywords": ["telar", "sdk", "api"],
+  "author": "Telar",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5"
+  }
+}
+
