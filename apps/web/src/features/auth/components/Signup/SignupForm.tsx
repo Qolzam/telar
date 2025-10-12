@@ -16,7 +16,7 @@ import {
   useTheme,
 } from '@mui/material';
 import PasswordStrengthBar from 'react-password-strength-bar';
-import { useSignup } from '@/lib/auth/hooks';
+import { useSignup } from '@/features/auth/client';
 import SocialLoginButtons from '@/features/auth/components/SocialLoginButtons';
 
 interface SignupFormProps {

@@ -20,7 +20,7 @@ import {
   useTheme,
 } from '@mui/material';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
-import { useLogin } from '@/lib/auth/hooks';
+import { useLogin } from '@/features/auth/client';
 import SocialLoginButtons from '@/features/auth/components/SocialLoginButtons';
 
 function LoginFormContent() {

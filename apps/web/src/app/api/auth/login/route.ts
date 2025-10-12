@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { apiRequest, ApiError } from '@/lib/api';
 import { createSessionCookie } from '@/lib/auth/cookies';
-import type { LoginRequest, GoApiLoginResponse } from '@/lib/auth/types';
+import type { LoginRequest, GoApiLoginResponse } from '@telar/sdk';
 
 export async function POST(request: NextRequest) {
   try {

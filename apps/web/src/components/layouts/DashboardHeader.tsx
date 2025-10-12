@@ -16,7 +16,7 @@ import {
   CircularProgress,
 } from '@mui/material';
 import { useState } from 'react';
-import { useSession, useLogout } from '@/lib/auth/hooks';
+import { useSession, useLogout } from '@/features/auth/client';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import SettingsIcon from '@mui/icons-material/Settings';
 import LogoutIcon from '@mui/icons-material/Logout';

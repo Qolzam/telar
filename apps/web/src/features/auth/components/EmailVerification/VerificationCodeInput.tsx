@@ -12,7 +12,7 @@ import {
   CircularProgress, 
   Alert 
 } from '@mui/material';
-import { useVerifyEmail } from '@/lib/auth/hooks';
+import { useVerifyEmail } from '@/features/auth/client';
 
 interface VerificationCodeInputProps {
   verificationId: string;

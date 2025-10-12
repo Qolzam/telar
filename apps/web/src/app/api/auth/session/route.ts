@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyToken, isTokenExpired } from '@/lib/auth/jwt';
 import { getSessionToken } from '@/lib/auth/cookies';
-import type { SessionData } from '@/lib/auth/types';
+import type { SessionData } from '@telar/sdk';
 
 export async function GET(request: NextRequest) {
   try {
