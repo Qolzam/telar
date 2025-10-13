@@ -1,0 +1,28 @@
+{
+  "name": "@telar/sdk",
+  "version": "1.0.0",
+  "description": "TypeScript SDK for Telar Social Platform API",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "eslint src/**/*.ts",
+    "type-check": "tsc --noEmit"
+  },
+  "keywords": [
+    "telar",
+    "sdk",
+    "api"
+  ],
+  "author": "Telar",
+  "license": "MIT",
+  "devDependencies": {
+    "@eslint/js": "^9.37.0",
+    "@types/node": "^24.7.2",
+    "@typescript-eslint/eslint-plugin": "^8.46.0",
+    "@typescript-eslint/parser": "^8.46.0",
+    "eslint": "^9.37.0",
+    "typescript": "^5"
+  }
+}
