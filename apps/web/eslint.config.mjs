@@ -21,6 +21,17 @@ const eslintConfig = [
     ],
   },
   {
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+        },
+      ],
+    },
+  },
+  {
     // Relax rules for legacy core files (will be refactored during plugin migration)
     files: ["src/core/**/*.ts", "src/core/**/*.tsx"],
     rules: {
