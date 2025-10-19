@@ -1,0 +1,183 @@
+openapi: 3.0.3
+info:
+  title: Admin Service API
+  description: Admin service for system administration, setup, and management operations
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: dev@telar.dev
+  license:
+    name: MIT
+    url: https://github.com/red-gold/telar-web/blob/master/LICENSE
+
+servers:
+  - url: /admin
+    description: Admin service base path
+
+paths:
+  /setup:
+    get:
+      summary: Display setup page
+      description: Renders the setup page for the application
+      tags:
+        - setup
+      responses:
+        '200':
+          description: Setup page rendered successfully
+          content:
+            text/html:
+              schema:
+                type: string
+    post:
+      summary: Setup process
+      description: Handles the setup process for the application
+      tags:
+        - setup
+      security:
+        - JWTAuth: []
+        - HMACAuth: []
+      responses:
+        '200':
+          description: Setup completed successfully
+          content:
+            text/html:
+              schema:
+                type: string
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /login:
+    get:
+      summary: Display login page
+      description: Renders the login page for Telar Social admin
+      tags:
+        - login
+      responses:
+        '200':
+          description: Login page rendered successfully
+          content:
+            text/html:
+              schema:
+                type: string
+    post:
+      summary: Admin login
+      description: Handle admin login for Telar Social
+      tags:
+        - login
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - username
+                - password
+              properties:
+                username:
+                  type: string
+                  description: Admin username
+                password:
+                  type: string
+                  description: Admin password
+      responses:
+        '200':
+          description: Login successful
+          content:
+            text/html:
+              schema:
+                type: string
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+components:
+  schemas:
+    AdminCheck:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Operation success status
+        admin:
+          type: boolean
+          description: Whether user is admin
+      required:
+        - success
+        - admin
+
+    AdminToken:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Operation success status
+        token:
+          type: string
+          description: Authentication token
+      required:
+        - success
+        - token
+
+    LoginModel:
+      type: object
+      properties:
+        username:
+          type: string
+          description: Admin username
+        password:
+          type: string
+          description: Admin password
+      required:
+        - username
+        - password
+
+    CreateSettingGroupModel:
+      type: object
+      properties:
+        type:
+          type: string
+          description: Setting group type
+        list:
+          type: array
+          items:
+            $ref: '#/components/schemas/SettingGroupItemModel'
+      required:
+        - type
+        - list
+
+    SettingGroupItemModel:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Setting name
+        value:
+          type: string
+          description: Setting value
+      required:
+        - name
+        - value
+
+    GetSettingGroupItemModel:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Setting name
+        value:
+          type: string
+          description: Setting value
+      required:
+        - name
+        - value
+
+  securitySchemes:
+    JWTAuth:
+      $ref: './common.yaml#/components/securitySchemes/JWTAuth'
+    HMACAuth:
+      $ref: './common.yaml#/components/securitySchemes/HMACAuth'
+

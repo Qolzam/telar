@@ -1,0 +1,340 @@
+openapi: 3.0.0
+info:
+  title: Actions API
+  description: This is an API to handle web socket server actions dispatch and action room management
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: dev@telar.dev
+  license:
+    name: MIT
+    url: https://github.com/red-gold/telar-web/blob/master/LICENSE
+
+servers:
+  - url: https://social.faas.telar.dev
+    description: Production server
+  - url: http://localhost:8080
+    description: Development server
+
+paths:
+  /actions/room:
+    post:
+      summary: Create a new action room
+      description: Handles the creation of a new action room by parsing the request body and saving the action room to the database
+      tags:
+        - actions
+      security:
+        - HMACAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateActionRoomRequest'
+      responses:
+        '201':
+          description: Action room created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  objectId:
+                    type: string
+                    format: uuid
+                    description: The unique identifier of the created action room
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+    put:
+      summary: Update an existing action room
+      description: Updates an existing action room with new data
+      tags:
+        - actions
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionRoomModel'
+      responses:
+        '200':
+          description: Action room updated successfully
+          content:
+            application/json:
+              schema:
+                type: string
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /actions/room/{roomId}:
+    get:
+      summary: Get an action room by ID
+      description: Retrieves an action room by its ID
+      tags:
+        - actions
+      security:
+        - HMACAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Action room ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Action room retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionRoomModel'
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '404':
+          $ref: './common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+    delete:
+      summary: Delete an action room
+      description: Handles the deletion of an action room by its ID
+      tags:
+        - actions
+      security:
+        - HMACAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Action room ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Action room deleted successfully
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '404':
+          $ref: './common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /actions/room/access-key:
+    get:
+      summary: Get access key
+      description: Retrieves the access key for the current user
+      tags:
+        - actions
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      responses:
+        '200':
+          description: Access key retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessKey:
+                    type: string
+                    description: The access key for the current user
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+    put:
+      summary: Set access key
+      description: Sets a new access key for the current user
+      tags:
+        - actions
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      responses:
+        '200':
+          description: Access key set successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessKey:
+                    type: string
+                    description: The new access key for the current user
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /actions/room/verify:
+    post:
+      summary: Verify access key
+      description: Verifies the access key for the current user
+      tags:
+        - actions
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionVerifyRequest'
+      responses:
+        '200':
+          description: Access key verified successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  isVerified:
+                    type: boolean
+                    description: Whether the access key is valid
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /actions/dispatch/{roomId}:
+    post:
+      summary: Dispatch action to room
+      description: Handles the creation of a new action room by dispatching a request to the websocket server
+      tags:
+        - actions
+      security:
+        - HMACAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          description: Action room ID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Action data to dispatch
+      responses:
+        '200':
+          description: Action dispatched successfully
+          content:
+            application/json:
+              schema:
+                type: string
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /actions/health:
+    get:
+      summary: Health check
+      description: Returns the health status of the actions service
+      tags:
+        - actions
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ok"
+
+components:
+  securitySchemes:
+    JWTAuth:
+      $ref: './common.yaml#/components/securitySchemes/JWTAuth'
+    HMACAuth:
+      $ref: './common.yaml#/components/securitySchemes/HMACAuth'
+
+  schemas:
+    ActionRoomModel:
+      type: object
+      required:
+        - objectId
+        - ownerUserId
+        - privateKey
+        - accessKey
+        - status
+        - createdDate
+      properties:
+        objectId:
+          type: string
+          format: uuid
+          description: Unique identifier for the action room
+        ownerUserId:
+          type: string
+          format: uuid
+          description: ID of the user who owns the action room
+        privateKey:
+          type: string
+          description: Private key for the action room
+        accessKey:
+          type: string
+          description: Access key for the action room
+        status:
+          type: integer
+          description: Status of the action room
+        createdDate:
+          type: integer
+          format: int64
+          description: Unix timestamp when the action room was created
+
+    CreateActionRoomRequest:
+      type: object
+      required:
+        - objectId
+        - privateKey
+        - accessKey
+        - status
+        - createdDate
+      properties:
+        objectId:
+          type: string
+          format: uuid
+          description: Unique identifier for the action room
+        privateKey:
+          type: string
+          description: Private key for the action room
+        accessKey:
+          type: string
+          description: Access key for the action room
+        status:
+          type: integer
+          description: Status of the action room
+        createdDate:
+          type: integer
+          format: int64
+          description: Unix timestamp when the action room was created
+
+    ActionVerifyRequest:
+      type: object
+      required:
+        - accessKey
+      properties:
+        accessKey:
+          type: string
+          description: Access key to verify
+

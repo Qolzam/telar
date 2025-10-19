@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  api:
+    container_name: telar-api
+    build:
+      context: ../../
+      dockerfile: apps/api/Dockerfile
+    env_file:
+      - ../../apps/api/.env
+    ports:
+      - "8080:8080"
+    depends_on:
+      - mongo
+      - postgres
+      - mailhog
+    volumes:
+      - ../../apps/api:/app/apps/api
+      - ../../packages:/app/packages
+
+  mongo:
+    container_name: telar-mongo
+    image: mongo:6
+    ports:
+      - "27017:27017"
+    volumes:
+      - telar-mongo-data:/data/db
+
+  postgres:
+    container_name: telar-postgres
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: telar_social
+    volumes:
+      - telar-postgres-data:/var/lib/postgresql/data
+
+  mailhog:
+    container_name: telar-mailhog
+    image: mailhog/mailhog
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  profile:
+    container_name: telar-profile
+    build:
+      context: ../../
+      dockerfile: apps/api/cmd/services/profile/Dockerfile
+    env_file:
+      - ../../apps/api/.env
+    ports:
+      - "8081:8081"
+    depends_on:
+      - mongo
+      - postgres
+
+volumes:
+  telar-mongo-data:
+  telar-postgres-data:

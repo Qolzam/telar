@@ -1,0 +1,417 @@
+openapi: 3.0.0
+info:
+  title: Notifications API
+  description: API for managing user notifications
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: dev@telar.dev
+  license:
+    name: MIT
+    url: https://github.com/red-gold/telar-web/blob/master/LICENSE
+
+servers:
+  - url: https://social.faas.telar.dev/notifications
+    description: Production server
+  - url: http://localhost:8080/notifications
+    description: Development server
+
+paths:
+  /:
+    get:
+      summary: Get notifications by user ID
+      description: Retrieves paginated list of notifications for the authenticated user
+      tags:
+        - Notifications
+      security:
+        - JWTAuth: []
+      parameters:
+        - name: page
+          in: query
+          description: Page number (1-based)
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          description: Number of items per page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Successfully retrieved notifications
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Notification'
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+    post:
+      summary: Create a new notification
+      description: Creates a new notification and sends it to the specified user
+      tags:
+        - Notifications
+      security:
+        - JWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNotificationRequest'
+      responses:
+        '201':
+          description: Notification created successfully
+          content:
+            application/json:
+              schema:
+                $ref: './common.yaml#/components/schemas/CreateResponse'
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+    put:
+      summary: Update a notification
+      description: Updates an existing notification
+      tags:
+        - Notifications
+      security:
+        - JWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNotificationRequest'
+      responses:
+        '200':
+          description: Notification updated successfully
+          content:
+            application/json:
+              schema:
+                type: string
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /{notificationId}:
+    get:
+      summary: Get a notification by ID
+      description: Retrieves a specific notification by its ID
+      tags:
+        - Notifications
+      security:
+        - JWTAuth: []
+      parameters:
+        - name: notificationId
+          in: path
+          required: true
+          description: Notification ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Successfully retrieved notification
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: './common.yaml#/components/responses/NotFound'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: './common.yaml#/components/schemas/ErrorResponse'
+
+  /check:
+    post:
+      summary: Check and send notification emails
+      description: Checks for pending notifications and sends email notifications to users
+      tags:
+        - Notifications
+      security:
+        - JWTAuth: []
+      responses:
+        '200':
+          description: Email check completed successfully
+          content:
+            application/json:
+              schema:
+                type: string
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: './common.yaml#/components/schemas/ErrorResponse'
+
+  /id/{notificationId}:
+    delete:
+      summary: Delete a notification by ID
+      description: Deletes a specific notification by its ID
+      tags:
+        - Notifications
+      security:
+        - JWTAuth: []
+      parameters:
+        - name: notificationId
+          in: path
+          required: true
+          description: Notification ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          $ref: './common.yaml#/components/responses/NoContent'
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /seen/{notificationId}:
+    put:
+      summary: Mark notification as seen
+      description: Marks a specific notification as seen by the current user
+      tags:
+        - Notifications
+      security:
+        - JWTAuth: []
+      parameters:
+        - name: notificationId
+          in: path
+          required: true
+          description: Notification ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Notification marked as seen successfully
+        '400':
+          description: Cannot parse UUID
+          content:
+            application/json:
+              schema:
+                $ref: './common.yaml#/components/schemas/ErrorResponse'
+        '401':
+          description: Cannot get current user
+          content:
+            application/json:
+              schema:
+                $ref: './common.yaml#/components/schemas/ErrorResponse'
+        '500':
+          description: Cannot update notification
+          content:
+            application/json:
+              schema:
+                $ref: './common.yaml#/components/schemas/ErrorResponse'
+
+  /seenall:
+    put:
+      summary: Mark all notifications as seen
+      description: Marks all notifications as seen for the current user
+      tags:
+        - Notifications
+      security:
+        - JWTAuth: []
+      responses:
+        '200':
+          description: All notifications marked as seen successfully
+        '401':
+          description: Cannot get current user
+          content:
+            application/json:
+              schema:
+                $ref: './common.yaml#/components/schemas/ErrorResponse'
+        '500':
+          description: Cannot update notifications
+          content:
+            application/json:
+              schema:
+                $ref: './common.yaml#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    JWTAuth:
+      $ref: './common.yaml#/components/securitySchemes/JWTAuth'
+    HMACAuth:
+      $ref: './common.yaml#/components/securitySchemes/HMACAuth'
+
+  schemas:
+    Notification:
+      type: object
+      properties:
+        objectId:
+          type: string
+          format: uuid
+          description: Unique notification identifier
+        owner:
+          $ref: './common.yaml#/components/schemas/UserReference'
+        createdDate:
+          type: integer
+          format: int64
+          description: Unix timestamp when notification was created
+        title:
+          type: string
+          description: Notification title
+        description:
+          type: string
+          description: Notification description
+        url:
+          type: string
+          description: URL associated with the notification
+        notifyReceiverUserId:
+          type: string
+          format: uuid
+          description: ID of the user who should receive the notification
+        targetId:
+          type: string
+          format: uuid
+          description: ID of the target object (e.g., post, comment)
+        isSeen:
+          type: boolean
+          description: Whether the notification has been seen
+        type:
+          type: string
+          description: Type of notification
+        emailNotification:
+          type: integer
+          format: int16
+          description: Email notification preference (0=disabled, 1=enabled)
+        isEmailSent:
+          type: boolean
+          description: Whether email notification was sent
+      required:
+        - objectId
+        - ownerUserId
+        - notifyReceiverUserId
+        - title
+        - type
+
+    CreateNotificationRequest:
+      type: object
+      properties:
+        objectId:
+          type: string
+          format: uuid
+          description: Unique notification identifier (optional, will be generated if not provided)
+        ownerUserId:
+          type: string
+          format: uuid
+          description: ID of the user who created the notification
+        ownerDisplayName:
+          type: string
+          description: Display name of the notification owner
+        ownerAvatar:
+          type: string
+          description: Avatar URL of the notification owner
+        title:
+          type: string
+          description: Notification title
+        description:
+          type: string
+          description: Notification description
+        url:
+          type: string
+          description: URL associated with the notification
+        notifyReceiverUserId:
+          type: string
+          format: uuid
+          description: ID of the user who should receive the notification
+        targetId:
+          type: string
+          format: uuid
+          description: ID of the target object (e.g., post, comment)
+        isSeen:
+          type: boolean
+          description: Whether the notification has been seen
+          default: false
+        type:
+          type: string
+          description: Type of notification
+        emailNotification:
+          type: integer
+          format: int16
+          description: Email notification preference (0=disabled, 1=enabled)
+          default: 1
+      required:
+        - ownerUserId
+        - notifyReceiverUserId
+        - title
+        - type
+
+    UpdateNotificationRequest:
+      type: object
+      properties:
+        objectId:
+          type: string
+          format: uuid
+          description: Notification ID to update
+        ownerUserId:
+          type: string
+          format: uuid
+          description: ID of the user who created the notification
+        ownerDisplayName:
+          type: string
+          description: Display name of the notification owner
+        ownerAvatar:
+          type: string
+          description: Avatar URL of the notification owner
+        title:
+          type: string
+          description: Notification title
+        description:
+          type: string
+          description: Notification description
+        url:
+          type: string
+          description: URL associated with the notification
+        notifyReceiverUserId:
+          type: string
+          format: uuid
+          description: ID of the user who should receive the notification
+        targetId:
+          type: string
+          format: uuid
+          description: ID of the target object (e.g., post, comment)
+        isSeen:
+          type: boolean
+          description: Whether the notification has been seen
+        type:
+          type: string
+          description: Type of notification
+        emailNotification:
+          type: integer
+          format: int16
+          description: Email notification preference (0=disabled, 1=enabled)
+      required:
+        - objectId
+
+tags:
+  - name: Notifications
+    description: Operations related to user notifications

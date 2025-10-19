@@ -1,0 +1,450 @@
+openapi: 3.0.3
+info:
+  title: Gallery Media API
+  description: API for managing media items, albums, and gallery operations
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: dev@telar.dev
+  license:
+    name: MIT
+    url: https://github.com/red-gold/ts-serverless/blob/master/LICENSE
+
+servers:
+  - url: /media
+    description: Media microservice endpoint
+
+security:
+  - JWTAuth: []
+
+paths:
+  /:
+    post:
+      summary: Create new media
+      description: Creates a new media entry in the system
+      tags:
+        - Media
+      security:
+        - JWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMediaModel'
+      responses:
+        '201':
+          description: Media successfully created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  objectId:
+                    type: string
+                    format: uuid
+                    description: The ID of the created media
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+    
+    get:
+      summary: Query media
+      description: Retrieves media entries based on search criteria
+      tags:
+        - Media
+      security:
+        - JWTAuth: []
+      parameters:
+        - name: search
+          in: query
+          description: Search text for querying media
+          required: false
+          schema:
+            type: string
+        - name: page
+          in: query
+          description: Page number for pagination
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: owner
+          in: query
+          description: Owner's UUID for filtering media by owner
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: type
+          in: query
+          description: Type of media to filter
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Array of media objects matching the query criteria
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MediaModel'
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /list:
+    post:
+      summary: Create multiple media items
+      description: Creates multiple media items with the details provided
+      tags:
+        - Media
+      security:
+        - JWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMediaListModel'
+      responses:
+        '201':
+          description: Media items created successfully
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /:
+    put:
+      summary: Update media
+      description: Updates an existing media entry
+      tags:
+        - Media
+      security:
+        - JWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMediaModel'
+      responses:
+        '200':
+          description: Media updated successfully
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /id/{mediaId}:
+    get:
+      summary: Get media item
+      description: Retrieves details of a specific media item by its unique identifier
+      tags:
+        - Media
+      security:
+        - JWTAuth: []
+      parameters:
+        - name: mediaId
+          in: path
+          description: Unique identifier of the media item
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Media item details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaModel'
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: './common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+    
+    delete:
+      summary: Delete media item
+      description: Deletes a specific media item by its unique identifier
+      tags:
+        - Media
+      security:
+        - JWTAuth: []
+      parameters:
+        - name: mediaId
+          in: path
+          description: Unique identifier of the media item to delete
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Media item deleted successfully
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /dir/{dir}:
+    get:
+      summary: Get media items by directory
+      description: Retrieves all media items that are stored within a specified directory
+      tags:
+        - Media
+      security:
+        - JWTAuth: []
+      parameters:
+        - name: dir
+          in: path
+          description: The directory path to query media items from
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: An array of media items found in the specified directory
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MediaModel'
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: './common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+    
+    delete:
+      summary: Delete directory
+      description: Deletes all media items within a specified directory
+      tags:
+        - Media
+      security:
+        - JWTAuth: []
+      parameters:
+        - name: dir
+          in: path
+          description: The directory path to delete
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Directory deleted successfully
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    JWTAuth:
+      $ref: './common.yaml#/components/securitySchemes/JWTAuth'
+      
+  schemas:
+    CreateMediaModel:
+      type: object
+      required:
+        - objectId
+        - url
+        - fileName
+        - directory
+        - ownerUserId
+      properties:
+        objectId:
+          type: string
+          format: uuid
+          description: Unique identifier for the media
+        thumbnail:
+          type: string
+          description: Thumbnail URL or path
+        url:
+          type: string
+          description: Full URL to the media file
+        fullPath:
+          type: string
+          description: Full file system path
+        caption:
+          type: string
+          description: Media caption or description
+        directory:
+          type: string
+          description: Directory path where media is stored
+        fileName:
+          type: string
+          description: Original filename
+        ownerUserId:
+          type: string
+          format: uuid
+          description: ID of the user who owns the media
+        albumId:
+          type: string
+          format: uuid
+          description: ID of the album containing the media
+        width:
+          type: integer
+          format: int64
+          description: Media width in pixels
+        height:
+          type: integer
+          format: int64
+          description: Media height in pixels
+        meta:
+          type: string
+          description: Additional metadata in JSON format
+        accessUserList:
+          type: array
+          items:
+            type: string
+          description: List of user IDs with access to this media
+        permission:
+          type: string
+          description: Permission level for the media
+        deleted:
+          type: boolean
+          description: Whether the media is marked as deleted
+
+    CreateMediaListModel:
+      type: object
+      required:
+        - list
+      properties:
+        list:
+          type: array
+          items:
+            $ref: '#/components/schemas/CreateMediaModel'
+          description: List of media items to create
+
+    UpdateMediaModel:
+      type: object
+      properties:
+        objectId:
+          type: string
+          format: uuid
+          description: Unique identifier for the media
+        thumbnail:
+          type: string
+          description: Thumbnail URL or path
+        url:
+          type: string
+          description: Full URL to the media file
+        fullPath:
+          type: string
+          description: Full file system path
+        caption:
+          type: string
+          description: Media caption or description
+        directory:
+          type: string
+          description: Directory path where media is stored
+        fileName:
+          type: string
+          description: Original filename
+        albumId:
+          type: string
+          format: uuid
+          description: ID of the album containing the media
+        width:
+          type: integer
+          format: int64
+          description: Media width in pixels
+        height:
+          type: integer
+          format: int64
+          description: Media height in pixels
+        meta:
+          type: string
+          description: Additional metadata in JSON format
+        accessUserList:
+          type: array
+          items:
+            type: string
+          description: List of user IDs with access to this media
+        permission:
+          type: string
+          description: Permission level for the media
+
+    MediaModel:
+      allOf:
+        - $ref: './common.yaml#/components/schemas/TimestampFields'
+        - type: object
+          properties:
+            objectId:
+              type: string
+              format: uuid
+              description: Unique identifier for the media
+            thumbnail:
+              type: string
+              description: Thumbnail URL or path
+            url:
+              type: string
+              description: Full URL to the media file
+            fullPath:
+              type: string
+              description: Full file system path
+            caption:
+              type: string
+              description: Media caption or description
+            directory:
+              type: string
+              description: Directory path where media is stored
+            fileName:
+              type: string
+              description: Original filename
+            ownerUserId:
+              type: string
+              format: uuid
+              description: ID of the user who owns the media
+            albumId:
+              type: string
+              format: uuid
+              description: ID of the album containing the media
+            width:
+              type: integer
+              format: int64
+              description: Media width in pixels
+            height:
+              type: integer
+              format: int64
+              description: Media height in pixels
+            meta:
+              type: string
+              description: Additional metadata in JSON format
+            accessUserList:
+              type: array
+              items:
+                type: string
+              description: List of user IDs with access to this media
+            permission:
+              type: string
+              description: Permission level for the media
+            deleted:
+              type: boolean
+              description: Whether the media is marked as deleted

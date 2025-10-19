@@ -1,0 +1,167 @@
+openapi: 3.0.3
+info:
+  title: Storage Service API
+  description: |
+    This is an API to handle file storage operations including upload and download functionality.
+    The service provides secure file storage with user-based directory organization and Firebase Storage integration.
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: dev@telar.dev
+  license:
+    name: MIT
+    url: https://github.com/red-gold/telar-web/blob/master/LICENSE
+
+servers:
+  - url: https://social.faas.telar.dev/storage
+    description: Production server
+  - url: http://localhost:8080/storage
+    description: Development server
+
+security:
+  - JWTAuth: []
+
+paths:
+  /{uid}/{dir}:
+    post:
+      summary: Upload a file to storage
+      description: |
+        Upload a file to the storage system and return the download URL.
+        Files are organized by user ID and directory name for better organization.
+      operationId: uploadFile
+      tags:
+        - File Operations
+      parameters:
+        - name: uid
+          in: path
+          required: true
+          description: User ID (UUID format)
+          schema:
+            type: string
+            format: uuid
+            example: "123e4567-e89b-12d3-a456-426614174000"
+        - name: dir
+          in: path
+          required: true
+          description: Directory name for organizing files
+          schema:
+            type: string
+            example: "profile-pictures"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: File to upload
+            encoding:
+              file:
+                contentType: image/*, application/*, text/*
+      responses:
+        '201':
+          description: File uploaded successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  payload:
+                    type: string
+                    description: Download URL for the uploaded file
+                    example: "https://social.faas.telar.dev/storage/123e4567-e89b-12d3-a456-426614174000/profile-pictures/abc123.jpg"
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /{uid}/{dir}/{name}:
+    get:
+      summary: Download a file from storage
+      description: |
+        Download a file from the storage system.
+        Returns a temporary redirect (302) to the actual file location with signed URL.
+      operationId: downloadFile
+      tags:
+        - File Operations
+      parameters:
+        - name: uid
+          in: path
+          required: true
+          description: User ID (UUID format)
+          schema:
+            type: string
+            format: uuid
+            example: "123e4567-e89b-12d3-a456-426614174000"
+        - name: dir
+          in: path
+          required: true
+          description: Directory name
+          schema:
+            type: string
+            example: "profile-pictures"
+        - name: name
+          in: path
+          required: true
+          description: File name with extension
+          schema:
+            type: string
+            example: "abc123.jpg"
+      responses:
+        '302':
+          description: Temporary redirect to file download URL
+          headers:
+            Cache-Control:
+              description: Cache control header
+              schema:
+                type: string
+                example: "max-age:3600, public"
+            Last-Modified:
+              description: Last modified timestamp
+              schema:
+                type: string
+                format: date-time
+            Expires:
+              description: Expiration timestamp
+              schema:
+                type: string
+                format: date-time
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+
+components:
+  securitySchemes:
+    JWTAuth:
+      $ref: './common.yaml#/components/securitySchemes/JWTAuth'
+
+  schemas:
+    FileUploadRequest:
+      type: object
+      required:
+        - file
+      properties:
+        file:
+          type: string
+          format: binary
+          description: File to upload
+
+    FileUploadResponse:
+      type: object
+      required:
+        - payload
+      properties:
+        payload:
+          type: string
+          description: Download URL for the uploaded file
+          example: "https://social.faas.telar.dev/storage/123e4567-e89b-12d3-a456-426614174000/profile-pictures/abc123.jpg"
+
+tags:
+  - name: File Operations
+    description: Operations for uploading and downloading files

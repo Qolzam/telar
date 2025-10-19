@@ -1,0 +1,402 @@
+openapi: 3.0.3
+info:
+  title: Profile API
+  version: 1.0.0
+  description: |
+    Telar Profile microservice API (spec-first backfill).
+    Legacy BasePath is /profile (no /api prefix in microservice router).
+    IMPORTANT: This schema matches the original code exactly - no flexible schemas.
+servers:
+  - url: /profile
+tags:
+  - name: Profile
+components:
+  securitySchemes:
+    JWTAuth:
+      $ref: './common.yaml#/components/securitySchemes/JWTAuth'
+    HMACAuth:
+      $ref: './common.yaml#/components/securitySchemes/HMACAuth'
+  schemas:
+    UserIdList:
+      type: array
+      items: { type: string, format: uuid }
+    Profile:
+      type: object
+      properties:
+        objectId:
+          type: string
+          format: uuid
+          description: Unique identifier for the profile
+        fullName:
+          type: string
+          description: User's full name
+        socialName:
+          type: string
+          description: User's social media handle
+        avatar:
+          type: string
+          description: URL to user's avatar image
+        banner:
+          type: string
+          description: URL to user's banner image
+        tagLine:
+          type: string
+          description: User's tagline or bio
+        created_date:
+          type: integer
+          format: int64
+          description: Unix timestamp when profile was created
+        last_updated:
+          type: integer
+          format: int64
+          description: Unix timestamp when profile was last updated
+        lastSeen:
+          type: integer
+          format: int64
+          description: Unix timestamp when user was last seen
+        email:
+          type: string
+          format: email
+          description: User's email address
+        birthday:
+          type: integer
+          format: int64
+          description: Unix timestamp of user's birthday
+        webUrl:
+          type: string
+          description: User's personal website URL
+        companyName:
+          type: string
+          description: User's company name
+        country:
+          type: string
+          description: User's country
+        address:
+          type: string
+          description: User's address
+        phone:
+          type: string
+          description: User's phone number
+        voteCount:
+          type: integer
+          format: int64
+          description: Number of votes received by user
+        shareCount:
+          type: integer
+          format: int64
+          description: Number of shares by user
+        followCount:
+          type: integer
+          format: int64
+          description: Number of users this user follows
+        followerCount:
+          type: integer
+          format: int64
+          description: Number of users following this user
+        postCount:
+          type: integer
+          format: int64
+          description: Number of posts by user
+        facebookId:
+          type: string
+          description: User's Facebook ID
+        instagramId:
+          type: string
+          description: User's Instagram ID
+        twitterId:
+          type: string
+          description: User's Twitter ID
+        linkedInId:
+          type: string
+          description: User's LinkedIn ID
+        accessUserList:
+          type: array
+          items: { type: string }
+          description: List of user IDs with access to this profile
+        permission:
+          type: string
+          description: Profile permission level (Public, OnlyMe, Circles)
+      required: [objectId]
+    ProfileUpdateRequest:
+      type: object
+      properties:
+        fullName:
+          type: string
+          description: User's full name
+        avatar:
+          type: string
+          format: uri
+          description: URL to user's avatar image
+        banner:
+          type: string
+          format: uri
+          description: URL to user's banner image
+        tagLine:
+          type: string
+          description: User's tagline or bio
+        socialName:
+          type: string
+          description: User's social media handle
+      additionalProperties: false
+    UpdateLastSeenRequest:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+          description: User ID to update last seen for
+      required: [userId]
+    ProfilesResponse:
+      type: array
+      items: { $ref: '#/components/schemas/Profile' }
+paths:
+  /my:
+    get:
+      tags: [Profile]
+      summary: Read my profile (cookie auth)
+      security:
+        - JWTAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Profile' }
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+  /:
+    get:
+      tags: [Profile]
+      summary: Query user profiles
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      parameters:
+        - in: query
+          name: search
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, format: int64 }
+        - in: query
+          name: limit
+          schema: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfilesResponse' }
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+  /id/{userId}:
+    parameters:
+      - in: path
+        name: userId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Profile]
+      summary: Read profile by userId
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Profile' }
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: './common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+  /social/{name}:
+    parameters:
+      - in: path
+        name: name
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Profile]
+      summary: Read profile by social name
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Profile' }
+  /ids:
+    post:
+      tags: [Profile]
+      summary: Get profiles by list of IDs
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserIdList' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfilesResponse' }
+  /index:
+    post:
+      tags: [Profile]
+      summary: Initialize profile index
+      security:
+        - HMACAuth: []
+      responses:
+        '200': { description: OK }
+  /last-seen:
+    put:
+      tags: [Profile]
+      summary: Update last seen (HMAC)
+      security:
+        - HMACAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userId:
+                  type: string
+                  format: uuid
+              required: [userId]
+      responses:
+        '200': { description: OK }
+  /:
+    put:
+      tags: [Profile]
+      summary: Update profile (HMAC)
+      security:
+        - HMACAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/Profile'
+                - type: object
+                  properties:
+                    userId:
+                      type: string
+                      format: uuid
+                  required: [userId]
+      responses:
+        '200': { description: OK }
+  /dto/id/{userId}:
+    parameters:
+      - in: path
+        name: userId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Profile]
+      summary: Read DTO profile by userId (HMAC)
+      security:
+        - HMACAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Profile' }
+  /dto:
+    post:
+      tags: [Profile]
+      summary: Create DTO profile (HMAC)
+      security:
+        - HMACAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Profile' }
+      responses:
+        '201': { description: Created }
+  /dispatch:
+    post:
+      tags: [Profile]
+      summary: Dispatch profiles (HMAC)
+      security:
+        - HMACAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200': { description: OK }
+  /dto/ids:
+    post:
+      tags: [Profile]
+      summary: Get DTO profiles by IDs (HMAC)
+      security:
+        - HMACAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserIdList' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfilesResponse' }
+  /follow/inc/{inc}/{userId}:
+    parameters:
+      - in: path
+        name: inc
+        required: true
+        schema: { type: integer }
+      - in: path
+        name: userId
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      tags: [Profile]
+      summary: Increase follow count (HMAC)
+      security:
+        - HMACAuth: []
+      responses:
+        '200': { description: OK }
+  /follower/inc/{inc}/{userId}:
+    parameters:
+      - in: path
+        name: inc
+        required: true
+        schema: { type: integer }
+      - in: path
+        name: userId
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      tags: [Profile]
+      summary: Increase follower count (HMAC)
+      security:
+        - HMACAuth: []
+      responses:
+        '200': { description: OK }
+

@@ -1,0 +1,943 @@
+openapi: 3.0.0
+info:
+  title: Posts Service API
+  version: '1.0'
+  description: |
+    Posts Service API for Telar Platform - Standardized and Production-Ready
+    
+    This service provides comprehensive post management functionality including:
+    - Post creation, reading, updating, and deletion
+    - Post scoring and voting
+    - Comment management
+    - URL key generation and retrieval
+    - Post indexing and search
+    - Profile updates and sharing controls
+    - Cursor-based pagination for optimal performance
+    
+    **Key Features**:
+    - **Standardized API Design**: Consistent with all Telar services
+    - **Cursor-Based Pagination**: Optimized for large datasets
+    - **Comprehensive Error Handling**: Standardized error responses
+    - **Security**: HMAC and JWT authentication support
+  contact:
+    name: Telar Platform Team
+    email: platform@telar.com
+  license:
+    name: MIT
+    url: https://github.com/qolzam/telar/blob/master/LICENSE
+
+servers:
+  - url: /api/posts
+    description: Posts service endpoints
+
+# All paths are now relative to the server URL above
+paths:
+  /:
+    get:
+      tags:
+        - Posts
+      summary: List all posts
+      operationId: listPosts
+      security:
+        - JWTAuth: []
+        - HMACAuth: []
+      parameters:
+        - $ref: 'common.yaml#/components/parameters/PaginationParams/0' # limit
+        - $ref: 'common.yaml#/components/parameters/PaginationParams/1' # page
+        - name: search
+          in: query
+          description: Search term for post content
+          schema:
+            type: string
+        - name: owner
+          in: query
+          description: Filter by owner user ID
+          schema:
+            type: string
+            format: uuid
+        - name: postType
+          in: query
+          description: Filter by post type ID
+          schema:
+            type: integer
+        - name: sortBy
+          in: query
+          description: Field to sort by
+          schema:
+            type: string
+            enum: [createdDate, score, viewCount, lastUpdated]
+            default: createdDate
+        - name: sortOrder
+          in: query
+          description: Sort order
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: A list of posts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  posts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Post'
+                  pagination:
+                    $ref: 'common.yaml#/components/schemas/PaginationResponse'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: 'common.yaml#/components/responses/InternalServerError'
+
+    post:
+      tags:
+        - Posts
+      summary: Create a new post
+      operationId: createPost
+      security:
+        - JWTAuth: []
+        - HMACAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePostRequest'
+      responses:
+        '201':
+          description: Post created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: 'common.yaml#/components/responses/InternalServerError'
+
+    put:
+      tags:
+        - Posts
+      summary: Update an existing post
+      operationId: updatePost
+      security:
+        - JWTAuth: []
+        - HMACAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePostRequest'
+      responses:
+        '200':
+          description: Post updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: 'common.yaml#/components/responses/InternalServerError'
+
+  /{postId}:
+    parameters:
+      - name: postId
+        in: path
+        required: true
+        description: Post ID
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags:
+        - Posts
+      summary: Get a post by ID
+      operationId: getPostById
+      security:
+        - JWTAuth: []
+        - HMACAuth: []
+      responses:
+        '200':
+          description: A single post
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: 'common.yaml#/components/responses/InternalServerError'
+
+    delete:
+      tags:
+        - Posts
+      summary: Delete a post
+      operationId: deletePost
+      security:
+        - JWTAuth: []
+        - HMACAuth: []
+      responses:
+        '204':
+          description: Post deleted successfully
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: 'common.yaml#/components/responses/InternalServerError'
+
+  /score:
+    put:
+      tags:
+        - Posts
+      summary: Increment post score
+      operationId: incrementPostScore
+      security:
+        - HMACAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScoreRequest'
+      responses:
+        '200':
+          description: Score incremented successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "score incremented"
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '500':
+          $ref: 'common.yaml#/components/responses/InternalServerError'
+
+  /comment/count:
+    put:
+      tags:
+        - Posts
+      summary: Increment comment count
+      operationId: incrementCommentCount
+      security:
+        - HMACAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentCountRequest'
+      responses:
+        '200':
+          description: Comment count incremented successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "comment count incremented"
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '500':
+          $ref: 'common.yaml#/components/responses/InternalServerError'
+
+  /comment/disable:
+    put:
+      tags:
+        - Posts
+      summary: Disable comments for a post
+      operationId: disableComments
+      security:
+        - JWTAuth: []
+        - HMACAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DisableCommentRequest'
+      responses:
+        '200':
+          description: Comment settings updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Comment setting updated successfully"
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: 'common.yaml#/components/responses/InternalServerError'
+
+  /share/disable:
+    put:
+      tags:
+        - Posts
+      summary: Disable sharing for a post
+      operationId: disableSharing
+      security:
+        - JWTAuth: []
+        - HMACAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DisableSharingRequest'
+      responses:
+        '200':
+          description: Sharing settings updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Sharing setting updated successfully"
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: 'common.yaml#/components/responses/InternalServerError'
+
+  /urlkey/{postId}:
+    put:
+      tags:
+        - Posts
+      summary: Generate URL key for a post
+      operationId: generateUrlKey
+      security:
+        - JWTAuth: []
+        - HMACAuth: []
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          description: Post ID to generate URL key for
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: URL key generated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  urlKey:
+                    type: string
+                    description: Generated URL key
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: 'common.yaml#/components/responses/InternalServerError'
+
+  /urlkey/{urlkey}:
+    get:
+      tags:
+        - Posts
+      summary: Get post by URL key
+      operationId: getPostByUrlKey
+      security:
+        - JWTAuth: []
+        - HMACAuth: []
+      parameters:
+        - name: urlkey
+          in: path
+          required: true
+          description: URL key to search for
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Post retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: 'common.yaml#/components/responses/InternalServerError'
+
+  /index:
+    post:
+      tags:
+        - Posts
+      summary: Create post index
+      operationId: createPostIndex
+      security:
+        - HMACAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IndexRequest'
+      responses:
+        '201':
+          description: Index created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Indexes created successfully"
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '500':
+          $ref: 'common.yaml#/components/responses/InternalServerError'
+
+  /cursor:
+    get:
+      tags:
+        - Posts
+      summary: Query posts with cursor-based pagination
+      operationId: listPostsWithCursor
+      security:
+        - JWTAuth: []
+        - HMACAuth: []
+      parameters:
+        - name: cursor
+          in: query
+          description: Cursor for pagination (base64 encoded string)
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Number of posts per page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: owner
+          in: query
+          description: Filter by owner user ID
+          schema:
+            type: string
+            format: uuid
+        - name: postType
+          in: query
+          description: Filter by post type ID
+          schema:
+            type: integer
+        - name: search
+          in: query
+          description: Search term for post content
+          schema:
+            type: string
+        - name: sortBy
+          in: query
+          description: Field to sort by
+          schema:
+            type: string
+            enum: [createdDate, score, viewCount, lastUpdated]
+            default: createdDate
+        - name: sortOrder
+          in: query
+          description: Sort order
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+        - name: tags
+          in: query
+          description: Filter by tags (comma-separated)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Posts retrieved successfully with cursor pagination
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostPaginatedResponse'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: 'common.yaml#/components/responses/InternalServerError'
+
+  /cursor/{postId}:
+    get:
+      tags:
+        - Posts
+      summary: Get cursor information for a specific post
+      operationId: getPostCursor
+      security:
+        - JWTAuth: []
+        - HMACAuth: []
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          description: Post ID to get cursor information for
+          schema:
+            type: string
+            format: uuid
+        - name: sortBy
+          in: query
+          description: Field to sort by for cursor calculation
+          schema:
+            type: string
+            enum: [createdDate, score, viewCount, lastUpdated]
+            default: createdDate
+        - name: sortOrder
+          in: query
+          description: Sort order for cursor calculation
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: Cursor information retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CursorInfo'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: 'common.yaml#/components/responses/InternalServerError'
+
+components:
+  # The security definition is now clean and standardized
+  security:
+    - JWTAuth: []
+    - HMACAuth: []
+
+  schemas:
+    Post:
+      type: object
+      required:
+        - objectId
+        - body
+        - owner
+        - createdDate
+      properties:
+        objectId:
+          type: string
+          format: uuid
+          description: Unique identifier for the post
+        postTypeId:
+          type: integer
+          description: Post type identifier
+        score:
+          type: integer
+          description: Post score
+        votes:
+          type: object
+          additionalProperties:
+            type: string
+          description: Vote information
+        viewCount:
+          type: integer
+          description: Number of views
+        body:
+          type: string
+          description: Post content
+        owner:
+          $ref: 'common.yaml#/components/schemas/UserReference'
+        urlKey:
+          type: string
+          description: URL key for the post
+        tags:
+          type: array
+          items:
+            type: string
+          description: Array of tags
+        commentCounter:
+          type: integer
+          description: Comment count
+        image:
+          type: string
+          description: Image URL
+        imageFullPath:
+          type: string
+          description: Full path to image
+        video:
+          type: string
+          description: Video URL
+        thumbnail:
+          type: string
+          description: Thumbnail URL
+        album:
+          type: object
+          nullable: true
+          description: Album information or null
+        disableComments:
+          type: boolean
+          description: Whether comments are disabled
+        disableSharing:
+          type: boolean
+          description: Whether sharing is disabled
+        deleted:
+          type: boolean
+          description: Whether post is deleted
+        accessUserList:
+          type: array
+          items:
+            type: string
+          description: List of user IDs with access
+        permission:
+          type: string
+          enum: [Public, OnlyMe, Circles]
+          description: Permission level
+        version:
+          type: string
+          description: API version
+        allOf:
+          - $ref: 'common.yaml#/components/schemas/TimestampFields'
+          - type: object
+            properties:
+              deletedDate:
+                type: integer
+                format: int64
+                description: Deletion timestamp
+
+    CreatePostRequest:
+      type: object
+      required:
+        - postTypeId
+        - body
+        - owner
+      properties:
+        objectId:
+          type: string
+          format: uuid
+          description: Optional post ID (will be generated if not provided)
+        postTypeId:
+          type: integer
+          description: Post type identifier
+        score:
+          type: integer
+          description: Initial score
+        votes:
+          type: object
+          additionalProperties:
+            type: boolean
+          description: Initial votes map
+        viewCount:
+          type: integer
+          description: Initial view count
+        body:
+          type: string
+          minLength: 1
+          description: Post content
+        owner:
+          $ref: 'common.yaml#/components/schemas/UserReference'
+        urlKey:
+          type: string
+          description: URL key
+        tags:
+          type: array
+          items:
+            type: string
+          description: Array of tags
+        commentCounter:
+          type: integer
+          description: Initial comment count
+        image:
+          type: string
+          description: Image URL
+        imageFullPath:
+          type: string
+          description: Full path to image
+        video:
+          type: string
+          description: Video URL
+        thumbnail:
+          type: string
+          description: Thumbnail URL
+        album:
+          type: object
+          nullable: true
+          description: Album information
+        disableComments:
+          type: boolean
+          default: false
+          description: Whether comments are disabled
+        disableSharing:
+          type: boolean
+          default: false
+          description: Whether sharing is disabled
+        deleted:
+          type: boolean
+          default: false
+          description: Whether post is deleted
+        deletedDate:
+          type: integer
+          format: int64
+          description: Deletion timestamp
+        accessUserList:
+          type: array
+          items:
+            type: string
+          description: List of user IDs with access
+        permission:
+          type: string
+          enum: [Public, OnlyMe, Circles]
+          description: Permission level
+        version:
+          type: string
+          description: API version
+
+    UpdatePostRequest:
+      type: object
+      required:
+        - objectId
+      properties:
+        objectId:
+          type: string
+          format: uuid
+          description: Post ID
+        postTypeId:
+          type: integer
+          description: Post type identifier
+        score:
+          type: integer
+          description: Post score
+        votes:
+          type: object
+          additionalProperties:
+            type: string
+          description: Vote information
+        viewCount:
+          type: integer
+          description: Number of views
+        body:
+          type: string
+          description: Post content
+        owner:
+          $ref: 'common.yaml#/components/schemas/UserReference'
+        urlKey:
+          type: string
+          description: URL key
+        tags:
+          type: array
+          items:
+            type: string
+          description: Array of tags
+        commentCounter:
+          type: integer
+          description: Comment count
+        image:
+          type: string
+          description: Image URL
+        imageFullPath:
+          type: string
+          description: Full path to image
+        video:
+          type: string
+          description: Video URL
+        thumbnail:
+          type: string
+          description: Thumbnail URL
+        album:
+          type: object
+          nullable: true
+          description: Album information
+        disableComments:
+          type: boolean
+          description: Whether comments are disabled
+        disableSharing:
+          type: boolean
+          description: Whether sharing is disabled
+        deleted:
+          type: boolean
+          description: Whether post is deleted
+        deletedDate:
+          type: integer
+          format: int64
+          description: Deletion timestamp
+        accessUserList:
+          type: array
+          items:
+            type: string
+          description: List of user IDs with access
+        permission:
+          type: string
+          enum: [Public, OnlyMe, Circles]
+          description: Permission level
+        version:
+          type: string
+          description: API version
+
+    ScoreRequest:
+      type: object
+      required:
+        - postId
+        - delta
+      properties:
+        postId:
+          type: string
+          format: uuid
+          description: Post ID to increment score
+        delta:
+          type: integer
+          description: Score delta to add (can be negative)
+
+    CommentCountRequest:
+      type: object
+      required:
+        - postId
+        - count
+      properties:
+        postId:
+          type: string
+          format: uuid
+          description: Post ID to increment comment count
+        count:
+          type: integer
+          description: Comment count delta to add
+
+    DisableCommentRequest:
+      type: object
+      required:
+        - objectId
+        - disable
+      properties:
+        objectId:
+          type: string
+          format: uuid
+          description: Post ID to update comment settings
+        disable:
+          type: boolean
+          description: Whether to disable comments
+
+    DisableSharingRequest:
+      type: object
+      required:
+        - objectId
+        - disable
+      properties:
+        objectId:
+          type: string
+          format: uuid
+          description: Post ID to update sharing settings
+        disable:
+          type: boolean
+          description: Whether to disable sharing
+
+    IndexRequest:
+      type: object
+      required:
+        - body
+        - objectId
+      properties:
+        body:
+          type: string
+          description: Post body content for indexing
+        objectId:
+          type: string
+          format: uuid
+          description: Post object ID
+
+    PostPaginatedResponse:
+      type: object
+      properties:
+        posts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Post'
+          description: Array of posts
+        pagination:
+          type: object
+          properties:
+            nextCursor:
+              type: string
+              nullable: true
+              description: Base64 encoded cursor for next page (null if no more pages)
+            prevCursor:
+              type: string
+              nullable: true
+              description: Base64 encoded cursor for previous page (null if no previous pages)
+            hasNext:
+              type: boolean
+              description: Whether there are more pages available
+            hasPrev:
+              type: boolean
+              description: Whether there are previous pages available
+            limit:
+              type: integer
+              description: Number of items per page
+            sortBy:
+              type: string
+              description: Field used for sorting
+            sortOrder:
+              type: string
+              description: Sort order (asc/desc)
+            cursorFormat:
+              type: string
+              description: Format of the cursor
+              example: "timestamp_id"
+
+    CursorInfo:
+      type: object
+      properties:
+        postId:
+          type: string
+          format: uuid
+          description: Post ID
+        cursor:
+          type: string
+          description: Base64 encoded cursor for this post
+        position:
+          type: integer
+          description: Approximate position of this post in the sorted list
+        sortBy:
+          type: string
+          description: Field used for sorting
+        sortOrder:
+          type: string
+          description: Sort order used

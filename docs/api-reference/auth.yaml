@@ -1,0 +1,922 @@
+openapi: 3.0.3
+info:
+  title: Auth Service API
+  description: |
+    Telar Auth microservice API for authentication, user management, and authorization.
+    Handles user registration, login, password management, OAuth integration, and profile management.
+    
+    Key Features:
+    - User signup and verification
+    - Password-based authentication with JWT
+    - OAuth2 integration (GitHub, Google)
+    - Password reset and change functionality
+    - Profile management
+    - Admin user management
+    - HMAC-based service-to-service authentication
+    
+    Authentication Methods:
+    - JWT Bearer tokens (for user authentication)
+    - HMAC signatures (for admin/service-to-service operations)
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: dev@telar.dev
+  license:
+    name: MIT
+    url: https://github.com/qolzam/telar/blob/master/LICENSE
+
+servers:
+  - url: /auth
+    description: Auth service endpoints
+
+security:
+  - JWTAuth: []
+  - HMACAuth: []
+
+tags:
+  - name: admin
+    description: Administrative operations requiring HMAC authentication
+  - name: signup
+    description: User registration and signup verification
+  - name: password
+    description: Password management operations
+  - name: login
+    description: User authentication and login
+  - name: oauth
+    description: OAuth2 integration for third-party authentication
+  - name: profile
+    description: User profile management operations
+
+components:
+  schemas:
+    # --- User Authentication & Registration Schemas ---
+    SignupTokenRequest:
+      type: object
+      required:
+        - user
+        - verifyType
+        - g-recaptcha-response
+      properties:
+        user:
+          type: object
+          required:
+            - fullName
+            - email
+            - password
+          properties:
+            fullName:
+              type: string
+              description: User's full name
+              minLength: 2
+              maxLength: 100
+              example: "John Doe"
+            email:
+              type: string
+              format: email
+              description: User's email address
+              example: "john.doe@example.com"
+            password:
+              type: string
+              description: User's password
+              minLength: 8
+              maxLength: 100
+              example: "SecurePassword123!"
+        verifyType:
+          type: string
+          enum: [email, phone]
+          description: Verification method
+          example: "email"
+        g-recaptcha-response:
+          type: string
+          description: Google reCAPTCHA response token
+          example: "03AOLTBLSiDBrG1Q..."
+        responseType:
+          type: string
+          enum: [spa, ssr]
+          description: Response type - 'spa' for JSON token, 'ssr' for HTML page
+          example: "spa"
+
+
+
+    SignupResponse:
+      type: object
+      required:
+        - verificationId
+        - expiresAt
+        - message
+      properties:
+        verificationId:
+          type: string
+          format: uuid
+          description: "Opaque verification ID for code submission"
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        expiresAt:
+          type: integer
+          format: int64
+          description: "Unix timestamp when verification expires"
+          example: 1699124356
+        message:
+          type: string
+          description: "Human-readable message about verification status"
+          example: "Verification code sent to your email"
+
+    VerifySignupRequestSecure:
+      type: object
+      required:
+        - verificationId
+        - code
+      properties:
+        verificationId:
+          type: string
+          format: uuid
+          description: "Verification ID from signup response"
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        code:
+          type: string
+          pattern: "^[0-9]{6}$"
+          description: "6-digit verification code"
+          example: "123456"
+        responseType:
+          type: string
+          enum: [spa, ssr]
+          default: spa
+          description: "Response type for redirect behavior"
+          example: "spa"
+
+    # --- Authentication Schemas ---
+    LoginRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          description: Username or email address
+          example: "john.doe@example.com"
+        password:
+          type: string
+          description: User password
+          example: "SecurePassword123!"
+
+    LoginResponse:
+      type: object
+      required:
+        - token
+        - user
+      properties:
+        token:
+          type: string
+          description: JWT authentication token
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        user:
+          $ref: '#/components/schemas/UserProfile'
+
+    # --- Password Management Schemas ---
+    ChangePasswordRequest:
+      type: object
+      required:
+        - oldPassword
+        - newPassword
+      properties:
+        oldPassword:
+          type: string
+          description: Current password
+          example: "OldPassword123!"
+        newPassword:
+          type: string
+          description: New password
+          minLength: 8
+          maxLength: 100
+          example: "NewSecurePassword123!"
+
+    ForgetPasswordRequest:
+      type: object
+      required:
+        - email
+        - g-recaptcha-response
+      properties:
+        email:
+          type: string
+          format: email
+          description: User's email address
+          example: "john.doe@example.com"
+        g-recaptcha-response:
+          type: string
+          description: Google reCAPTCHA response token
+          example: "03AOLTBLSiDBrG1Q..."
+
+    ResetPasswordRequest:
+      type: object
+      required:
+        - newPassword
+      properties:
+        newPassword:
+          type: string
+          description: New password
+          minLength: 8
+          maxLength: 100
+          example: "NewSecurePassword123!"
+
+    # --- Profile Management Schemas ---
+    ProfileUpdateRequest:
+      type: object
+      properties:
+        fullName:
+          type: string
+          description: User's full name
+          minLength: 2
+          maxLength: 100
+          example: "John Doe"
+        avatar:
+          type: string
+          format: uri
+          description: URL to user's avatar image
+          example: "https://example.com/avatars/john.jpg"
+        banner:
+          type: string
+          format: uri
+          description: URL to user's banner image
+          example: "https://example.com/banners/john.jpg"
+        tagLine:
+          type: string
+          description: User's tagline or bio
+          maxLength: 200
+          example: "Software Engineer passionate about Go"
+        socialName:
+          type: string
+          description: User's social media handle
+          pattern: "^[a-zA-Z0-9_-]+$"
+          maxLength: 50
+          example: "johndoe123"
+      additionalProperties: false
+
+    UserProfile:
+      type: object
+      required:
+        - objectId
+        - fullName
+        - email
+        - socialName
+        - createdDate
+      properties:
+        objectId:
+          type: string
+          format: uuid
+          description: Unique user identifier
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        fullName:
+          type: string
+          description: User's full name
+          example: "John Doe"
+        email:
+          type: string
+          format: email
+          description: User's email address
+          example: "john.doe@example.com"
+        socialName:
+          type: string
+          description: User's social media handle
+          example: "johndoe123"
+        avatar:
+          type: string
+          format: uri
+          description: URL to user's avatar image
+          example: "https://util.telar.dev/api/avatars/123e4567-e89b-12d3-a456-426614174000"
+        banner:
+          type: string
+          format: uri
+          description: URL to user's banner image
+          example: "https://picsum.photos/id/1/900/300/?blur"
+        tagLine:
+          type: string
+          description: User's tagline or bio
+          example: "Software Engineer passionate about Go"
+        createdDate:
+          type: integer
+          format: int64
+          description: Unix timestamp of account creation
+          example: 1699123456
+        lastUpdated:
+          type: integer
+          format: int64
+          description: Unix timestamp of last profile update
+          example: 1699987654
+
+    # --- Admin Management Schemas ---
+    AdminSignupRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          description: Admin email address
+          example: "admin@telar.dev"
+        password:
+          type: string
+          description: Admin password
+          minLength: 8
+          example: "AdminPassword123!"
+
+    AdminLoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          description: Admin email address
+          example: "admin@telar.dev"
+        password:
+          type: string
+          description: Admin password
+          example: "AdminPassword123!"
+
+    AdminResponse:
+      type: object
+      required:
+        - token
+      properties:
+        token:
+          type: string
+          description: Admin JWT token
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+    AdminCheckResponse:
+      type: object
+      required:
+        - admin
+      properties:
+        admin:
+          type: boolean
+          description: Whether admin exists in the system
+          example: true
+
+paths:
+  # --- Admin Operations ---
+  /admin/check:
+    post:
+      tags: [admin]
+      summary: Check admin existence
+      description: |
+        Checks if any admin user exists in the system.
+        This endpoint is used for system initialization and status checks.
+        Requires HMAC authentication for service-to-service communication.
+      security:
+        - HMACAuth: []
+      responses:
+        '200':
+          description: Admin check completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminCheckResponse'
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /admin/signup:
+    post:
+      tags: [admin]
+      summary: Create admin user
+      description: |
+        Creates a new admin user in the system.
+        This endpoint is typically used during system initialization.
+        Requires HMAC authentication for service-to-service communication.
+      security:
+        - HMACAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminSignupRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AdminSignupRequest'
+      responses:
+        '201':
+          description: Admin user created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminResponse'
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '409':
+          description: Admin already exists
+          content:
+            application/json:
+              schema:
+                $ref: './common.yaml#/components/schemas/ErrorResponse'
+              example:
+                code: "ADMIN_ALREADY_EXISTS"
+                message: "Admin user already exists in the system"
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /admin/login:
+    post:
+      tags: [admin]
+      summary: Admin authentication
+      description: |
+        Authenticates an admin user and returns a JWT token.
+        Requires HMAC authentication for service-to-service communication.
+      security:
+        - HMACAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminLoginRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AdminLoginRequest'
+      responses:
+        '200':
+          description: Admin authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminResponse'
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          description: Invalid admin credentials
+          content:
+            application/json:
+              schema:
+                $ref: './common.yaml#/components/schemas/ErrorResponse'
+              example:
+                code: "INVALID_CREDENTIALS"
+                message: "Invalid admin email or password"
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  # --- User Registration & Verification ---
+  /signup:
+    get:
+      tags: [signup]
+      summary: Get signup page
+      description: |
+        Returns the HTML signup page for browser-based registration.
+        This is the web interface for user registration.
+      responses:
+        '200':
+          description: HTML signup page
+          content:
+            text/html:
+              schema:
+                type: string
+
+    post:
+      tags: [signup]
+      summary: Create signup token
+      description: |
+        Initiates the user registration process by creating a signup token.
+        For SPA clients, returns a JSON token. For SSR clients, returns an HTML verification page.
+        Includes reCAPTCHA validation for security.
+        
+        **Phase 1.4 COMPLETE**: This endpoint now uses secure verificationId format only.
+        Legacy JWT token support has been removed for enhanced security.
+        
+        **Current Implementation**: 
+        - All requests must use the verificationId from the signup response
+        - JWT tokens containing plaintext passwords are no longer supported
+        - Enhanced security with HMAC protection and rate limiting
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SignupTokenRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/SignupTokenRequest'
+      responses:
+        '200':
+          description: Signup token created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignupResponse'
+                description: |
+                  Secure verification format with verificationId only.
+                  Legacy JWT support removed in Phase 1.4.
+            text/html:
+              schema:
+                type: string
+                description: HTML verification page for SSR clients
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '409':
+          description: User already exists
+          content:
+            application/json:
+              schema:
+                $ref: './common.yaml#/components/schemas/ErrorResponse'
+              example:
+                code: "USER_ALREADY_EXISTS"
+                message: "User with this email already exists"
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /signup/verify:
+    post:
+      tags: [signup]
+      summary: Verify signup token
+      description: |
+        Completes the user registration process by verifying the signup token and verification code.
+        Creates the user account and returns verification token for email/phone verification.
+        
+        **Phase 1.4 COMPLETE**: This endpoint now uses secure verificationId format only.
+        Legacy JWT token support has been removed for enhanced security.
+        
+        **Current Implementation**:
+        - All requests must use verificationId from the signup response
+        - Server-side secure verification storage with bcrypt hashed passwords
+        - HMAC protection against tampering (optional X-Telar-Signature header)
+        - Comprehensive rate limiting and security validation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifySignupRequestSecure'
+              description: |
+                Secure verification format with verificationId only.
+                Legacy JWT support removed in Phase 1.4.
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/VerifySignupRequestSecure'
+                - $ref: '#/components/schemas/VerifySignupRequestSecure'
+                - $ref: '#/components/schemas/VerifySignupRequest'
+      responses:
+        '200':
+          description: |
+            User registration verified successfully.
+            Returns user data and JWT access token in response body.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+            text/html:
+              schema:
+                type: string
+                description: Success page or redirect for SSR clients
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          description: Invalid verification token or code
+          content:
+            application/json:
+              schema:
+                $ref: './common.yaml#/components/schemas/ErrorResponse'
+              example:
+                code: "INVALID_VERIFICATION"
+                message: "Invalid verification token or code"
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  # --- User Authentication ---
+  /login/:
+    get:
+      tags: [login]
+      summary: Get login page
+      description: |
+        Returns the HTML login page for browser-based authentication.
+        This is the web interface for user login.
+      responses:
+        '200':
+          description: HTML login page
+          content:
+            text/html:
+              schema:
+                type: string
+
+    post:
+      tags: [login]
+      summary: User authentication
+      description: |
+        Authenticates a user with email/username and password.
+        Sets JWT authentication cookies for web clients and returns user data.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authentication successful. Returns JWT access token in response body.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: './common.yaml#/components/schemas/ErrorResponse'
+              example:
+                code: "INVALID_CREDENTIALS"
+                message: "Invalid username or password"
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  # --- OAuth Authentication ---
+  /login/github:
+    get:
+      tags: [oauth]
+      summary: Initiate GitHub OAuth
+      description: |
+        Redirects the user to GitHub for OAuth authentication.
+        Part of the OAuth2 authorization code flow.
+      responses:
+        '302':
+          description: Redirect to GitHub OAuth provider
+          headers:
+            Location:
+              description: GitHub OAuth authorization URL
+              schema:
+                type: string
+                example: "https://github.com/login/oauth/authorize?client_id=..."
+
+  /login/google:
+    get:
+      tags: [oauth]
+      summary: Initiate Google OAuth
+      description: |
+        Redirects the user to Google for OAuth authentication.
+        Part of the OAuth2 authorization code flow.
+      responses:
+        '302':
+          description: Redirect to Google OAuth provider
+          headers:
+            Location:
+              description: Google OAuth authorization URL
+              schema:
+                type: string
+                example: "https://accounts.google.com/oauth/authorize?client_id=..."
+
+  /oauth2/authorized:
+    get:
+      tags: [oauth]
+      summary: OAuth callback
+      description: |
+        Handles the OAuth2 callback from third-party providers.
+        Exchanges the authorization code for user information and creates/authenticates the user.
+        Sets authentication cookies and redirects to the application.
+      parameters:
+        - in: query
+          name: code
+          required: true
+          schema:
+            type: string
+          description: Authorization code from OAuth provider
+        - in: query
+          name: state
+          required: false
+          schema:
+            type: string
+          description: State parameter for CSRF protection
+      responses:
+        '302':
+          description: OAuth authentication successful, redirecting to application with token in URL fragment
+          headers:
+            Location:
+              description: Redirect URL to application dashboard
+              schema:
+                type: string
+                example: "https://app.telar.dev/dashboard"
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          description: OAuth authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: './common.yaml#/components/schemas/ErrorResponse'
+              example:
+                code: "OAUTH_FAILED"
+                message: "OAuth authentication failed"
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  # --- Password Management ---
+  /password/forget:
+    get:
+      tags: [password]
+      summary: Get forgot password page
+      description: |
+        Returns the HTML page for password reset requests.
+        This is the web interface for initiating password resets.
+      responses:
+        '200':
+          description: HTML forgot password page
+          content:
+            text/html:
+              schema:
+                type: string
+
+    post:
+      tags: [password]
+      summary: Request password reset
+      description: |
+        Initiates a password reset process by sending a reset email to the user.
+        Includes reCAPTCHA validation for security.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgetPasswordRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ForgetPasswordRequest'
+      responses:
+        '200':
+          description: Password reset email sent successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Password reset instructions sent to your email"
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: './common.yaml#/components/schemas/ErrorResponse'
+              example:
+                code: "USER_NOT_FOUND"
+                message: "No user found with this email address"
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /password/reset/{verifyId}:
+    parameters:
+      - in: path
+        name: verifyId
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: Password reset verification ID
+        example: "123e4567-e89b-12d3-a456-426614174000"
+
+    get:
+      tags: [password]
+      summary: Get password reset page
+      description: |
+        Returns the HTML page for password reset with the verification ID.
+        This page allows users to enter their new password.
+      responses:
+        '200':
+          description: HTML password reset page
+          content:
+            text/html:
+              schema:
+                type: string
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '404':
+          description: Invalid or expired reset link
+          content:
+            text/html:
+              schema:
+                type: string
+                description: Error page for invalid reset link
+
+    post:
+      tags: [password]
+      summary: Reset password
+      description: |
+        Completes the password reset process with the new password.
+        Validates the reset token and updates the user's password.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        '200':
+          description: Password reset successful
+          content:
+            text/html:
+              schema:
+                type: string
+                description: Success page confirming password reset
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          description: Invalid or expired reset token
+          content:
+            application/json:
+              schema:
+                $ref: './common.yaml#/components/schemas/ErrorResponse'
+              example:
+                code: "INVALID_RESET_TOKEN"
+                message: "Invalid or expired password reset token"
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /password/change:
+    put:
+      tags: [password]
+      summary: Change user password
+      description: |
+        Allows authenticated users to change their password.
+        Requires the current password for verification.
+      security:
+        - JWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '200':
+          description: Password changed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Password changed successfully"
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '403':
+          description: Current password is incorrect
+          content:
+            application/json:
+              schema:
+                $ref: './common.yaml#/components/schemas/ErrorResponse'
+              example:
+                code: "INVALID_CURRENT_PASSWORD"
+                message: "Current password is incorrect"
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  # --- Profile Management ---
+  /profile:
+    put:
+      tags: [profile]
+      summary: Update user profile
+      description: |
+        Updates the authenticated user's profile information.
+        Allows modification of personal details like name, avatar, banner, etc.
+      security:
+        - JWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileUpdateRequest'
+      responses:
+        '200':
+          description: Profile updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+

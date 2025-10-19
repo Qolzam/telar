@@ -1,0 +1,61 @@
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters-settings:
+  gocritic:
+    enabled-tags:
+      - "diagnostic"
+      - "style"
+    settings:
+      captLocal:
+        paramsOnly: true
+
+linters:
+  enable:
+    - gofmt
+    - goimports
+    - govet
+    - gosimple
+    - staticcheck
+    - gocritic
+    - errcheck
+    - ineffassign
+    - unused
+    - misspell
+    - gosec
+    - goconst
+    - gocyclo
+    - gocognit
+    - mnd
+    - prealloc
+    - nakedret
+    - dupl
+    - funlen
+
+issues:
+  exclude-rules:
+    - path: _test\.go$
+      linters:
+        - gomnd
+        - funlen
+        - gocyclo
+    - path: internal/testutil/
+      linters:
+        - gomnd
+    - path: tools/
+      linters:
+        - gomnd
+        - funlen
+
+  exclude:
+    - "Error return value of .((os\\.)?std(out|err)\\..*|.*Close|.*Flush|os\\.Remove(All)?|.*printf?|os\\.(Un)?Setenv). is not checked"
+    - "exported (.+) should have comment or be unexported"
+    - "should have a package comment"
+    - "func name will be used as command\\.Command\\.Name by other packages"
+
+custom:
+  no_setenv_in_tests:
+    path: "./tools/linters"
+    description: "Prevent os.Setenv and t.Setenv usage in test files - use Config-First pattern instead"

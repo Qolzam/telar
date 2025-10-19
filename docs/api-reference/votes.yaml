@@ -1,0 +1,280 @@
+openapi: 3.0.3
+info:
+  title: Votes Service API
+  description: |
+    This API handles operations related to the Votes service, including voting functionalities among users.
+    The service manages user votes on posts with support for upvote/downvote operations.
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: dev@telar.dev
+  license:
+    name: MIT
+    url: https://github.com/red-gold/ts-serverless/blob/master/LICENSE
+
+servers:
+  - url: /votes
+    description: Votes service endpoints
+
+security:
+  - JWTAuth: []
+  - HMACAuth: []
+
+paths:
+  /:
+    post:
+      summary: Create a new vote
+      description: |
+        This endpoint allows users to create a new vote for a specific post.
+        It is a key feature of the Votes service, enabling users to participate in voting activities.
+      tags:
+        - votes
+      security:
+        - JWTAuth: []
+        - HMACAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVoteRequest'
+      responses:
+        '201':
+          description: Successfully created the vote
+          content:
+            application/json:
+              schema:
+                $ref: './common.yaml#/components/schemas/CreateResponse'
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+    
+    put:
+      summary: Update an existing vote
+      description: |
+        This endpoint allows users to update their vote for a specific post.
+        It is an essential feature of the Votes service, enabling users to change their voting preferences.
+      tags:
+        - votes
+      security:
+        - JWTAuth: []
+        - HMACAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateVoteRequest'
+      responses:
+        '200':
+          description: Successfully updated the vote
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: './common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+    
+    get:
+      summary: Retrieve votes by post ID
+      description: |
+        This endpoint allows users to retrieve all votes associated with a specific post ID,
+        with pagination support.
+      tags:
+        - votes
+      security:
+        - JWTAuth: []
+        - HMACAuth: []
+      parameters:
+        - name: postId
+          in: query
+          required: true
+          description: The UUID of the post to retrieve votes for
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          required: false
+          description: Page number for pagination
+          schema:
+            type: integer
+            default: 1
+      responses:
+        '200':
+          description: Successfully retrieved votes for the post
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/VoteResponse'
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '404':
+          $ref: './common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /{voteId}:
+    get:
+      summary: Retrieve a specific vote
+      description: |
+        This endpoint allows users to retrieve details of a specific vote by its ID.
+        It is crucial for understanding individual voting choices within the Votes service.
+      tags:
+        - votes
+      security:
+        - JWTAuth: []
+        - HMACAuth: []
+      parameters:
+        - name: voteId
+          in: path
+          required: true
+          description: The ID of the vote to retrieve
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Successfully retrieved the vote
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoteResponse'
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '404':
+          $ref: './common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+    
+    delete:
+      summary: Delete an existing vote
+      description: |
+        This endpoint allows users to delete their vote for a specific post.
+        It is a crucial feature of the Votes service, enabling users to remove their voting preferences.
+      tags:
+        - votes
+      security:
+        - JWTAuth: []
+        - HMACAuth: []
+      parameters:
+        - name: voteId
+          in: path
+          required: true
+          description: The ID of the vote to delete
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Successfully deleted the vote
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: './common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /post/{postId}:
+    delete:
+      summary: Delete votes by post ID
+      description: |
+        This endpoint allows users or administrators to delete all votes associated with a specific post ID.
+        It is an important feature for managing vote data integrity and cleanliness in the Votes service.
+      tags:
+        - votes
+      security:
+        - JWTAuth: []
+        - HMACAuth: []
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          description: The ID of the post whose votes are to be deleted
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Successfully deleted votes for the post
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: './common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+components:
+  schemas:
+    CreateVoteRequest:
+      type: object
+      required:
+        - postId
+        - typeId
+      properties:
+        postId:
+          type: string
+          format: uuid
+          description: The ID of the post to vote on
+        typeId:
+          type: integer
+          description: The type of vote (1 for upvote, -1 for downvote)
+          enum: [1, -1]
+    
+    UpdateVoteRequest:
+      type: object
+      required:
+        - objectId
+        - postId
+        - typeId
+      properties:
+        objectId:
+          type: string
+          format: uuid
+          description: The ID of the vote to update
+        postId:
+          type: string
+          format: uuid
+          description: The ID of the post
+        typeId:
+          type: integer
+          description: The new type of vote (1 for upvote, -1 for downvote)
+          enum: [1, -1]
+    
+    VoteResponse:
+      type: object
+      allOf:
+        - $ref: './common.yaml#/components/schemas/TimestampFields'
+        - type: object
+          properties:
+            objectId:
+              type: string
+              format: uuid
+              description: The unique identifier of the vote
+            owner:
+              $ref: './common.yaml#/components/schemas/UserReference'
+            postId:
+              type: string
+              format: uuid
+              description: The ID of the post being voted on
+            typeId:
+              type: integer
+              description: The type of vote (1 for upvote, -1 for downvote)
+              enum: [1, -1]
+
+  securitySchemes:
+    JWTAuth:
+      $ref: './common.yaml#/components/securitySchemes/JWTAuth'
+    HMACAuth:
+      $ref: './common.yaml#/components/securitySchemes/HMACAuth'
