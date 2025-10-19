@@ -14,6 +14,8 @@ import (
 	platform "github.com/qolzam/telar/apps/api/internal/platform"
 	"github.com/qolzam/telar/apps/api/internal/types"
 	"github.com/qolzam/telar/apps/api/internal/utils"
+	profileModels "github.com/qolzam/telar/apps/api/profile/models"
+	profileServices "github.com/qolzam/telar/apps/api/profile/services"
 )
 
 const (
@@ -30,6 +32,7 @@ type Service struct {
 	privateKey        string
 	orgName           string
 	webDomain         string
+	profileCreator    profileServices.ProfileServiceClient
 }
 
 func NewService(base *platform.BaseService, config *ServiceConfig) *Service {
@@ -50,11 +53,12 @@ func NewService(base *platform.BaseService, config *ServiceConfig) *Service {
 }
 
 // NewServiceWithKeys creates a service with JWT token generation capability
-func NewServiceWithKeys(base *platform.BaseService, config *ServiceConfig, privateKey, orgName, webDomain string) *Service {
+func NewServiceWithKeys(base *platform.BaseService, config *ServiceConfig, privateKey, orgName, webDomain string, profileCreator profileServices.ProfileServiceClient) *Service {
 	service := NewService(base, config)
 	service.privateKey = privateKey
 	service.orgName = orgName
 	service.webDomain = webDomain
+	service.profileCreator = profileCreator
 	return service
 }
 
@@ -287,18 +291,23 @@ func (s *Service) VerifySignup(ctx context.Context, params VerifySignupParams) (
 		fullName = extractFullNameFromTarget(verification.Target)
 	}
 
-	newUserProfile := userProfileData{
+	socialName := generateSocialName(fullName, verification.UserId.String())
+	createdDate := time.Now().Unix()
+	emptyStr := ""
+
+	profileReq := &profileModels.CreateProfileRequest{
 		ObjectId:    verification.UserId,
-		FullName:    fullName,
-		Email:       verification.Target,
-		SocialName:  generateSocialName(fullName, verification.UserId.String()),
-		Avatar:      "",
-		Banner:      "",
-		TagLine:     "",
-		CreatedDate: time.Now().Unix(),
+		FullName:    &fullName,
+		Email:       &verification.Target,
+		SocialName:  &socialName,
+		Avatar:      &emptyStr,
+		Banner:      &emptyStr,
+		TagLine:     &emptyStr,
+		CreatedDate: &createdDate,
+		LastUpdated: &createdDate,
 	}
 
-	if err := s.createUserProfile(ctx, newUserProfile); err != nil {
+	if err := s.profileCreator.CreateProfileOnSignup(ctx, profileReq); err != nil {
 		return nil, fmt.Errorf("failed to create user profile: %w", err)
 	}
 
@@ -395,7 +404,7 @@ func (s *Service) validateHMACSignature(ctx context.Context, params *VerifySignu
 // findUserProfile finds a user profile by user ID
 func (s *Service) findUserProfile(ctx context.Context, userId uuid.UUID) (*userProfileData, error) {
 	res := <-s.base.Repository.FindOne(ctx, userProfileCollectionName, struct {
-		ObjectId uuid.UUID `json:"objectId" bson:"_id"`
+		ObjectId uuid.UUID `json:"objectId" bson:"objectId"`
 	}{ObjectId: userId})
 
 	if res.Error() != nil {
@@ -411,7 +420,7 @@ func (s *Service) findUserProfile(ctx context.Context, userId uuid.UUID) (*userP
 }
 
 type userProfileData struct {
-	ObjectId    uuid.UUID `json:"objectId" bson:"_id"`
+	ObjectId    uuid.UUID `json:"objectId" bson:"objectId"`
 	FullName    string    `json:"fullName" bson:"fullName"`
 	Email       string    `json:"email" bson:"email"`
 	SocialName  string    `json:"socialName" bson:"socialName"`

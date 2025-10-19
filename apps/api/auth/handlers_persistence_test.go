@@ -16,7 +16,6 @@ import (
 	loginUC "github.com/qolzam/telar/apps/api/auth/login"
 	oauthUC "github.com/qolzam/telar/apps/api/auth/oauth"
 	passwordUC "github.com/qolzam/telar/apps/api/auth/password"
-	profileUC "github.com/qolzam/telar/apps/api/auth/profile"
 	signupUC "github.com/qolzam/telar/apps/api/auth/signup"
 	verifyUC "github.com/qolzam/telar/apps/api/auth/verification"
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
@@ -24,6 +23,8 @@ import (
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/internal/testutil"
 	"github.com/qolzam/telar/apps/api/internal/types"
+	"github.com/qolzam/telar/apps/api/profile"
+	profileServices "github.com/qolzam/telar/apps/api/profile/services"
 	"github.com/stretchr/testify/require"
 )
 
@@ -80,7 +81,7 @@ func newAuthAppForTest(t *testing.T, base *platform.BaseService, config *platfor
 		OrgName:   "Telar",
 		WebDomain: "http://localhost",
 	}
-	verifyHandler := verifyUC.NewHandler(verifyService, verifyHandlerConfig)
+	var verifyHandler *verifyUC.Handler
 
 	passwordServiceConfig := &passwordUC.ServiceConfig{
 		JWTConfig:   platformconfig.JWTConfig{PublicKey: pubPEM, PrivateKey: privPEM},
@@ -116,18 +117,25 @@ func newAuthAppForTest(t *testing.T, base *platform.BaseService, config *platfor
 	}
 	oauthHandler := oauthUC.NewHandler(oauthService, oauthHandlerConfig, stateStore)
 
-	profileServiceConfig := &profileUC.ServiceConfig{
-		JWTConfig:  platformconfig.JWTConfig{PublicKey: pubPEM, PrivateKey: privPEM},
-		HMACConfig: platformconfig.HMACConfig{Secret: config.HMAC.Secret},
-		AppConfig:  platformconfig.AppConfig{WebDomain: "http://localhost"},
-	}
-	profileService := profileUC.NewService(base, profileServiceConfig)
-	profileHandler := profileUC.NewProfileHandler(profileService, platformconfig.JWTConfig{
-		PublicKey:  pubPEM,
-		PrivateKey: privPEM,
-	}, platformconfig.HMACConfig{
-		Secret: config.HMAC.Secret,
+	// Create profile service adapter (using direct call adapter for tests)
+	profileService := profileServices.NewService(base, &platformconfig.Config{
+		JWT:      platformconfig.JWTConfig{PublicKey: pubPEM, PrivateKey: privPEM},
+		HMAC:     platformconfig.HMACConfig{Secret: config.HMAC.Secret},
+		App:      platformconfig.AppConfig{WebDomain: "http://localhost"},
+		Database: config.Database,
 	})
+	profileCreator := profile.NewDirectCallAdapter(profileService)
+
+	// Update verification service to use profile creator
+	verifyService = verifyUC.NewServiceWithKeys(
+		base,
+		verifyServiceConfig,
+		pubPEM,
+		"Telar",
+		"http://localhost",
+		profileCreator,
+	)
+	verifyHandler = verifyUC.NewHandler(verifyService, verifyHandlerConfig)
 
 	// Create JWKS handler
 	jwksHandler := jwksUC.NewHandler(pubPEM, "telar-auth-key-1")
@@ -140,7 +148,6 @@ func newAuthAppForTest(t *testing.T, base *platform.BaseService, config *platfor
 		VerifyHandler:   verifyHandler,
 		PasswordHandler: passwordHandler,
 		OAuthHandler:    oauthHandler,
-		ProfileHandler:  profileHandler,
 		JWKSHandler:     jwksHandler,
 	}
 

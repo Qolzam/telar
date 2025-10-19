@@ -1,0 +1,262 @@
+openapi: 3.0.3
+info:
+  title: User Relations API
+  version: 1.0.0
+  description: API for managing user relationships, including following, unfollowing, and circles
+  contact:
+    name: API Support
+    email: dev@telar.dev
+  license:
+    name: MIT
+    url: https://github.com/qolzam/telar/blob/master/LICENSE
+
+servers:
+  - url: http://localhost:3000/userrels
+    description: Development server
+
+paths:
+  /follow:
+    post:
+      summary: Follow a user
+      tags: [User Relations]
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FollowRequest'
+      responses:
+        '201':
+          description: User followed successfully
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '409':
+          $ref: './common.yaml#/components/responses/Conflict'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /unfollow/{userId}:
+    delete:
+      summary: Unfollow a user
+      tags: [User Relations]
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: User unfollowed successfully
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: './common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /circle/{circleId}:
+    delete:
+      summary: Delete a circle
+      tags: [User Relations]
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      parameters:
+        - name: circleId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Circle deleted successfully
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: './common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /circles:
+    put:
+      summary: Update relationship circles
+      tags: [User Relations]
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCirclesRequest'
+      responses:
+        '200':
+          description: Circles updated successfully
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: './common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /followers:
+    get:
+      summary: Get followers list
+      tags: [User Relations]
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+        - name: userId
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: Get followers of specific user (optional)
+      responses:
+        '200':
+          description: Followers retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RelMetaResponse'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /following:
+    get:
+      summary: Get following list
+      tags: [User Relations]
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+        - name: userId
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: Get following list of specific user (optional)
+      responses:
+        '200':
+          description: Following list retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RelMetaResponse'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+components:
+  schemas:
+    FollowRequest:
+      type: object
+      required:
+        - rightUser
+      properties:
+        rightUser:
+          $ref: '#/components/schemas/RelMetaRequest'
+        circleIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    UpdateCirclesRequest:
+      type: object
+      required:
+        - userId
+        - circleIds
+      properties:
+        userId:
+          type: string
+          format: uuid
+        circleIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    RelMetaRequest:
+      type: object
+      required:
+        - userId
+        - fullName
+      properties:
+        userId:
+          type: string
+          format: uuid
+        fullName:
+          type: string
+        avatar:
+          type: string
+
+    RelMetaResponse:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+        fullName:
+          type: string
+        avatar:
+          type: string
+        circleIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+  securitySchemes:
+    JWTAuth:
+      $ref: './common.yaml#/components/securitySchemes/JWTAuth'
+    HMACAuth:
+      $ref: './common.yaml#/components/securitySchemes/HMACAuth'

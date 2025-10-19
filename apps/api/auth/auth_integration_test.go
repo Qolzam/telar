@@ -22,7 +22,6 @@ import (
 	loginUC "github.com/qolzam/telar/apps/api/auth/login"
 	oauthUC "github.com/qolzam/telar/apps/api/auth/oauth"
 	passwordUC "github.com/qolzam/telar/apps/api/auth/password"
-	profileUC "github.com/qolzam/telar/apps/api/auth/profile"
 	signupUC "github.com/qolzam/telar/apps/api/auth/signup"
 	verifyUC "github.com/qolzam/telar/apps/api/auth/verification"
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
@@ -31,6 +30,8 @@ import (
 	"github.com/qolzam/telar/apps/api/internal/testutil"
 	"github.com/qolzam/telar/apps/api/internal/types"
 	"github.com/qolzam/telar/apps/api/internal/utils"
+	"github.com/qolzam/telar/apps/api/profile"
+	profileServices "github.com/qolzam/telar/apps/api/profile/services"
 	"github.com/stretchr/testify/require"
 )
 
@@ -124,7 +125,7 @@ func newAuthApp(t *testing.T, base *platform.BaseService, cfg *platformconfig.Co
 		OrgName:   "Telar",
 		WebDomain: "http://localhost",
 	}
-	verifyHandler := verifyUC.NewHandler(verifyService, verifyHandlerConfig)
+	var verifyHandler *verifyUC.Handler
 
 	// Create password service with new constructor
 	passwordServiceConfig := &passwordUC.ServiceConfig{
@@ -179,26 +180,25 @@ func newAuthApp(t *testing.T, base *platform.BaseService, cfg *platformconfig.Co
 	}
 	oauthHandler := oauthUC.NewHandler(oauthService, oauthHandlerConfig, stateStore)
 
-	// Create profile service with new constructor
-	profileServiceConfig := &profileUC.ServiceConfig{
-		JWTConfig: platformconfig.JWTConfig{
-			PublicKey:  pubPEM,
-			PrivateKey: privPEM,
-		},
-		HMACConfig: platformconfig.HMACConfig{
-			Secret: cfg.HMAC.Secret,
-		},
-		AppConfig: platformconfig.AppConfig{
-			WebDomain: "http://localhost",
-		},
-	}
-	profileService := profileUC.NewService(base, profileServiceConfig)
-	profileHandler := profileUC.NewProfileHandler(profileService, platformconfig.JWTConfig{
-		PublicKey:  pubPEM,
-		PrivateKey: privPEM,
-	}, platformconfig.HMACConfig{
-		Secret: cfg.HMAC.Secret,
+	// Create profile service adapter (using direct call adapter for tests)
+	profileService := profileServices.NewService(base, &platformconfig.Config{
+		JWT:      platformconfig.JWTConfig{PublicKey: pubPEM, PrivateKey: privPEM},
+		HMAC:     platformconfig.HMACConfig{Secret: cfg.HMAC.Secret},
+		App:      platformconfig.AppConfig{WebDomain: "http://localhost"},
+		Database: cfg.Database,
 	})
+	profileCreator := profile.NewDirectCallAdapter(profileService)
+
+	// Update verification service to use profile creator
+	verifyService = verifyUC.NewServiceWithKeys(
+		base,
+		verifyServiceConfig,
+		privPEM,
+		"Telar",
+		"http://localhost",
+		profileCreator,
+	)
+	verifyHandler = verifyUC.NewHandler(verifyService, verifyHandlerConfig)
 
 	// Create JWKS handler
 	jwksHandler := jwksUC.NewHandler(pubPEM, "telar-auth-key-1")
@@ -210,7 +210,6 @@ func newAuthApp(t *testing.T, base *platform.BaseService, cfg *platformconfig.Co
 		VerifyHandler:   verifyHandler,
 		PasswordHandler: passwordHandler,
 		OAuthHandler:    oauthHandler,
-		ProfileHandler:  profileHandler,
 		JWKSHandler:     jwksHandler,
 	}
 
@@ -366,14 +365,16 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 		cookies := resp3.Header.Get("Set-Cookie")
 		require.Empty(t, cookies, "No cookies should be set for header-based JWT")
 
-		// 4) Use JWT to access protected profile route (PUT /auth/profile)
-		updateBody := url.Values{}
-		updateBody.Set("fullName", "Updated Name")
+		// 4) Use JWT to access protected route (PUT /auth/password/change)
+		changeBody := url.Values{}
+		changeBody.Set("currentPassword", password)
+		changeBody.Set("newPassword", "NewStrongPassword123!@#")
+		changeBody.Set("confirmPassword", "NewStrongPassword123!@#")
 
-		resp4 := h.NewRequest(http.MethodPut, "/auth/profile", []byte(updateBody.Encode())).
+		resp4 := h.NewRequest(http.MethodPut, "/auth/password/change", []byte(changeBody.Encode())).
 			WithHeader(types.HeaderContentType, "application/x-www-form-urlencoded").
 			WithHeader(types.HeaderAuthorization, types.BearerPrefix+loginPayload.AccessToken).Send()
-		require.Equal(t, http.StatusOK, resp4.StatusCode, fmt.Sprintf("profile update failed: %d", resp4.StatusCode))
+		require.Equal(t, http.StatusOK, resp4.StatusCode, fmt.Sprintf("password change failed: %d", resp4.StatusCode))
 
 		// Verify JWT contains expected claims
 		claims, err := utils.ValidateToken([]byte(pubPEM), loginPayload.AccessToken)
@@ -412,21 +413,21 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 	})
 
 	t.Run("Phase4_SecurityValidations", func(t *testing.T) {
-		// Test various security validations
+		// Test various security validations using password change endpoint
 
 		// Test 1: Invalid JWT should be rejected
-		resp1 := h.NewRequest(http.MethodPut, "/auth/profile", "").
+		resp1 := h.NewRequest(http.MethodPut, "/auth/password/change", "").
 			WithHeader(types.HeaderContentType, "application/x-www-form-urlencoded").
 			WithHeader(types.HeaderAuthorization, types.BearerPrefix+"invalid-jwt-token").Send()
 		require.Equal(t, http.StatusUnauthorized, resp1.StatusCode)
 
 		// Test 2: Missing Authorization header should be rejected
-		resp2 := h.NewRequest(http.MethodPut, "/auth/profile", "").
+		resp2 := h.NewRequest(http.MethodPut, "/auth/password/change", "").
 			WithHeader(types.HeaderContentType, "application/x-www-form-urlencoded").Send()
 		require.Equal(t, http.StatusUnauthorized, resp2.StatusCode)
 
 		// Test 3: Wrong Authorization format should be rejected
-		resp3 := h.NewRequest(http.MethodPut, "/auth/profile", "").
+		resp3 := h.NewRequest(http.MethodPut, "/auth/password/change", "").
 			WithHeader(types.HeaderContentType, "application/x-www-form-urlencoded").
 			WithHeader(types.HeaderAuthorization, "Basic invalid").Send()
 		require.Equal(t, http.StatusUnauthorized, resp3.StatusCode)
@@ -619,7 +620,7 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 
 		// Create user profile as well
 		userProfile := struct {
-			ObjectId    uuid.UUID `json:"objectId" bson:"_id"`
+			ObjectId    uuid.UUID `json:"objectId" bson:"objectId"`
 			FullName    string    `json:"fullName" bson:"fullName"`
 			SocialName  string    `json:"socialName" bson:"socialName"`
 			Email       string    `json:"email" bson:"email"`
@@ -889,7 +890,7 @@ func TestAuth_RefactoringValidation(t *testing.T) {
 		// passing without cookies confirms the migration
 
 		// Test that protected routes require Authorization header, not cookies
-		resp := h.NewRequest(http.MethodPut, "/auth/profile", "").
+		resp := h.NewRequest(http.MethodPut, "/auth/password/change", "").
 			WithHeader(types.HeaderContentType, "application/x-www-form-urlencoded").Send()
 		require.Equal(t, http.StatusUnauthorized, resp.StatusCode, "Should require Authorization header")
 	})
@@ -899,7 +900,7 @@ func TestAuth_RefactoringValidation(t *testing.T) {
 		// We test this by ensuring the endpoints behave according to JWTAuth specification
 
 		// Test that endpoints require Bearer token format
-		resp := h.NewRequest(http.MethodPut, "/auth/profile", "").
+		resp := h.NewRequest(http.MethodPut, "/auth/password/change", "").
 			WithHeader(types.HeaderContentType, "application/x-www-form-urlencoded").
 			WithHeader(types.HeaderAuthorization, "InvalidFormat token").Send()
 		require.Equal(t, http.StatusUnauthorized, resp.StatusCode, "Should require Bearer format")

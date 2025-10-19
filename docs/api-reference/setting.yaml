@@ -1,0 +1,322 @@
+openapi: 3.0.3
+info:
+  title: Setting Service API
+  description: Professional Setting Service API for user settings management
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: dev@telar.dev
+  license:
+    name: MIT
+    url: https://github.com/qolzam/telar/blob/master/LICENSE
+
+servers:
+  - url: http://localhost:8080
+    description: Development server
+  - url: https://api.telar.dev
+    description: Production server
+
+paths:
+  /settings:
+    post:
+      summary: Create setting group
+      description: Create a new setting group with multiple settings
+      tags:
+        - Settings
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSettingGroupRequest'
+            example:
+              type: "notification"
+              list:
+                - name: "email_notifications"
+                  value: "true"
+                - name: "push_notifications"
+                  value: "false"
+      responses:
+        '201':
+          description: Setting group created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Setting group created successfully"
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+    get:
+      summary: Get all user settings
+      description: Get all user settings grouped by type
+      tags:
+        - Settings
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      responses:
+        '200':
+          description: User settings retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetSettingGroupResponse'
+              example:
+                notification:
+                  - objectId: "123e4567-e89b-12d3-a456-426614174000"
+                    name: "email_notifications"
+                    value: "true"
+                    isSystem: false
+                privacy:
+                  - objectId: "123e4567-e89b-12d3-a456-426614174001"
+                    name: "profile_visibility"
+                    value: "public"
+                    isSystem: false
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+    put:
+      summary: Update user setting
+      description: Update a specific user setting
+      tags:
+        - Settings
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserSettingRequest'
+            example:
+              objectId: "123e4567-e89b-12d3-a456-426614174000"
+              name: "email_notifications"
+              value: "false"
+              type: "notification"
+      responses:
+        '200':
+          description: Setting updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Setting updated successfully"
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: './common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+    delete:
+      summary: Delete all user settings
+      description: Delete all user settings for the current user
+      tags:
+        - Settings
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      responses:
+        '204':
+          description: All settings deleted successfully
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+  /settings/dto/ids:
+    post:
+      summary: Get settings by user IDs
+      description: Get settings for multiple users by their IDs
+      tags:
+        - Settings
+      security:
+        - HMACAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetSettingsByUserIdsRequest'
+            example:
+              userIds:
+                - "123e4567-e89b-12d3-a456-426614174000"
+                - "123e4567-e89b-12d3-a456-426614174001"
+              type: "notification"
+      responses:
+        '200':
+          description: Settings retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+              example:
+                "123e4567-e89b-12d3-a456-426614174000:notification:email_notifications": "true"
+                "123e4567-e89b-12d3-a456-426614174001:notification:email_notifications": "false"
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    HMACAuth:
+      $ref: './common.yaml#/components/securitySchemes/HMACAuth'
+    JWTAuth:
+      $ref: './common.yaml#/components/securitySchemes/JWTAuth'
+
+  schemas:
+    CreateSettingGroupRequest:
+      type: object
+      required:
+        - type
+        - list
+      properties:
+        type:
+          type: string
+          description: Setting group type
+          example: "notification"
+        list:
+          type: array
+          items:
+            $ref: '#/components/schemas/SettingGroupItemRequest'
+          minItems: 1
+          description: List of setting items
+
+    SettingGroupItemRequest:
+      type: object
+      required:
+        - name
+        - value
+      properties:
+        name:
+          type: string
+          description: Setting name
+          example: "email_notifications"
+        value:
+          type: string
+          description: Setting value
+          example: "true"
+
+    UpdateUserSettingRequest:
+      type: object
+      required:
+        - objectId
+        - name
+        - value
+        - type
+      properties:
+        objectId:
+          type: string
+          format: uuid
+          description: Setting object ID
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        name:
+          type: string
+          description: Setting name
+          example: "email_notifications"
+        value:
+          type: string
+          description: Setting value
+          example: "false"
+        type:
+          type: string
+          description: Setting type
+          example: "notification"
+
+    GetSettingsByUserIdsRequest:
+      type: object
+      required:
+        - userIds
+        - type
+      properties:
+        userIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          minItems: 1
+          description: List of user IDs
+          example: ["123e4567-e89b-12d3-a456-426614174000", "123e4567-e89b-12d3-a456-426614174001"]
+        type:
+          type: string
+          description: Setting type to retrieve
+          example: "notification"
+
+    GetSettingGroupResponse:
+      type: object
+      additionalProperties:
+        type: array
+        items:
+          $ref: '#/components/schemas/SettingGroupItemResponse'
+      description: Settings grouped by type
+      example:
+        notification:
+          - objectId: "123e4567-e89b-12d3-a456-426614174000"
+            name: "email_notifications"
+            value: "true"
+            isSystem: false
+        privacy:
+          - objectId: "123e4567-e89b-12d3-a456-426614174001"
+            name: "profile_visibility"
+            value: "public"
+            isSystem: false
+
+    SettingGroupItemResponse:
+      type: object
+      required:
+        - objectId
+        - name
+        - value
+        - isSystem
+      properties:
+        objectId:
+          type: string
+          format: uuid
+          description: Setting object ID
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        name:
+          type: string
+          description: Setting name
+          example: "email_notifications"
+        value:
+          type: string
+          description: Setting value
+          example: "true"
+        isSystem:
+          type: boolean
+          description: Whether this is a system setting
+          example: false
+
+tags:
+  - name: Settings
+    description: User settings management operations

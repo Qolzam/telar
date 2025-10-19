@@ -7,7 +7,6 @@ import (
 	"github.com/qolzam/telar/apps/api/auth/login"
 	"github.com/qolzam/telar/apps/api/auth/oauth"
 	"github.com/qolzam/telar/apps/api/auth/password"
-	"github.com/qolzam/telar/apps/api/auth/profile"
 	"github.com/qolzam/telar/apps/api/auth/signup"
 	"github.com/qolzam/telar/apps/api/auth/verification"
 	authhmac "github.com/qolzam/telar/apps/api/internal/middleware/authhmac"
@@ -25,7 +24,6 @@ type AuthHandlers struct {
 	VerifyHandler   *verification.Handler
 	PasswordHandler *password.PasswordHandler
 	OAuthHandler    *oauth.Handler
-	ProfileHandler  *profile.ProfileHandler
 	JWKSHandler     *jwks.Handler
 }
 
@@ -37,7 +35,6 @@ func NewAuthHandlers(
 	verifyHandler *verification.Handler,
 	passwordHandler *password.PasswordHandler,
 	oauthHandler *oauth.Handler,
-	profileHandler *profile.ProfileHandler,
 	jwksHandler *jwks.Handler,
 ) *AuthHandlers {
 	return &AuthHandlers{
@@ -47,7 +44,6 @@ func NewAuthHandlers(
 		VerifyHandler:   verifyHandler,
 		PasswordHandler: passwordHandler,
 		OAuthHandler:    oauthHandler,
-		ProfileHandler:  profileHandler,
 		JWKSHandler:     jwksHandler,
 	}
 }
@@ -180,6 +176,4 @@ func RegisterRoutes(app *fiber.App, handlers *AuthHandlers, cfg *platformconfig.
 	// JWKS endpoint (public, no authentication required)
 	group.Get("/.well-known/jwks.json", handlers.JWKSHandler.Handle)
 
-	// Profile (JWT-protected, no additional rate limiting needed for authenticated users)
-	group.Put("/profile", authJWTMiddleware(*routerConfig), handlers.ProfileHandler.Handle)
 }

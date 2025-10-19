@@ -33,7 +33,9 @@ type Config struct {
 func CreateDualAuthMiddleware(cfg Config) fiber.Handler {
 	// Separate middleware instances
 	jwtMiddleware := authjwt.New(authjwt.Config{
-		PublicKey: cfg.PublicKey,
+		PublicKey:   cfg.PublicKey,
+		ClaimKey:    "claim",
+		UserCtxName: types.UserCtxName,
 	})
 
 	hmacMiddleware := authhmac.New(authhmac.Config{
@@ -42,18 +44,19 @@ func CreateDualAuthMiddleware(cfg Config) fiber.Handler {
 
 	// Create dual auth middleware (JWT + HMAC only)
 	return func(c *fiber.Ctx) error {
+		authHeader := c.Get(types.HeaderAuthorization)
+		hmacHeader := c.Get(types.HeaderHMACAuthenticate)
+		
 		// Try JWT middleware first
-		if authHeader := c.Get(types.HeaderAuthorization); authHeader != "" && strings.HasPrefix(authHeader, types.BearerPrefix) {
-			// JWT token present, try JWT middleware
+		if authHeader != "" && strings.HasPrefix(authHeader, types.BearerPrefix) {
 			err := jwtMiddleware(c)
 			if err == nil {
 				return c.Next()
 			}
-			// JWT failed, but don't return error yet - try other methods
 		}
 
 		// Try HMAC middleware as final fallback
-		if c.Get(types.HeaderHMACAuthenticate) != "" {
+		if hmacHeader != "" {
 			return hmacMiddleware(c)
 		}
 

@@ -55,7 +55,7 @@ func (s *Service) FindUserByUsername(ctx context.Context, username string) (*use
 }
 
 type userProfile struct {
-	ObjectId    uuid.UUID `json:"objectId" bson:"_id" db:"objectId"`
+	ObjectId    uuid.UUID `json:"objectId" bson:"objectId" db:"objectId"`
 	FullName    string    `json:"fullName" bson:"fullName" db:"fullName"`
 	SocialName  string    `json:"socialName" bson:"socialName" db:"socialName"`
 	Email       string    `json:"email" bson:"email" db:"email"`
@@ -68,7 +68,7 @@ type userProfile struct {
 func (s *Service) ReadProfileAndLanguage(ctx context.Context, user userAuth) (*userProfile, string, error) {
 	// Read profile
 	profRes := <-s.base.Repository.FindOne(ctx, "userProfile", struct {
-		ObjectId uuid.UUID `json:"objectId" bson:"_id" db:"objectId"`
+		ObjectId uuid.UUID `json:"objectId" bson:"objectId" db:"objectId"`
 	}{ObjectId: user.ObjectId})
 	if profRes.Error() != nil {
 		return nil, "", profRes.Error()

@@ -15,7 +15,27 @@ import (
 	"github.com/qolzam/telar/apps/api/internal/testutil"
 	"github.com/qolzam/telar/apps/api/internal/types"
 	"github.com/qolzam/telar/apps/api/internal/utils"
+	profileModels "github.com/qolzam/telar/apps/api/profile/models"
 )
+
+// mockProfileCreator is a test mock for ProfileServiceClient interface
+type mockProfileCreator struct{}
+
+func (m *mockProfileCreator) CreateProfileOnSignup(ctx context.Context, req *profileModels.CreateProfileRequest) error {
+	return nil
+}
+
+func (m *mockProfileCreator) UpdateProfile(ctx context.Context, userID uuid.UUID, req *profileModels.UpdateProfileRequest) error {
+	return nil
+}
+
+func (m *mockProfileCreator) GetProfile(ctx context.Context, userID uuid.UUID) (*profileModels.Profile, error) {
+	return nil, nil
+}
+
+func (m *mockProfileCreator) GetProfilesByIds(ctx context.Context, userIds []uuid.UUID) ([]*profileModels.Profile, error) {
+	return nil, nil
+}
 
 func TestVerificationService_SuccessBranch_Coverage(t *testing.T) {
 	if !testutil.ShouldRunDatabaseTests() {
@@ -46,7 +66,11 @@ func TestVerificationService_SuccessBranch_Coverage(t *testing.T) {
 			WebDomain: "http://localhost:3000",
 		},
 	}
-	s := NewService(base, config)
+	
+	// Create mock profile creator for testing
+	mockProfile := &mockProfileCreator{}
+	s := NewServiceWithKeys(base, config, "test-private-key", "Telar", "http://localhost", mockProfile)
+	
 	uid := uuid.Must(uuid.NewV4())
 	vid := uuid.Must(uuid.NewV4())
 	now := utils.UTCNowUnix()
@@ -65,6 +89,7 @@ func TestVerificationService_SuccessBranch_Coverage(t *testing.T) {
 		"targetType":      "email",
 		"used":            false,
 		"expiresAt":       now + 3600,
+		"fullName":        "Test User",
 	})).Error
 
 	// Test secure verification (should handle database operations gracefully even if auth creation fails)

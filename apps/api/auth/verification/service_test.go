@@ -9,7 +9,27 @@ import (
 	platform "github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/internal/testutil"
+	profileModels "github.com/qolzam/telar/apps/api/profile/models"
 )
+
+// mockProfileCreatorForTest is a test mock for ProfileServiceClient interface
+type mockProfileCreatorForTest struct{}
+
+func (m *mockProfileCreatorForTest) CreateProfileOnSignup(ctx context.Context, req *profileModels.CreateProfileRequest) error {
+	return nil
+}
+
+func (m *mockProfileCreatorForTest) UpdateProfile(ctx context.Context, userID uuid.UUID, req *profileModels.UpdateProfileRequest) error {
+	return nil
+}
+
+func (m *mockProfileCreatorForTest) GetProfile(ctx context.Context, userID uuid.UUID) (*profileModels.Profile, error) {
+	return nil, nil
+}
+
+func (m *mockProfileCreatorForTest) GetProfilesByIds(ctx context.Context, userIds []uuid.UUID) ([]*profileModels.Profile, error) {
+	return nil, nil
+}
 
 func TestVerificationService_All_Coverage(t *testing.T) {
 	if !testutil.ShouldRunDatabaseTests() {
@@ -40,7 +60,11 @@ func TestVerificationService_All_Coverage(t *testing.T) {
 			WebDomain: "http://localhost:3000",
 		},
 	}
-	s := NewService(base, config)
+	
+	// Create mock profile creator for testing
+	mockProfile := &mockProfileCreatorForTest{}
+	s := NewServiceWithKeys(base, config, "test-private-key", "Telar", "http://localhost", mockProfile)
+	
 	uid := uuid.Must(uuid.NewV4())
 	vid := uuid.Must(uuid.NewV4())
 
@@ -57,7 +81,8 @@ func TestVerificationService_All_Coverage(t *testing.T) {
 		"target":          "test@example.com",
 		"targetType":      "email",
 		"used":            false,
-		"expiresAt":       999999999999, // Far future
+		"expiresAt":       999999999999,
+		"fullName":        "Test User",
 	})).Error
 
 	// Test new secure verification method
@@ -69,7 +94,6 @@ func TestVerificationService_All_Coverage(t *testing.T) {
 	}
 	_, _ = s.VerifySignup(ctx, params)
 
-	// createUserAuth and createUserProfile also called for coverage (even if they fail)
+	// createUserAuth also called for coverage (even if it fails)
 	_ = s.createUserAuth(ctx, userAuthDoc{ObjectId: uid})
-	_ = s.createUserProfile(ctx, map[string]interface{}{"objectId": uid})
 }

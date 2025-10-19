@@ -4,4 +4,5 @@ toolchain go1.24.7
 
 use (
 	./apps/api
+	./tools/linters
 )

@@ -28,9 +28,9 @@ func TestVerifySignup_AccessTokenGeneration(t *testing.T) {
 
 	base := &platform.BaseService{}
 
-	publicKey, privateKey := suite.GenerateUniqueJWTKeys(t)
+	_, privateKey := suite.GenerateUniqueJWTKeys(t)
 
-	service := NewServiceWithKeys(base, config, privateKey, "Telar", "http://localhost")
+	service := NewServiceWithKeys(base, config, privateKey, "Telar", "http://localhost", nil)
 
 	require.NotNil(t, service.privateKey)
 	require.Equal(t, "Telar", service.orgName)

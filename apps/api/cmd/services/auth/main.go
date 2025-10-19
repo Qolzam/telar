@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/qolzam/telar/apps/api/auth"
@@ -12,12 +13,13 @@ import (
 	loginUC "github.com/qolzam/telar/apps/api/auth/login"
 	oauthUC "github.com/qolzam/telar/apps/api/auth/oauth"
 	passwordUC "github.com/qolzam/telar/apps/api/auth/password"
-	profileUC "github.com/qolzam/telar/apps/api/auth/profile"
 	signupUC "github.com/qolzam/telar/apps/api/auth/signup"
 	verifyUC "github.com/qolzam/telar/apps/api/auth/verification"
 	platform "github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	platformemail "github.com/qolzam/telar/apps/api/internal/platform/email"
+	"github.com/qolzam/telar/apps/api/profile"
+	profileServices "github.com/qolzam/telar/apps/api/profile/services"
 )
 
 func main() {
@@ -39,6 +41,30 @@ func main() {
 	baseService, err := platform.NewBaseService(context.Background(), cfg)
 	if err != nil {
 		log.Fatalf("Failed to create base service: %v", err)
+	}
+
+	// Initialize Profile service adapter for Auth service to use
+	profileService := profileServices.NewService(baseService, cfg)
+	var profileCreator profileServices.ProfileServiceClient
+	deploymentMode := os.Getenv("DEPLOYMENT_MODE")
+
+	if deploymentMode == "microservices" {
+		log.Println("🔌 Wiring Profile service using gRPC Adapter")
+		profileServiceAddr := os.Getenv("PROFILE_SERVICE_GRPC_ADDR")
+		if profileServiceAddr == "" {
+			profileServiceAddr = "localhost:50051"
+		}
+		
+		grpcCreator, err := profile.NewGrpcAdapter(profileServiceAddr)
+		if err != nil {
+			log.Fatalf("Failed to create gRPC profile creator: %v", err)
+		}
+		profileCreator = grpcCreator
+		log.Printf("✅ Profile gRPC client connected to %s", profileServiceAddr)
+	} else {
+		log.Println("🔌 Wiring Profile service using Direct Call Adapter")
+		profileCreator = profile.NewDirectCallAdapter(profileService)
+		log.Println("✅ Profile direct call adapter initialized")
 	}
 
 	adminService := adminUC.NewService(baseService, privateKey, cfg)
@@ -112,6 +138,7 @@ func main() {
 		privateKey,
 		cfg.App.OrgName,
 		cfg.App.WebDomain,
+		profileCreator,
 	)
 	
 	verifyHandlerConfig := &verifyUC.HandlerConfig{
@@ -194,26 +221,6 @@ func main() {
 	}
 	oauthHandler := oauthUC.NewHandler(oauthService, oauthHandlerConfig, stateStore)
 
-	authProfileServiceConfig := &profileUC.ServiceConfig{
-		JWTConfig: platformconfig.JWTConfig{
-			PublicKey:  publicKey,
-			PrivateKey: privateKey,
-		},
-		HMACConfig: platformconfig.HMACConfig{
-			Secret: payloadSecret,
-		},
-		AppConfig: platformconfig.AppConfig{
-			WebDomain: webDomain,
-		},
-	}
-	authProfileService := profileUC.NewService(baseService, authProfileServiceConfig)
-	authProfileHandler := profileUC.NewProfileHandler(authProfileService, platformconfig.JWTConfig{
-		PublicKey:  publicKey,
-		PrivateKey: privateKey,
-	}, platformconfig.HMACConfig{
-		Secret: payloadSecret,
-	})
-
 	jwksHandler := jwksUC.NewHandler(publicKey, "telar-auth-key-1")
 
 	authHandlers := &auth.AuthHandlers{
@@ -223,7 +230,6 @@ func main() {
 		VerifyHandler:   verifyHandler,
 		PasswordHandler: passwordHandler,
 		OAuthHandler:    oauthHandler,
-		ProfileHandler:  authProfileHandler,
 		JWKSHandler:     jwksHandler,
 	}
 

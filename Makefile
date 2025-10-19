@@ -8,7 +8,7 @@
 # ====================================================================================
 
 .PHONY: all help \
-        up-mongo up-postgres up-both down-both clean-dbs status logs-mongo logs-postgres docker-start \
+        up-dbs-dev up-mongo up-postgres up-both down-both clean-dbs status logs-mongo logs-postgres docker-start \
         test test-all test-posts test-comments test-votes test-userrels test-auth test-profile test-circles test-setting test-admin test-gallery test-notifications test-actions test-storage test-cache \
         test-db-operations test-posts-operations test-database-compatibility bench-db-operations test-all-operations \
         local-test-all \
@@ -17,7 +17,7 @@
         bench bench-env bench-calibrated bench-summary open-profiles \
         up-both-replica test-transactions \
         lint lint-fix \
-        run-api run-web run-both local-run-both
+        run-api run-web run-both local-run-both run-profile run-profile-standalone
 
 # --- Configuration Variables ---
 PARALLEL ?= 8
@@ -40,6 +40,27 @@ lint-fix:
 	@cd apps/api && golangci-lint run --config=../../.golangci.yml --fix
 
 # --- Docker & Database Management ---
+
+# Development: Start databases WITHOUT modifying .env (preserves your settings)
+up-dbs-dev:
+	@echo "Starting databases for DEVELOPMENT (preserving your .env settings)..."
+	@docker start telar-mongo 2>/dev/null || \
+		(echo "Creating MongoDB container..." && \
+		 docker run -d --name telar-mongo -p 27017:27017 mongo:6)
+	@docker start telar-postgres 2>/dev/null || \
+		(echo "Creating PostgreSQL container..." && \
+		 docker run -d --name telar-postgres \
+		 -e POSTGRES_PASSWORD=postgres \
+		 -e POSTGRES_USER=postgres \
+		 -e POSTGRES_DB=telar_social_test \
+		 -p 5432:5432 postgres:15)
+	@docker start telar-mailhog 2>/dev/null || \
+		(echo "Creating MailHog container..." && \
+		 docker run -d --name telar-mailhog \
+		 -p 1025:1025 -p 8025:8025 mailhog/mailhog:latest)
+	@echo "✅ Databases ready for development (your .env settings preserved)"
+
+# Testing: Use test_env.sh (configures .env for consistent test environment)
 up-mongo:
 	@$(TEST_ENV_SCRIPT) up mongo
 
@@ -107,7 +128,7 @@ test-auth: up-both
 
 test-profile: up-both
 	@echo "Testing 'profile' microservice..."
-	@cd apps/api && RUN_DB_TESTS=1 go test ./profile $(GO_TEST_FLAGS)
+	@cd apps/api && RUN_DB_TESTS=1 go test ./profile/... $(GO_TEST_FLAGS)
 
 test-circles: up-both
 	@echo "Testing 'circles' microservice..."
@@ -266,24 +287,34 @@ test-all-operations: up-both
 # --- Help ---
 help:
 	@echo "Available commands:"
-	@echo "  up-both           - Start MongoDB and PostgreSQL Docker containers."
-	@echo "  down-both         - Stop all database containers."
-	@echo "  clean-dbs         - Recreate fresh database containers."
-	@echo "  status            - Show status of Docker containers."
-	@echo "  logs-mongo        - Tail logs for the MongoDB container."
-	@echo "  logs-postgres     - Tail logs for the PostgreSQL container."
 	@echo ""
-	@echo "  test-all          - Run all tests across all microservices (default)."
-	@echo "  test-<service>    - Run tests for a specific microservice (e.g., make test-posts)."
-	@echo "  local-test-all    - Ensure Docker is running, then run all tests."
+	@echo "Docker & Database Commands:"
+	@echo "  up-dbs-dev        - Start databases for DEVELOPMENT (preserves your .env settings)"
+	@echo "  up-both           - Start databases for TESTING (configures .env for tests)"
+	@echo "  up-mongo          - Start MongoDB only (for testing)"
+	@echo "  up-postgres       - Start PostgreSQL only (for testing)"
+	@echo "  down-both         - Stop all database containers"
+	@echo "  clean-dbs         - Recreate fresh database containers (for testing)"
+	@echo "  status            - Show status of Docker containers"
+	@echo "  logs-mongo        - Tail logs for the MongoDB container"
+	@echo "  logs-postgres     - Tail logs for the PostgreSQL container"
 	@echo ""
-	@echo "  ci-fast           - Run quick CI checks on core services."
-	@echo "  ci-test           - Run standard CI validation for PRs."
+	@echo "Test Commands:"
+	@echo "  test-all          - Run all tests across all microservices (default)"
+	@echo "  test-<service>    - Run tests for a specific microservice (e.g., make test-posts)"
+	@echo "  test-profile      - Run tests for profile microservice"
+	@echo "  local-test-all    - Ensure Docker is running, then run all tests"
 	@echo ""
-	@echo "  lint              - Run golangci-lint for code quality checks."
-	@echo "  lint-fix          - Run golangci-lint with auto-fix enabled."
+	@echo "CI/CD Commands:"
+	@echo "  ci-fast           - Run quick CI checks on core services"
+	@echo "  ci-test           - Run standard CI validation for PRs"
 	@echo ""
-	@echo "  report            - Generate test and coverage reports in ./reports/."
+	@echo "Code Quality:"
+	@echo "  lint              - Run golangci-lint for code quality checks"
+	@echo "  lint-fix          - Run golangci-lint with auto-fix enabled"
+	@echo ""
+	@echo "Reporting:"
+	@echo "  report            - Generate test and coverage reports in ./reports/"
 	@echo "  open-report       - Open the HTML coverage report in a browser."
 	@echo "  clean-reports     - Remove the reports directory."
 	@echo ""
@@ -302,7 +333,8 @@ help:
 	@echo "  test-transactions - Run enterprise transaction management tests."
 	@echo ""
 	@echo "Development Servers:"
-	@echo "  run-api           - Start the Telar API server (requires databases)."
+	@echo "  run-api           - Start the Telar API server on port 8080 (requires databases)."
+	@echo "  run-profile       - Start the Profile microservice on port 8081 (requires databases)."
 	@echo "  run-web           - Start the Next.js web frontend development server."
 	@echo "  run-both          - Start both API and web frontend servers concurrently."
 	@echo "  local-run-both    - ONE-COMMAND LOCAL DEV: Ensure Docker → Check status → Start all services."
@@ -312,16 +344,25 @@ help:
 	@echo "  TIMEOUT=<duration>  - Set the test timeout (default: 15m)."
 
 # --- Development Servers ---
+# NOTE: These use up-dbs-dev (NOT up-both) to preserve your .env settings
 
-run-api: up-both
-	@echo "Starting Telar API server..."
+run-api: up-dbs-dev
+	@echo "Starting Telar API server (using your .env settings)..."
 	@cd apps/api && go run cmd/server/main.go
 
 run-web:
 	@echo "Starting Next.js web frontend development server..."
 	@cd apps/web && pnpm dev
 
-run-both: up-both
+run-profile: up-dbs-dev
+	@echo "Starting Profile microservice (using your .env settings)..."
+	@cd apps/api && go run cmd/services/profile/main.go
+
+run-profile-standalone:
+	@echo "Starting Profile microservice standalone on port 8081..."
+	@cd apps/api && go run cmd/services/profile/main.go
+
+run-both: up-dbs-dev
 	@echo "Starting both API and web frontend servers..."
 	@echo "API server will be available at: http://localhost:8080"
 	@echo "Web frontend will be available at: http://localhost:3000"

@@ -1,0 +1,209 @@
+openapi: 3.0.3
+info:
+  title: Circles API
+  version: 1.0.0
+  description: |
+    Telar Circles microservice API (spec-first backfill).
+    Legacy BasePath is /circles (no /api prefix in microservice router).
+servers:
+  - url: /circles
+tags:
+  - name: Circles
+components:
+  securitySchemes:
+    JWTAuth:
+      $ref: './common.yaml#/components/securitySchemes/JWTAuth'
+    HMACAuth:
+      $ref: './common.yaml#/components/securitySchemes/HMACAuth'
+      
+  schemas:
+    Circle:
+      type: object
+      properties:
+        objectId: { type: string, format: uuid, description: "Unique identifier for the circle" }
+        createdDate: { type: integer, format: int64, description: "Unix timestamp when circle was created" }
+        ownerUserId: { type: string, format: uuid, description: "User ID who owns the circle" }
+        name: { type: string, description: "Name of the circle", minLength: 1, maxLength: 100 }
+        isSystem: { type: boolean, description: "Whether this is a system circle" }
+      required: [objectId, createdDate, ownerUserId, name, isSystem]
+    CreateCircleRequest:
+      type: object
+      properties:
+        objectId: { type: string, format: uuid, description: "Optional object ID. If provided, the service will use it. If omitted, a new one will be generated." }
+        name: { type: string, description: "Name of the circle", minLength: 1, maxLength: 100 }
+      required: [name]
+    UpdateCircleRequest:
+      type: object
+      properties:
+        name: { type: string, description: "New name for the circle", minLength: 1, maxLength: 100 }
+    CircleResponse:
+      type: object
+      properties:
+        objectId: { type: string, format: uuid, description: "Unique identifier for the circle" }
+        createdDate: { type: integer, format: int64, description: "Unix timestamp when circle was created" }
+        ownerUserId: { type: string, format: uuid, description: "User ID who owns the circle" }
+        name: { type: string, description: "Name of the circle" }
+        isSystem: { type: boolean, description: "Whether this is a system circle" }
+      required: [objectId, createdDate, ownerUserId, name, isSystem]
+    FollowingRequest:
+      type: object
+      properties:
+        userId: { type: string, format: uuid, description: "User ID to follow" }
+      required: [userId]
+    FollowingResponse:
+      type: object
+      properties:
+        objectId: { type: string, description: "Unique identifier for the following relationship" }
+      required: [objectId]
+    CirclesListResponse:
+      type: object
+      properties:
+        circles: 
+          type: array
+          items: { $ref: '#/components/schemas/CircleResponse' }
+        total: { type: integer, format: int64, description: "Total number of circles" }
+      required: [circles, total]
+paths:
+  /following/{userId}:
+    parameters:
+      - in: path
+        name: userId
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Circles]
+      summary: Create following (HMAC)
+      security:
+        - HMACAuth: []
+      responses:
+        '201': 
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FollowingResponse' }
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+  /:
+    post:
+      tags: [Circles]
+      summary: Create circle (HMAC + Cookie)
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCircleRequest' }
+      responses:
+        '201': 
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CircleResponse' }
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+    put:
+      tags: [Circles]
+      summary: Update circle (HMAC + Cookie)
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      parameters:
+        - in: query
+          name: circleId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateCircleRequest' }
+      responses:
+        '200': 
+          description: OK
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: './common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+  /{circleId}:
+    parameters:
+      - in: path
+        name: circleId
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [Circles]
+      summary: Delete circle (HMAC + Cookie)
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      responses:
+        '204': 
+          description: No Content
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: './common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+  /my:
+    get:
+      tags: [Circles]
+      summary: Get my circles (HMAC + Cookie)
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CirclesListResponse' }
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+  /id/{circleId}:
+    parameters:
+      - in: path
+        name: circleId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Circles]
+      summary: Get circle by ID (HMAC + Cookie)
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CircleResponse' }
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: './common.yaml#/components/responses/NotFound'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+

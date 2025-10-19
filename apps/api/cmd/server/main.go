@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/qolzam/telar/apps/api/auth"
@@ -12,12 +14,13 @@ import (
 	loginUC "github.com/qolzam/telar/apps/api/auth/login"
 	oauthUC "github.com/qolzam/telar/apps/api/auth/oauth"
 	passwordUC "github.com/qolzam/telar/apps/api/auth/password"
-	profileUC "github.com/qolzam/telar/apps/api/auth/profile"
 	signupUC "github.com/qolzam/telar/apps/api/auth/signup"
 	verifyUC "github.com/qolzam/telar/apps/api/auth/verification"
 	platform "github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	platformemail "github.com/qolzam/telar/apps/api/internal/platform/email"
+	"github.com/qolzam/telar/apps/api/profile"
+	profileServices "github.com/qolzam/telar/apps/api/profile/services"
 )
 
 func main() {
@@ -26,7 +29,27 @@ func main() {
 		log.Fatalf("Failed to load platform config: %v", err)
 	}
 	
-	app := fiber.New()
+	app := fiber.New(fiber.Config{
+		// Disable default error handler that might interfere with custom responses
+		ErrorHandler: func(c *fiber.Ctx, err error) error {
+			code := fiber.StatusInternalServerError
+			if e, ok := err.(*fiber.Error); ok {
+				code = e.Code
+			}
+			log.Printf("[ErrorHandler] Path: %s, Error: %v, Code: %d, ResponseSet: %d bytes", 
+				c.Path(), err, code, len(c.Response().Body()))
+			
+			// If response already set by handler, don't override it
+			if len(c.Response().Body()) > 0 {
+				log.Printf("[ErrorHandler] Response already set, passing through")
+				return nil
+			}
+			
+			return c.Status(code).JSON(fiber.Map{
+				"error": err.Error(),
+			})
+		},
+	})
 
 	payloadSecret := cfg.HMAC.Secret
 	publicKey := cfg.JWT.PublicKey
@@ -39,6 +62,53 @@ func main() {
 	baseService, err := platform.NewBaseService(context.Background(), cfg)
 	if err != nil {
 		log.Fatalf("Failed to create base service: %v", err)
+	}
+
+	// Initialize Profile service (concrete implementation)
+	profileService := profileServices.NewService(baseService, cfg)
+
+	// Create database indexes on startup
+	log.Println("🔧 Creating database indexes for Profile service...")
+	indexCtx, indexCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if err := profileService.CreateIndexes(indexCtx); err != nil {
+		indexCancel()
+		log.Printf("⚠️  Warning: Failed to create indexes (may already exist): %v", err)
+	} else {
+		indexCancel()
+		log.Println("✅ Profile database indexes created successfully")
+	}
+
+	// Decide which adapter to use based on deployment mode
+	var profileCreator profileServices.ProfileServiceClient
+	deploymentMode := os.Getenv("DEPLOYMENT_MODE")
+
+	if deploymentMode == "microservices" {
+		log.Println("🔌 Wiring Profile service using gRPC Adapter")
+		profileServiceAddr := os.Getenv("PROFILE_SERVICE_GRPC_ADDR")
+		if profileServiceAddr == "" {
+			profileServiceAddr = "localhost:50051"
+		}
+
+		grpcCreator, err := profile.NewGrpcAdapter(profileServiceAddr)
+		if err != nil {
+			log.Fatalf("Failed to create gRPC profile creator: %v", err)
+		}
+		profileCreator = grpcCreator
+		log.Printf("✅ Profile gRPC client connected to %s", profileServiceAddr)
+	} else {
+		log.Println("🔌 Wiring Profile service using Direct Call Adapter")
+		profileCreator = profile.NewDirectCallAdapter(profileService)
+		log.Println("✅ Profile direct call adapter initialized")
+	}
+
+	profileHandler := profile.NewProfileHandler(profileService, platformconfig.JWTConfig{
+		PublicKey:  publicKey,
+		PrivateKey: privateKey,
+	}, platformconfig.HMACConfig{
+		Secret: payloadSecret,
+	})
+	profileHandlers := &profile.ProfileHandlers{
+		ProfileHandler: profileHandler,
 	}
 
 	adminService := adminUC.NewService(baseService, privateKey, cfg)
@@ -112,6 +182,7 @@ func main() {
 		privateKey,
 		cfg.App.OrgName,
 		cfg.App.WebDomain,
+		profileCreator,
 	)
 	
 	verifyHandlerConfig := &verifyUC.HandlerConfig{
@@ -194,26 +265,6 @@ func main() {
 	}
 	oauthHandler := oauthUC.NewHandler(oauthService, oauthHandlerConfig, stateStore)
 
-	authProfileServiceConfig := &profileUC.ServiceConfig{
-		JWTConfig: platformconfig.JWTConfig{
-			PublicKey:  publicKey,
-			PrivateKey: privateKey,
-		},
-		HMACConfig: platformconfig.HMACConfig{
-			Secret: payloadSecret,
-		},
-		AppConfig: platformconfig.AppConfig{
-			WebDomain: webDomain,
-		},
-	}
-	authProfileService := profileUC.NewService(baseService, authProfileServiceConfig)
-	authProfileHandler := profileUC.NewProfileHandler(authProfileService, platformconfig.JWTConfig{
-		PublicKey:  publicKey,
-		PrivateKey: privateKey,
-	}, platformconfig.HMACConfig{
-		Secret: payloadSecret,
-	})
-
 	jwksHandler := jwksUC.NewHandler(publicKey, "telar-auth-key-1")
 
 	authHandlers := &auth.AuthHandlers{
@@ -223,12 +274,12 @@ func main() {
 		VerifyHandler:   verifyHandler,
 		PasswordHandler: passwordHandler,
 		OAuthHandler:    oauthHandler,
-		ProfileHandler:  authProfileHandler,
 		JWKSHandler:     jwksHandler,
 	}
 
 	auth.RegisterRoutes(app, authHandlers, cfg)
+	profile.RegisterRoutes(app, profileHandlers, cfg)
 
-	log.Printf("Starting Auth Service on port 8080")
+	log.Printf("Starting Telar API Server (Auth + Profile) on port 8080")
 	log.Fatal(app.Listen(":8080"))
 }

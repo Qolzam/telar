@@ -45,6 +45,19 @@ services:
       - "1025:1025"
       - "8025:8025"
 
+  profile:
+    container_name: telar-profile
+    build:
+      context: ../../
+      dockerfile: apps/api/cmd/services/profile/Dockerfile
+    env_file:
+      - ../../apps/api/.env
+    ports:
+      - "8081:8081"
+    depends_on:
+      - mongo
+      - postgres
+
 volumes:
   telar-mongo-data:
   telar-postgres-data:

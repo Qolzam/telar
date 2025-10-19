@@ -26,7 +26,7 @@ config/secrets.yml
 *credential*
 
 # Build artifacts and binaries
-/bin/
+bin/
 /dist/
 /build/
 /target/
@@ -35,6 +35,14 @@ config/secrets.yml
 *.so
 *.dylib
 ai-engine
+tools/linters/no_setenv_in_tests
+tools/linters/*.so
+
+# Downloaded archives and installers
+*.zip
+*.tar.gz
+*.tar.bz2
+*.tgz
 
 # Test coverage and profiling
 *.out

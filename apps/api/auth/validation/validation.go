@@ -9,10 +9,10 @@ import (
 
 	"github.com/qolzam/telar/apps/api/auth/login"
 	"github.com/qolzam/telar/apps/api/auth/password"
-	"github.com/qolzam/telar/apps/api/auth/profile"
 	"github.com/qolzam/telar/apps/api/auth/signup"
 	"github.com/qolzam/telar/apps/api/auth/verification"
 	"github.com/qolzam/telar/apps/api/internal/pkg/log"
+	profileModels "github.com/qolzam/telar/apps/api/profile/models"
 )
 
 // Enhanced security validation configuration
@@ -569,7 +569,7 @@ func ValidateResetPasswordFormRequest(req *password.ResetPasswordFormRequest) er
 }
 
 // ValidateProfileUpdateRequest validates the profile update request with enhanced security
-func ValidateProfileUpdateRequest(req *profile.ProfileUpdateRequest) error {
+func ValidateProfileUpdateRequest(req *profileModels.UpdateProfileRequest) error {
 	if req == nil {
 		return fmt.Errorf("request is required")
 	}

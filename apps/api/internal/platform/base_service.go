@@ -98,11 +98,6 @@ func CreateServiceConfigFromEnv() (*ServiceConfig, error) {
 		MaxRetries:         3,
 	}
 
-	// Read database type from environment
-	// dbType := os.Getenv("DATABASE_TYPE")
-	// if dbType != "" {
-	//     config.DatabaseType = dbType
-	// }
 
 	return config, nil
 }

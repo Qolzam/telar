@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package profile.v1;
+
+option go_package = "github.com/qolzam/telar/protos/gen/go/profilepb";
+
+service ProfileService {
+  rpc CreateProfile(CreateProfileRequest) returns (CreateProfileResponse) {}
+  rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse) {}
+  rpc GetProfile(GetProfileRequest) returns (GetProfileResponse) {}
+  rpc GetProfilesByIds(GetProfilesByIdsRequest) returns (GetProfilesByIdsResponse) {}
+}
+
+message CreateProfileRequest {
+  string object_id = 1;
+  string full_name = 2;
+  string social_name = 3;
+  string email = 4;
+  string avatar = 5;
+  string banner = 6;
+  string tag_line = 7;
+  int64 created_date = 8;
+  int64 last_updated = 9;
+}
+
+message CreateProfileResponse {
+  string object_id = 1;
+}
+
+message UpdateProfileRequest {
+  string object_id = 1;
+  optional string full_name = 2;
+  optional string avatar = 3;
+  optional string banner = 4;
+  optional string tag_line = 5;
+  optional string social_name = 6;
+}
+
+message UpdateProfileResponse {}
+
+message GetProfileRequest {
+  string object_id = 1;
+}
+
+message GetProfileResponse {
+  Profile profile = 1;
+}
+
+message GetProfilesByIdsRequest {
+  repeated string object_ids = 1;
+}
+
+message GetProfilesByIdsResponse {
+  repeated Profile profiles = 1;
+}
+
+message Profile {
+  string object_id = 1;
+  string full_name = 2;
+  string social_name = 3;
+  string email = 4;
+  string avatar = 5;
+  string banner = 6;
+  string tag_line = 7;
+  int64 created_date = 8;
+  int64 last_updated = 9;
+  int64 last_seen = 10;
+}
+

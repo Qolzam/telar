@@ -452,6 +452,11 @@ func (r *PostgreSQLRepository) Update(ctx context.Context, collectionName string
 			return
 		}
 
+		if opts != nil && opts.Upsert != nil && *opts.Upsert {
+			result <- r.upsertOperation(ctx, collectionName, filter, data)
+			return
+		}
+
 		// Build UPDATE clause first
 		updateClause, updateArgs, err := r.buildUpdateClause(data)
 		if err != nil {
@@ -483,6 +488,70 @@ func (r *PostgreSQLRepository) Update(ctx context.Context, collectionName string
 	}()
 
 	return result
+}
+
+// upsertOperation implements UPSERT using PostgreSQL's INSERT ... ON CONFLICT
+func (r *PostgreSQLRepository) upsertOperation(ctx context.Context, collectionName string, filter interface{}, data interface{}) interfaces.RepositoryResult {
+	tableName := r.getTableName(collectionName)
+	
+	filterMap, ok := filter.(map[string]interface{})
+	if !ok {
+		jsonData, err := json.Marshal(filter)
+		if err != nil {
+			return interfaces.RepositoryResult{Error: fmt.Errorf("upsert: failed to marshal filter: %w", err)}
+		}
+		filterMap = make(map[string]interface{})
+		if err := json.Unmarshal(jsonData, &filterMap); err != nil {
+			return interfaces.RepositoryResult{Error: fmt.Errorf("upsert: failed to unmarshal filter: %w", err)}
+		}
+	}
+	
+	objectId, ok := filterMap["objectId"]
+	if !ok {
+		return interfaces.RepositoryResult{Error: fmt.Errorf("upsert: objectId not found in filter")}
+	}
+	
+	// Extract data from $set operator or use data directly
+	dataMap := make(map[string]interface{})
+	if m, ok := data.(map[string]interface{}); ok {
+		if setVal, hasSet := m["$set"]; hasSet {
+			if setMap, ok2 := setVal.(map[string]interface{}); ok2 {
+				dataMap = setMap
+			}
+		} else {
+			dataMap = m
+		}
+	} else {
+		return interfaces.RepositoryResult{Error: fmt.Errorf("upsert: data must be a map")}
+	}
+	
+	// Ensure objectId is in the data
+	dataMap["objectId"] = objectId
+	
+	// Marshal to JSON
+	jsonData, err := json.Marshal(dataMap)
+	if err != nil {
+		return interfaces.RepositoryResult{Error: fmt.Errorf("upsert: failed to marshal data: %w", err)}
+	}
+	
+	now := time.Now().Unix()
+	
+	// PostgreSQL UPSERT using INSERT ... ON CONFLICT
+	query := fmt.Sprintf(`
+		INSERT INTO %s (object_id, data, created_date, last_updated)
+		VALUES ($1, $2::jsonb, $3, $4)
+		ON CONFLICT (object_id) DO UPDATE
+		SET data = $2::jsonb, last_updated = $4
+	`, tableName)
+	
+	_, err = r.db.ExecContext(ctx, query, objectId, string(jsonData), now, now)
+	if err != nil {
+		log.Error("PostgreSQL Upsert error: %s", err.Error())
+		return interfaces.RepositoryResult{Error: err}
+	}
+	
+	log.Info("PostgreSQL: Upsert operation completed for objectId: %v", objectId)
+	return interfaces.RepositoryResult{Result: "OK"}
 }
 
 // UpdateMany updates multiple documents
@@ -987,18 +1056,42 @@ func (r *PostgreSQLRepository) buildWhereClauseWithOffset(filter interface{}, st
 		return "", nil, nil
 	}
 
-	// Support Mongo-like filters including $or and comparison operators for known fields
-	if filterMap, ok := filter.(map[string]interface{}); ok {
-		conditions := make([]string, 0)
-		args := make([]interface{}, 0)
-		argIndex := startIndex
-
-		// Helper to append a condition and its args
-		appendCond := func(cond string, vals ...interface{}) {
-			conditions = append(conditions, cond)
-			args = append(args, vals...)
-			argIndex += len(vals)
+	// Convert filter to map[string]interface{} if it's not already
+	// This allows supporting both map filters (Profile service) and struct filters (Auth service)
+	var filterMap map[string]interface{}
+	
+	switch f := filter.(type) {
+	case map[string]interface{}:
+		// Already a map - use directly (zero overhead)
+		filterMap = f
+	default:
+		// Convert struct (or other type) to map via JSON marshaling
+		// This handles structs with json/bson tags commonly used in MongoDB-compatible code
+		jsonData, err := json.Marshal(filter)
+		if err != nil {
+			return "", nil, fmt.Errorf("failed to marshal filter to JSON: %w", err)
 		}
+		
+		filterMap = make(map[string]interface{})
+		if err := json.Unmarshal(jsonData, &filterMap); err != nil {
+			return "", nil, fmt.Errorf("failed to unmarshal filter to map: %w", err)
+		}
+		
+		// Log for debugging (helps track struct filter usage)
+		log.Info("PostgreSQL: Converted struct filter to map for WHERE clause")
+	}
+
+	// Support Mongo-like filters including $or and comparison operators for known fields
+	conditions := make([]string, 0)
+	args := make([]interface{}, 0)
+	argIndex := startIndex
+
+	// Helper to append a condition and its args
+	appendCond := func(cond string, vals ...interface{}) {
+		conditions = append(conditions, cond)
+		args = append(args, vals...)
+		argIndex += len(vals)
+	}
 
 		// First handle $or if present
 		if orVal, hasOr := filterMap["$or"]; hasOr {
@@ -1201,7 +1294,6 @@ func (r *PostgreSQLRepository) buildWhereClauseWithOffset(filter interface{}, st
 		if len(conditions) > 0 {
 			return strings.Join(conditions, " AND "), args, nil
 		}
-	}
 
 	return "", nil, nil
 }

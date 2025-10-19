@@ -1,0 +1,197 @@
+openapi: 3.0.0
+info:
+  title: Telar Platform Common API Definitions
+  version: "1.0.0"
+  description: |
+    Common schemas, security schemes, and response patterns shared across all Telar Platform microservices.
+    This file serves as the single source of truth for API consistency and standardization.
+
+components:
+  securitySchemes:
+    # The one, official way to do JWT bearer auth.
+    JWTAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT token for user authentication. 
+        Format: Bearer <token>
+        
+    # The one, official way to do HMAC auth.
+    HMACAuth:
+      type: apiKey
+      in: header
+      name: 'X-Telar-Signature'
+      description: |
+        HMAC SHA256 signature for service-to-service authentication.
+        Format: sha256=<signature>
+
+  schemas:
+    # The one, official error response format.
+    ErrorResponse:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: A machine-readable error code for programmatic handling
+          example: "VOTE_NOT_FOUND"
+          pattern: '^[A-Z_]+$'
+        message:
+          type: string
+          description: A human-readable description of the error
+          example: "The requested vote could not be found."
+        details:
+          type: object
+          description: Optional structured details about the error
+          additionalProperties: true
+          example:
+            field: "postId"
+            reason: "must be a valid UUID"
+            
+    # Standard pagination response wrapper
+    PaginationMeta:
+      type: object
+      properties:
+        page:
+          type: integer
+          minimum: 1
+          description: Current page number
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: Number of items per page
+        total:
+          type: integer
+          minimum: 0
+          description: Total number of items
+        hasNext:
+          type: boolean
+          description: Whether there are more pages available
+        hasPrev:
+          type: boolean
+          description: Whether there are previous pages available
+          
+    # Standard timestamp fields
+    TimestampFields:
+      type: object
+      properties:
+        createdDate:
+          type: integer
+          format: int64
+          description: Unix timestamp when the resource was created
+        lastUpdated:
+          type: integer
+          format: int64
+          description: Unix timestamp when the resource was last updated
+        deletedDate:
+          type: integer
+          format: int64
+          description: Unix timestamp when the resource was deleted (if applicable)
+          
+    # Standard user reference object
+    UserReference:
+      type: object
+      required:
+        - userId
+        - displayName
+      properties:
+        userId:
+          type: string
+          format: uuid
+          description: Unique user identifier
+        displayName:
+          type: string
+          description: User's display name
+        avatar:
+          type: string
+          format: uri
+          description: URL to user's avatar image
+          
+    # Standard success response for operations that don't return data
+    SuccessResponse:
+      type: object
+      required:
+        - success
+        - message
+      properties:
+        success:
+          type: boolean
+          example: true
+          description: Indicates the operation was successful
+        message:
+          type: string
+          example: "Operation completed successfully"
+          description: Human-readable success message
+          
+    # Standard ID response for create operations
+    CreateResponse:
+      type: object
+      required:
+        - objectId
+      properties:
+        objectId:
+          type: string
+          format: uuid
+          description: The ID of the newly created resource
+          
+  responses:
+    # Standard error responses
+    BadRequest:
+      description: Bad request - the request parameters are invalid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: "VALIDATION_FAILED"
+            message: "Request validation failed"
+            details:
+              field: "postId"
+              reason: "must be a valid UUID"
+              
+    Unauthorized:
+      description: Unauthorized - authentication is required or invalid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: "UNAUTHORIZED"
+            message: "Authentication required"
+            
+    Forbidden:
+      description: Forbidden - insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: "FORBIDDEN"
+            message: "Insufficient permissions to perform this operation"
+            
+    NotFound:
+      description: Not found - the requested resource does not exist
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: "RESOURCE_NOT_FOUND"
+            message: "The requested resource could not be found"
+            
+    InternalServerError:
+      description: Internal server error - something went wrong on the server
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: "INTERNAL_ERROR"
+            message: "An unexpected error occurred"
+            
+    NoContent:
+      description: No content - operation successful with no data to return
