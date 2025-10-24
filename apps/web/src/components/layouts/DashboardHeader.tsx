@@ -41,7 +41,7 @@ export default function DashboardHeader() {
 
   const handleProfileClick = () => {
     handleMenuClose();
-    router.push(`/profile/${user?.id}`);
+    router.push('/profile');
   };
 
   const handleSettingsClick = () => {

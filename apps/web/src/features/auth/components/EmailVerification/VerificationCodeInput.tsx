@@ -4,7 +4,6 @@ import { useState, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   Box, 
-  Button, 
   Typography, 
   Container, 
   Stack, 
@@ -12,7 +11,9 @@ import {
   CircularProgress, 
   Alert 
 } from '@mui/material';
-import { useVerifyEmail } from '@/features/auth/client';
+import { LoadingButton } from '@mui/lab';
+import { useVerifyEmail, useResendVerification } from '@/features/auth/client';
+import { mapAuthError } from '@/features/auth/utils/errorMapper';
 
 interface VerificationCodeInputProps {
   verificationId: string;
@@ -27,13 +28,14 @@ enum VerificationState {
 
 export default function VerificationCodeInput({ verificationId, email }: VerificationCodeInputProps) {
   const router = useRouter();
-  const { verify, isLoading, error, isError } = useVerifyEmail();
+  const { verifyAsync, isLoading, error, isError } = useVerifyEmail();
+  const { resendAsync, isLoading: resendLoading } = useResendVerification();
   
   const [state, setState] = useState<VerificationState>(VerificationState.VerifyCode);
   const [code, setCode] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
-  const [resendLoading, setResendLoading] = useState(false);
   const [resendSuccess, setResendSuccess] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -50,30 +52,48 @@ export default function VerificationCodeInput({ verificationId, email }: Verific
     }
 
     try {
-      await verify({ verificationId, code });
+      await verifyAsync({ verificationId, code });
       setState(VerificationState.Success);
       
       setTimeout(() => {
         router.push('/dashboard');
       }, 3000);
-    } catch {
+    } catch (error: unknown) {
+      console.error('[Verify] Verification failed:', error);
       setState(VerificationState.Error);
+      const userMessage = mapAuthError(error, 'verify');
+      setFormError(userMessage);
     }
   };
 
   const handleResendEmail = async () => {
-    setResendLoading(true);
+    if (resendCooldown > 0) {
+      return;
+    }
+    
     setResendSuccess(false);
+    setFormError(null);
     
     try {
-      // TODO: Implement resend verification API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await resendAsync({ verificationId });
       setResendSuccess(true);
+      setResendCooldown(60);
+      
+      const countdown = setInterval(() => {
+        setResendCooldown(prev => {
+          if (prev <= 1) {
+            clearInterval(countdown);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      
       setTimeout(() => setResendSuccess(false), 5000);
-    } catch {
-      setFormError('Failed to resend verification email');
-    } finally {
-      setResendLoading(false);
+    } catch (error: unknown) {
+      console.error('[Resend] Failed to resend:', error);
+      const userMessage = mapAuthError(error, 'verify');
+      setFormError(userMessage);
     }
   };
 
@@ -125,41 +145,37 @@ export default function VerificationCodeInput({ verificationId, email }: Verific
         disabled={isLoading}
       />
 
-      <Button 
+      <LoadingButton 
         fullWidth 
         type="submit" 
         variant="contained" 
-        disabled={isLoading || code.length !== 6} 
+        loading={isLoading}
+        loadingIndicator="Verifying..."
+        disabled={code.length !== 6} 
         sx={{ mb: 2, py: 1.5 }}
       >
-        {isLoading ? (
-          <CircularProgress size={24} color="inherit" />
-        ) : (
-          'Verify Email'
-        )}
-      </Button>
+        Verify Email
+      </LoadingButton>
 
       <Stack direction="row" justifyContent="space-between" sx={{ mt: 3 }}>
-        <Button 
+        <LoadingButton 
           variant="text" 
           onClick={handleBackToLogin} 
           sx={{ color: 'text.secondary' }}
           disabled={isLoading}
         >
           Back to Login
-        </Button>
+        </LoadingButton>
 
-        <Button 
+        <LoadingButton 
           variant="text" 
           onClick={handleResendEmail} 
-          disabled={resendLoading || isLoading}
+          loading={resendLoading}
+          loadingIndicator="Sending..."
+          disabled={isLoading || resendCooldown > 0}
         >
-          {resendLoading ? (
-            <CircularProgress size={20} color="inherit" />
-          ) : (
-            'Resend Code'
-          )}
-        </Button>
+          {resendCooldown > 0 ? `Resend (${resendCooldown}s)` : 'Resend Code'}
+        </LoadingButton>
       </Stack>
     </Box>
   );
@@ -181,17 +197,17 @@ export default function VerificationCodeInput({ verificationId, email }: Verific
   const renderError = () => (
     <Box sx={{ my: 5 }}>
       <Alert severity="error" sx={{ mb: 3 }}>
-        {error || 'Verification failed. Please try again.'}
+        {error || formError || 'Verification failed. Please try again.'}
       </Alert>
 
-      <Button
+      <LoadingButton
         fullWidth
         variant="contained"
         onClick={handleTryAgain}
         sx={{ mt: 3, py: 1.5 }}
       >
         Try Again
-      </Button>
+      </LoadingButton>
     </Box>
   );
 

@@ -17,7 +17,7 @@
         bench bench-env bench-calibrated bench-summary open-profiles \
         up-both-replica test-transactions \
         lint lint-fix \
-        run-api run-web run-both local-run-both run-profile run-profile-standalone
+        run-api run-web run-both run-profile run-profile-standalone run-both-bg stop-servers restart-servers pre-flight-check logs-api logs-web
 
 # --- Configuration Variables ---
 PARALLEL ?= 8
@@ -89,20 +89,7 @@ logs-postgres:
 	@$(TEST_ENV_SCRIPT) logs postgres
 
 docker-start:
-	@echo "Ensuring Docker is running..."
-	@if ! docker info >/dev/null 2>&1; then \
-		open -g -a Docker; \
-		echo "Waiting for Docker daemon..."; \
-		SECONDS=0; \
-		until docker info >/dev/null 2>&1; do \
-			sleep 2; \
-			if [ $$SECONDS -gt 120 ]; then echo "Docker did not start within 120s"; exit 1; fi; \
-			printf "."; \
-		done; \
-		echo "\nDocker is ready."; \
-	else \
-		echo "Docker is running."; \
-	fi
+	@./tools/dev/scripts/docker-start.sh
 
 all: test-all
 
@@ -201,8 +188,6 @@ clean-reports:
 	@echo "Cleaning reports directory..."
 	@rm -rf $(REPORT_DIR)
 
-local-run-both: docker-start status run-both
-
 bench: bench-calibrated
 
 bench-env: | $(REPORT_DIR)
@@ -245,14 +230,7 @@ open-profiles:
 # --- Transaction Testing ---
 
 up-both-replica:
-	@echo "Starting databases with MongoDB replica set for transaction testing..."
-	@$(TEST_ENV_SCRIPT) down both 2>/dev/null || true
-	@docker run -d --name telar-mongo -p 27017:27017 mongo:6 --replSet rs0
-	@$(TEST_ENV_SCRIPT) up postgres
-	@echo "Waiting for MongoDB to be ready..."
-	@sleep 5
-	@docker exec telar-mongo mongosh --eval "rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'localhost:27017'}]})" || echo "Replica set already initialized"
-	@echo "MongoDB replica set initialized for transaction testing"
+	@./tools/dev/scripts/setup-mongo-replica.sh
 
 test-transactions: up-both-replica
 	@echo "Testing enterprise transaction management..."
@@ -337,7 +315,12 @@ help:
 	@echo "  run-profile       - Start the Profile microservice on port 8081 (requires databases)."
 	@echo "  run-web           - Start the Next.js web frontend development server."
 	@echo "  run-both          - Start both API and web frontend servers concurrently."
-	@echo "  local-run-both    - ONE-COMMAND LOCAL DEV: Ensure Docker → Check status → Start all services."
+	@echo "  run-both-bg       - Start both servers in background (recommended for development)."
+	@echo "  stop-servers      - Stop all running servers."
+	@echo "  restart-servers   - Restart all servers safely (preserves Cursor processes)."
+	@echo "  pre-flight-check  - Check system readiness before server startup."
+	@echo "  logs-api          - Tail API server logs."
+	@echo "  logs-web          - Tail web server logs."
 	@echo ""
 	@echo "Options:"
 	@echo "  PARALLEL=<N>      - Set the number of parallel tests to run (default: 8)."
@@ -371,3 +354,26 @@ run-both: up-dbs-dev
 	(cd apps/api && go run cmd/server/main.go) & \
 	(cd apps/web && pnpm dev) & \
 	wait
+
+# --- Background Process Management ---
+
+run-both-bg: up-dbs-dev
+	@./tools/dev/scripts/start-servers-bg.sh
+
+stop-servers:
+	@./tools/dev/scripts/stop-servers.sh
+
+restart-servers:
+	@./tools/dev/scripts/restart-servers.sh
+
+
+pre-flight-check:
+	@./tools/dev/scripts/pre-flight-check.sh
+
+logs-api:
+	@echo "📋 Tailing API server logs (Ctrl+C to exit)..."
+	@tail -f /tmp/telar-logs/api.log 2>/dev/null || echo "No API logs found. Is the server running?"
+
+logs-web:
+	@echo "📋 Tailing Web server logs (Ctrl+C to exit)..."
+	@tail -f /tmp/telar-logs/web.log 2>/dev/null || echo "No Web logs found. Is the server running?"

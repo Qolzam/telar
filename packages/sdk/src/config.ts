@@ -46,6 +46,19 @@ export const ENDPOINTS = {
     RESET_PASSWORD: '/api/auth/reset-password',
     CHANGE_PASSWORD: '/api/auth/change-password',
     VERIFY_EMAIL: '/api/auth/verify',
+    RESEND_VERIFICATION: '/api/auth/signup/resend',
+  },
+
+  /**
+   * Profile endpoints (via BFF for authentication)
+   */
+  PROFILE: {
+    MY: '/api/profile/my',
+    BY_ID: (userId: string) => `/api/profile/id/${userId}`,
+    BY_SOCIAL_NAME: (socialName: string) => `/api/profile/social/${socialName}`,
+    UPDATE: '/api/profile',
+    BY_IDS: '/api/profile/ids',
+    QUERY: '/api/profile',
   },
 
   /**
@@ -55,14 +68,6 @@ export const ENDPOINTS = {
   //   GET_FEED: '/posts',
   //   CREATE: '/posts',
   //   LIKE: (postId: string) => `/posts/${postId}/like`,
-  // },
-
-  /**
-   * Future: Profile endpoints (will call Go API directly)
-   */
-  // PROFILE: {
-  //   GET: (userId: string) => `/profile/${userId}`,
-  //   UPDATE: '/profile',
   // },
 } as const;
 

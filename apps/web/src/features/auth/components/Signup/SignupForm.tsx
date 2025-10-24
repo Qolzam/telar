@@ -6,18 +6,18 @@ import * as Yup from 'yup';
 import { useFormik, Form, FormikProvider } from 'formik';
 import {
   TextField,
-  Button,
   Typography,
   Box,
   Divider,
   Stack,
   Alert,
-  CircularProgress,
   useTheme,
 } from '@mui/material';
+import { LoadingButton } from '@mui/lab';
 import PasswordStrengthBar from 'react-password-strength-bar';
 import { useSignup } from '@/features/auth/client';
 import SocialLoginButtons from '@/features/auth/components/SocialLoginButtons';
+import { mapAuthError } from '@/features/auth/utils/errorMapper';
 
 interface SignupFormProps {
   onSuccess?: (verificationId: string, email: string) => void;
@@ -78,7 +78,8 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
         setSubmitting(false);
       } catch (error: unknown) {
         console.error('[Signup] Registration failed:', error);
-        const errorMessage = error instanceof Error ? error.message : 'Registration failed';
+        
+        const errorMessage = mapAuthError(error, 'signup');
         setStatus({ error: errorMessage });
         setSubmitting(false);
       }
@@ -171,23 +172,17 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
           </Box>
         )}
 
-        <Button
+        <LoadingButton
           fullWidth
           size="large"
           type="submit"
           variant="contained"
-          disabled={isSubmitting}
+          loading={isSubmitting}
+          loadingIndicator="Creating account..."
           sx={{ mt: 2, mb: 3, py: 1.5 }}
         >
-          {isSubmitting ? (
-            <>
-              <CircularProgress size={20} sx={{ mr: 1, color: 'inherit' }} />
-              Creating account...
-            </>
-          ) : (
-            'Sign Up'
-          )}
-        </Button>
+          Sign Up
+        </LoadingButton>
 
         <Divider sx={{ my: 3 }}>
           <Typography variant="body2" color="text.secondary">

@@ -240,22 +240,22 @@ func (s *Service) VerifySignup(ctx context.Context, params VerifySignupParams) (
 		ObjectId: &params.VerificationId,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("verification record not found: %w", err)
+		return nil, errors.NewUserNotFoundError("verification record not found")
 	}
 
 	// 2. Validate the verification code
 	if verification.Code != params.Code {
-		return nil, fmt.Errorf("invalid verification code")
+		return nil, errors.NewValidationError("invalid verification code")
 	}
 
 	// 3. Check if verification has expired
 	if time.Now().Unix() > verification.ExpiresAt {
-		return nil, fmt.Errorf("verification code has expired")
+		return nil, errors.NewValidationError("verification code has expired")
 	}
 
 	// 4. Check if verification already used
 	if verification.Used {
-		return nil, fmt.Errorf("verification code already used")
+		return nil, errors.NewValidationError("verification code already used")
 	}
 
 	// 5. Verify the user by code (handles verification state update)
@@ -307,8 +307,12 @@ func (s *Service) VerifySignup(ctx context.Context, params VerifySignupParams) (
 		LastUpdated: &createdDate,
 	}
 
+	if s.profileCreator == nil {
+		return nil, errors.NewSystemError("profile service not available")
+	}
+
 	if err := s.profileCreator.CreateProfileOnSignup(ctx, profileReq); err != nil {
-		return nil, fmt.Errorf("failed to create user profile: %w", err)
+		return nil, errors.NewSystemError(fmt.Sprintf("failed to create user profile: %v", err))
 	}
 
 	// 7. Generate access token for successful verification

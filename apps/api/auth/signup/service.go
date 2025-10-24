@@ -154,13 +154,36 @@ func (s *Service) InitiateEmailVerification(ctx context.Context, input EmailVeri
 		return nil, err
 	}
 
-	// Send email with verification code using injected sender when available
+	// Send email with verification code and link using injected sender when available
 	if s.emailSender != nil {
-		body := fmt.Sprintf("<p>Hi %s,</p><p>Your verification code is: <b>%s</b></p>", input.FullName, code)
+		verificationLink := fmt.Sprintf("%s/verify?verificationId=%s&code=%s", 
+			s.config.AppConfig.WebDomain, verifyId.String(), code)
+		
+		body := fmt.Sprintf(`
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <h2 style="color: #1976d2;">Welcome to Telar, %s!</h2>
+  <p style="font-size: 16px; color: #333;">Thank you for signing up. Please verify your email address to get started.</p>
+  
+  <div style="margin: 30px 0;">
+    <h3 style="color: #555; font-size: 18px;">Option 1: Click the Button</h3>
+    <a href="%s" style="display: inline-block; padding: 14px 28px; background-color: #1976d2; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px;">Verify Email Address</a>
+  </div>
+  
+  <div style="margin: 30px 0; padding: 20px; background-color: #f5f5f5; border-radius: 8px;">
+    <h3 style="color: #555; font-size: 18px; margin-top: 0;">Option 2: Enter Code Manually</h3>
+    <p style="color: #666;">If the button doesn't work, enter this code on the verification page:</p>
+    <div style="background: white; padding: 16px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 8px; border-radius: 4px; color: #1976d2; margin: 10px 0; border: 2px solid #1976d2;">%s</div>
+  </div>
+  
+  <p style="color: #999; font-size: 13px; margin-top: 40px; border-top: 1px solid #eee; padding-top: 20px;">This code expires in 15 minutes.</p>
+  <p style="color: #999; font-size: 13px;">If you didn't request this, please ignore this email.</p>
+</div>
+`, input.FullName, verificationLink, code)
+		
 		_ = s.emailSender.Send(ctx, platformemail.Message{
 			From:    "noreply@telar.dev",
 			To:      []string{input.EmailTo},
-			Subject: "Your Telar verification code",
+			Subject: "Verify your Telar account",
 			Body:    body,
 		})
 	}
@@ -181,6 +204,78 @@ func (s *Service) InitiateEmailVerification(ctx context.Context, input EmailVeri
 		ExpiresAt:      expiresAt,
 		Message:        "Verification code sent to your email",
 	}, nil
+}
+
+// ResendVerificationEmail resends verification email with a new code
+func (s *Service) ResendVerificationEmail(ctx context.Context, verificationId uuid.UUID) error {
+	res := <-s.base.Repository.FindOne(ctx, userVerificationCollectionName, struct {
+		ObjectId uuid.UUID `json:"objectId" bson:"objectId"`
+	}{ObjectId: verificationId})
+	
+	if res.Error() != nil {
+		return errors.WrapUserNotFoundError(fmt.Errorf("verification not found"))
+	}
+	
+	var verification models.UserVerification
+	if err := res.Decode(&verification); err != nil {
+		return errors.WrapDatabaseError(fmt.Errorf("failed to decode verification: %w", err))
+	}
+	
+	if verification.Used || verification.IsVerified {
+		return errors.WrapValidationError(fmt.Errorf("verification already completed"), "verificationId")
+	}
+	
+	newCode := utils.GenerateDigits(6)
+	expiresAt := time.Now().Add(15 * time.Minute).Unix()
+	
+	update := map[string]interface{}{
+		"$set": map[string]interface{}{
+			"code":        newCode,
+			"expiresAt":   expiresAt,
+			"lastUpdated": time.Now().Unix(),
+		},
+	}
+	
+	err := (<-s.base.Repository.Update(ctx, userVerificationCollectionName, struct {
+		ObjectId uuid.UUID `json:"objectId" bson:"objectId"`
+	}{ObjectId: verificationId}, update, &interfaces.UpdateOptions{})).Error
+	
+	if err != nil {
+		return errors.WrapDatabaseError(fmt.Errorf("failed to update verification: %w", err))
+	}
+	
+	if s.emailSender != nil {
+		verificationLink := fmt.Sprintf("%s/verify?verificationId=%s&code=%s", 
+			s.config.AppConfig.WebDomain, verificationId.String(), newCode)
+		
+		body := fmt.Sprintf(`
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <h2 style="color: #1976d2;">Hi %s!</h2>
+  <p style="font-size: 16px; color: #333;">Here's your new verification code:</p>
+  
+  <div style="margin: 30px 0;">
+    <h3 style="color: #555; font-size: 18px;">Option 1: Click the Button</h3>
+    <a href="%s" style="display: inline-block; padding: 14px 28px; background-color: #1976d2; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px;">Verify Email Address</a>
+  </div>
+  
+  <div style="margin: 30px 0; padding: 20px; background-color: #f5f5f5; border-radius: 8px;">
+    <h3 style="color: #555; font-size: 18px; margin-top: 0;">Option 2: Enter Code Manually</h3>
+    <div style="background: white; padding: 16px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 8px; border-radius: 4px; color: #1976d2; margin: 10px 0; border: 2px solid #1976d2;">%s</div>
+  </div>
+  
+  <p style="color: #999; font-size: 13px; margin-top: 40px;">This code expires in 15 minutes.</p>
+</div>
+`, verification.FullName, verificationLink, newCode)
+		
+		_ = s.emailSender.Send(ctx, platformemail.Message{
+			From:    "noreply@telar.dev",
+			To:      []string{verification.Target},
+			Subject: "Your new Telar verification code",
+			Body:    body,
+		})
+	}
+	
+	return nil
 }
 
 // InitiatePhoneVerification creates a secure phone verification process
