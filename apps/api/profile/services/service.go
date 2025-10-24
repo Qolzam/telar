@@ -52,6 +52,11 @@ func (s *Service) UpdateProfile(ctx context.Context, userId uuid.UUID, req *mode
     if req.Banner != nil { set["banner"] = *req.Banner }
     if req.TagLine != nil { set["tagLine"] = *req.TagLine }
     if req.SocialName != nil { set["socialName"] = *req.SocialName }
+    if req.WebUrl != nil { set["webUrl"] = *req.WebUrl }
+    if req.CompanyName != nil { set["companyName"] = *req.CompanyName }
+    if req.FacebookId != nil { set["facebookId"] = *req.FacebookId }
+    if req.InstagramId != nil { set["instagramId"] = *req.InstagramId }
+    if req.TwitterId != nil { set["twitterId"] = *req.TwitterId }
     
     if len(set) == 0 { return nil }
     update := map[string]interface{}{ "$set": set }

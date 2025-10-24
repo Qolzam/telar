@@ -55,8 +55,9 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    const data = await response.json();
-    return NextResponse.json(data, { status: 200 });
+    await response.text();
+    
+    return NextResponse.json({ success: true, message: 'Profile updated successfully' }, { status: 200 });
   } catch (error) {
     console.error('Error updating profile:', error);
     return NextResponse.json(
