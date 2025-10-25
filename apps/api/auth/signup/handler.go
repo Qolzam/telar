@@ -140,3 +140,29 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 
 	return errors.HandleValidationError(c, "Invalid verification type")
 }
+
+// Resend handles POST /auth/signup/resend - resend verification email
+func (h *Handler) Resend(c *fiber.Ctx) error {
+	verificationId := c.FormValue("verificationId")
+	if verificationId == "" {
+		verificationId = c.Query("verificationId")
+	}
+	
+	if verificationId == "" {
+		return errors.HandleMissingFieldError(c, "verificationId")
+	}
+	
+	verifyUUID, err := uuid.FromString(verificationId)
+	if err != nil {
+		return errors.HandleValidationError(c, "Invalid verification ID format")
+	}
+	
+	if err := h.svc.ResendVerificationEmail(c.Context(), verifyUUID); err != nil {
+		return errors.HandleServiceError(c, err)
+	}
+	
+	return c.JSON(fiber.Map{
+		"success": true,
+		"message": "Verification email resent successfully",
+	})
+}

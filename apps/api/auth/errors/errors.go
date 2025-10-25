@@ -82,6 +82,21 @@ func NewAuthError(code, message string, cause error) *AuthError {
 	}
 }
 
+// NewValidationError creates a validation error
+func NewValidationError(message string) *AuthError {
+	return NewAuthError(CodeValidationFailed, message, nil)
+}
+
+// NewUserNotFoundError creates a user not found error
+func NewUserNotFoundError(message string) *AuthError {
+	return NewAuthError(CodeUserNotFound, message, nil)
+}
+
+// NewSystemError creates a system error
+func NewSystemError(message string) *AuthError {
+	return NewAuthError(CodeSystemError, message, nil)
+}
+
 // HandleValidationError handles validation errors with 400 Bad Request
 func HandleValidationError(c *fiber.Ctx, message string, details ...string) error {
 	response := ErrorResponse{
@@ -116,6 +131,22 @@ func HandleInvalidRequestError(c *fiber.Ctx, message string) error {
 func HandleServiceError(c *fiber.Ctx, err error) error {
 	if err == nil {
 		return nil
+	}
+
+	if authErr, ok := err.(*AuthError); ok {
+		statusCode := http.StatusInternalServerError
+		switch authErr.Code {
+		case CodeValidationFailed:
+			statusCode = http.StatusBadRequest
+		case CodeUserNotFound:
+			statusCode = http.StatusNotFound
+		case CodeSystemError:
+			statusCode = http.StatusInternalServerError
+		}
+		return c.Status(statusCode).JSON(ErrorResponse{
+			Code:    authErr.Code,
+			Message: authErr.Message,
+		})
 	}
 
 	// Check for specific error types

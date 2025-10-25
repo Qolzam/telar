@@ -11,6 +11,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public statusCode: number,
+    public code?: string,
     public originalError?: unknown
   ) {
     super(message);
@@ -49,15 +50,17 @@ export async function apiRequest<T>(
     if (!response.ok) {
       const errorText = await response.text();
       let errorMessage = 'API request failed';
+      let errorCode: string | undefined;
       
       try {
         const errorJson = JSON.parse(errorText);
         errorMessage = errorJson.message || errorJson.error || errorMessage;
+        errorCode = errorJson.code;
       } catch {
         errorMessage = errorText || errorMessage;
       }
 
-      throw new ApiError(errorMessage, response.status);
+      throw new ApiError(errorMessage, response.status, errorCode);
     }
 
     const contentType = response.headers.get('content-type');
@@ -75,12 +78,13 @@ export async function apiRequest<T>(
     }
 
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new ApiError('Request timeout', 408, error);
+      throw new ApiError('Request timeout', 408, 'TIMEOUT', error);
     }
 
     throw new ApiError(
       'Network error',
       500,
+      'NETWORK_ERROR',
       error
     );
   }

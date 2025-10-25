@@ -7,7 +7,6 @@ import * as Yup from 'yup';
 import { useFormik, Form, FormikProvider } from 'formik';
 import {
   TextField,
-  Button,
   Typography,
   Box,
   Divider,
@@ -19,14 +18,16 @@ import {
   CircularProgress,
   useTheme,
 } from '@mui/material';
+import { LoadingButton } from '@mui/lab';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { useLogin } from '@/features/auth/client';
 import SocialLoginButtons from '@/features/auth/components/SocialLoginButtons';
+import { mapAuthError } from '@/features/auth/utils/errorMapper';
 
 function LoginFormContent() {
   const searchParams = useSearchParams();
   const theme = useTheme();
-  const { login } = useLogin();
+  const { loginAsync } = useLogin();
   const [showPassword, setShowPassword] = useState(false);
   const urlError = searchParams.get('error');
   const urlMessage = searchParams.get('message');
@@ -50,11 +51,11 @@ function LoginFormContent() {
       rememberMe: false,
     },
     validationSchema: LoginSchema,
-    onSubmit: async (values, { setStatus, setSubmitting, resetForm }) => {
+    onSubmit: async (values, { setStatus, setSubmitting }) => {
       try {
         setStatus(null);
         
-        await login({ 
+        await loginAsync({ 
           username: values.email, 
           password: values.password 
         });
@@ -71,11 +72,11 @@ function LoginFormContent() {
       } catch (error: unknown) {
         console.error('[Login] Login failed:', error);
         
-        resetForm();
         if (setSubmitting) {
           setSubmitting(false);
         }
-        const errorMessage = error instanceof Error ? error.message : 'Login failed';
+        
+        const errorMessage = mapAuthError(error, 'login');
         setStatus({ error: errorMessage });
       }
     },
@@ -193,23 +194,17 @@ function LoginFormContent() {
           </Link>
         </Box>
 
-        <Button
+        <LoadingButton
           fullWidth
           size="large"
           type="submit"
           variant="contained"
-          disabled={isSubmitting}
+          loading={isSubmitting}
+          loadingIndicator="Signing in..."
           sx={{ mt: 2, mb: 3, py: 1.5 }}
         >
-          {isSubmitting ? (
-            <>
-              <CircularProgress size={20} sx={{ mr: 1, color: 'inherit' }} />
-              Signing in...
-            </>
-          ) : (
-            'Sign In'
-          )}
-        </Button>
+          Sign In
+        </LoadingButton>
 
         <Box sx={{ mt: 4, textAlign: 'center' }}>
           <Typography variant="body2" color="text.secondary">

@@ -191,6 +191,13 @@ export interface VerifyEmailRequest {
 }
 
 /**
+ * Resend verification email request
+ */
+export interface ResendVerificationRequest {
+  verificationId: string;
+}
+
+/**
  * JWKS key structure for ES256 (ECDSA)
  * @see Go: apps/api/auth/jwks/handler.go
  */
@@ -330,8 +337,47 @@ export interface FileResult {
  * API error response structure
  */
 export interface ApiErrorResponse {
-  error: string;
-  message: string;
-  statusCode: number;
+  code?: string;
+  error?: string;
+  message?: string;
+  statusCode?: number;
+}
+
+// ============================================================================
+// Profile Request/Response Types
+// ============================================================================
+
+/**
+ * Update profile request payload
+ */
+export interface UpdateProfileRequest {
+  fullName?: string;
+  socialName?: string;
+  avatar?: string;
+  banner?: string;
+  tagLine?: string;
+  birthday?: number;
+  webUrl?: string;
+  companyName?: string;
+  facebookId?: string;
+  instagramId?: string;
+  twitterId?: string;
+}
+
+/**
+ * Profile query filter for searching profiles
+ */
+export interface ProfileQueryFilter {
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * Profiles response with pagination
+ */
+export interface ProfilesResponse {
+  profiles: UserProfileModel[];
+  total: number;
 }
 

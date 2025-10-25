@@ -248,6 +248,49 @@ func ValidateUpdateProfileRequest(req *models.UpdateProfileRequest) error {
 		}
 	}
 
+	if req.WebUrl != nil {
+		if *req.WebUrl != "" {
+			if !isValidURL(*req.WebUrl) {
+				return fmt.Errorf("invalid webUrl format")
+			}
+			if len(*req.WebUrl) > 500 {
+				return fmt.Errorf("webUrl cannot exceed 500 characters")
+			}
+		}
+	}
+
+	if req.CompanyName != nil {
+		if *req.CompanyName != "" {
+			if len(*req.CompanyName) > 100 {
+				return fmt.Errorf("companyName cannot exceed 100 characters")
+			}
+		}
+	}
+
+	if req.FacebookId != nil {
+		if *req.FacebookId != "" {
+			if len(*req.FacebookId) > 100 {
+				return fmt.Errorf("facebookId cannot exceed 100 characters")
+			}
+		}
+	}
+
+	if req.InstagramId != nil {
+		if *req.InstagramId != "" {
+			if len(*req.InstagramId) > 100 {
+				return fmt.Errorf("instagramId cannot exceed 100 characters")
+			}
+		}
+	}
+
+	if req.TwitterId != nil {
+		if *req.TwitterId != "" {
+			if len(*req.TwitterId) > 100 {
+				return fmt.Errorf("twitterId cannot exceed 100 characters")
+			}
+		}
+	}
+
 	return nil
 }
 

@@ -87,7 +87,50 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	return h.handleSecureVerification(c, secureModel)
 }
 
-// handleSecureVerification - SECURE VERIFICATION (Phase 1 refactoring complete)
+// HandleVerificationLink handles GET requests for link-based email verification
+// This allows users to verify by clicking a link in their email
+func (h *Handler) HandleVerificationLink(c *fiber.Ctx) error {
+	verificationId := c.Query("verificationId")
+	code := c.Query("code")
+	
+	if verificationId == "" || code == "" {
+		return c.Redirect(h.webDomain + "/signup?error=invalid_verification_link")
+	}
+	
+	verifyUUID, err := uuid.FromString(verificationId)
+	if err != nil {
+		return c.Redirect(h.webDomain + "/signup?error=invalid_verification_id")
+	}
+	
+	result, err := h.svc.VerifySignup(c.Context(), VerifySignupParams{
+		VerificationId:  verifyUUID,
+		Code:            code,
+		RemoteIpAddress: c.IP(),
+		UserAgent:       c.Get("User-Agent"),
+		UserId:          "",
+		ResponseType:    "ssr",
+	})
+	
+	if err != nil {
+		errorMsg := "Verification failed. Please try entering the code manually."
+		return c.Redirect(h.webDomain + "/signup?error=verification_failed&message=" + errorMsg)
+	}
+	
+	if result.AccessToken != "" {
+		c.Cookie(&fiber.Cookie{
+			Name:     "telar_session",
+			Value:    result.AccessToken,
+			HTTPOnly: true,
+			Secure:   true,
+			SameSite: "Lax",
+			Path:     "/",
+		})
+	}
+	
+	return c.Redirect(h.webDomain + "/dashboard?verified=true")
+}
+
+// handleSecureVerification
 // Phase 1.2: Enhanced with HMAC validation for additional security
 // Phase 1.4: Legacy JWT support removed
 func (h *Handler) handleSecureVerification(c *fiber.Ctx, model *VerifySignupRequestSecure) error {

@@ -113,6 +113,16 @@ func RegisterRoutes(app *fiber.App, handlers *AuthHandlers, cfg *platformconfig.
 		),
 		handlers.VerifyHandler.Handle,
 	)
+	group.Get("/verify", handlers.VerifyHandler.HandleVerificationLink)
+	group.Post("/signup/resend",
+		ratelimit.NewWithConfig(
+			cfg.RateLimits.Verification.Enabled,
+			cfg.RateLimits.Verification.Max,
+			cfg.RateLimits.Verification.Duration,
+			"resend verification",
+		),
+		handlers.SignupHandler.Resend,
+	)
 	group.Post("/signup",
 		ratelimit.NewWithConfig(
 			cfg.RateLimits.Signup.Enabled,

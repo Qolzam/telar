@@ -21,6 +21,7 @@ import PostAddIcon from '@mui/icons-material/PostAdd';
 import ChatIcon from '@mui/icons-material/Chat';
 import GroupIcon from '@mui/icons-material/Group';
 import SearchIcon from '@mui/icons-material/Search';
+import SettingsIcon from '@mui/icons-material/Settings';
 
 const DRAWER_WIDTH = 240;
 
@@ -31,6 +32,7 @@ const MENU_ITEMS = [
   { label: 'Messages', path: '/messages', icon: <ChatIcon /> },
   { label: 'Connections', path: '/connections', icon: <GroupIcon /> },
   { label: 'Search', path: '/search', icon: <SearchIcon /> },
+  { label: 'Settings', path: '/settings', icon: <SettingsIcon /> },
 ] as const;
 
 export default function DashboardSidebar() {

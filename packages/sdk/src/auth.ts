@@ -15,6 +15,7 @@ import type {
   ResetPasswordRequest,
   ChangePasswordRequest,
   VerifyEmailRequest,
+  ResendVerificationRequest,
   SessionData,
 } from './types';
 
@@ -61,6 +62,11 @@ export interface IAuthApi {
   verifyEmail(data: VerifyEmailRequest): Promise<void>;
 
   /**
+   * Resend verification email with new code
+   */
+  resendVerification(data: ResendVerificationRequest): Promise<void>;
+
+  /**
    * Get current session data
    * Returns user info if authenticated
    */
@@ -97,6 +103,10 @@ export const authApi = (client: ApiClient): IAuthApi => ({
 
   verifyEmail: async (data: VerifyEmailRequest): Promise<void> => {
     await client.post(ENDPOINTS.AUTH.VERIFY_EMAIL, data);
+  },
+
+  resendVerification: async (data: ResendVerificationRequest): Promise<void> => {
+    await client.post(ENDPOINTS.AUTH.RESEND_VERIFICATION, data);
   },
 
   getSession: async (): Promise<SessionData> => {
