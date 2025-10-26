@@ -55,23 +55,19 @@ export default function DashboardHeader() {
   };
 
   return (
-    <AppBar position="static" color="default" elevation={1}>
-      <Toolbar>
-        <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-          Telar
-        </Typography>
-
+    <AppBar position="static" color="default" elevation={0}>
+      <Toolbar sx={{ justifyContent: 'flex-end', gap: 1 }}>
         {isLoading ? (
           <CircularProgress size={24} />
         ) : isAuthenticated && user ? (
           <>
             {/* Notifications */}
-            <IconButton color="inherit" sx={{ mr: 1 }}>
+            <IconButton color="inherit" size="medium">
               <NotificationsIcon />
             </IconButton>
 
             {/* Settings */}
-            <IconButton color="inherit" sx={{ mr: 2 }} onClick={handleSettingsClick}>
+            <IconButton color="inherit" size="medium" onClick={handleSettingsClick}>
               <SettingsIcon />
             </IconButton>
 
@@ -80,16 +76,25 @@ export default function DashboardHeader() {
               sx={{
                 display: 'flex',
                 alignItems: 'center',
+                gap: 1,
                 cursor: 'pointer',
+                px: 1,
+                py: 0.5,
+                borderRadius: 1,
+                '&:hover': {
+                  bgcolor: 'action.hover',
+                },
               }}
               onClick={handleMenuOpen}
             >
               <Avatar
                 alt={user.displayName}
                 src={user.avatar}
-                sx={{ width: 36, height: 36, mr: 1 }}
+                sx={{ width: 32, height: 32 }}
               />
-              <Typography variant="body1">{user.displayName}</Typography>
+              <Typography variant="body2" sx={{ display: { xs: 'none', sm: 'block' } }}>
+                {user.displayName}
+              </Typography>
             </Box>
 
             {/* User Menu */}
@@ -102,15 +107,15 @@ export default function DashboardHeader() {
               anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
             >
               <MenuItem onClick={handleProfileClick}>
-                <AccountCircleIcon sx={{ mr: 1 }} />
+                <AccountCircleIcon sx={{ mr: 1.5 }} />
                 Profile
               </MenuItem>
               <MenuItem onClick={handleSettingsClick}>
-                <SettingsIcon sx={{ mr: 1 }} />
+                <SettingsIcon sx={{ mr: 1.5 }} />
                 Settings
               </MenuItem>
               <MenuItem onClick={handleLogoutClick} disabled={isLoggingOut}>
-                <LogoutIcon sx={{ mr: 1 }} />
+                <LogoutIcon sx={{ mr: 1.5 }} />
                 {isLoggingOut ? 'Logging out...' : 'Logout'}
               </MenuItem>
             </Menu>

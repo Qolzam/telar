@@ -13,8 +13,8 @@ import {
   Button,
   Avatar,
   IconButton,
+  CircularProgress,
 } from '@mui/material';
-import { LoadingButton } from '@mui/lab';
 import PhotoCameraIcon from '@mui/icons-material/PhotoCamera';
 import { useUpdateProfileMutation } from '@/features/profile/client';
 import type { UserProfileModel } from '@telar/sdk';
@@ -162,13 +162,14 @@ export function AccountGeneralForm({ profile }: AccountGeneralFormProps) {
                 <Button variant="outlined" type="button">
                   Cancel
                 </Button>
-                <LoadingButton
+                <Button
                   type="submit"
                   variant="contained"
-                  loading={isSubmitting}
+                  disabled={isSubmitting}
+                  startIcon={isSubmitting && <CircularProgress size={16} />}
                 >
-                  Save Changes
-                </LoadingButton>
+                  {isSubmitting ? 'Saving...' : 'Save Changes'}
+                </Button>
               </Stack>
             </Stack>
           </Card>

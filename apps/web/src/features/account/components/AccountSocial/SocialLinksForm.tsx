@@ -12,7 +12,7 @@ import {
   InputAdornment,
   Alert,
 } from '@mui/material';
-import { LoadingButton } from '@mui/lab';
+import { Button } from '@mui/material';
 import FacebookIcon from '@mui/icons-material/Facebook';
 import TwitterIcon from '@mui/icons-material/Twitter';
 import InstagramIcon from '@mui/icons-material/Instagram';
@@ -123,14 +123,14 @@ export function SocialLinksForm({ profile }: SocialLinksFormProps) {
             </Grid>
           </Grid>
 
-          <LoadingButton
+          <Button
             type="submit"
             variant="contained"
-            loading={isSubmitting}
+            disabled={isSubmitting}
             sx={{ alignSelf: 'flex-start' }}
           >
-            Save Changes
-          </LoadingButton>
+            {isSubmitting ? 'Saving...' : 'Save Changes'}
+          </Button>
         </Stack>
       </Card>
     </form>

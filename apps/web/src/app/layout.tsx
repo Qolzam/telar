@@ -15,8 +15,20 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning data-scroll-behavior="smooth">
       <body className={roboto.className}>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  var mode = localStorage.getItem('theme-mode') || 'light';
+                  document.documentElement.setAttribute('data-mui-color-scheme', mode);
+                } catch (e) {}
+              })();
+            `,
+          }}
+        />
         <QueryProvider>
           <ThemeRegistry>
             {children}

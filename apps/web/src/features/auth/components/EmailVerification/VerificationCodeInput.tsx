@@ -9,9 +9,9 @@ import {
   Stack, 
   TextField, 
   CircularProgress, 
-  Alert 
+  Alert,
+  Button,
 } from '@mui/material';
-import { LoadingButton } from '@mui/lab';
 import { useVerifyEmail, useResendVerification } from '@/features/auth/client';
 import { mapAuthError } from '@/features/auth/utils/errorMapper';
 
@@ -145,37 +145,33 @@ export default function VerificationCodeInput({ verificationId, email }: Verific
         disabled={isLoading}
       />
 
-      <LoadingButton 
+      <Button 
         fullWidth 
         type="submit" 
         variant="contained" 
-        loading={isLoading}
-        loadingIndicator="Verifying..."
-        disabled={code.length !== 6} 
+        disabled={isLoading || code.length !== 6} 
         sx={{ mb: 2, py: 1.5 }}
       >
-        Verify Email
-      </LoadingButton>
+        {isLoading ? 'Verifying...' : 'Verify Email'}
+      </Button>
 
       <Stack direction="row" justifyContent="space-between" sx={{ mt: 3 }}>
-        <LoadingButton 
+        <Button 
           variant="text" 
           onClick={handleBackToLogin} 
           sx={{ color: 'text.secondary' }}
           disabled={isLoading}
         >
           Back to Login
-        </LoadingButton>
+        </Button>
 
-        <LoadingButton 
+        <Button 
           variant="text" 
           onClick={handleResendEmail} 
-          loading={resendLoading}
-          loadingIndicator="Sending..."
-          disabled={isLoading || resendCooldown > 0}
+          disabled={isLoading || resendLoading || resendCooldown > 0}
         >
-          {resendCooldown > 0 ? `Resend (${resendCooldown}s)` : 'Resend Code'}
-        </LoadingButton>
+          {resendLoading ? 'Sending...' : resendCooldown > 0 ? `Resend (${resendCooldown}s)` : 'Resend Code'}
+        </Button>
       </Stack>
     </Box>
   );
@@ -200,14 +196,14 @@ export default function VerificationCodeInput({ verificationId, email }: Verific
         {error || formError || 'Verification failed. Please try again.'}
       </Alert>
 
-      <LoadingButton
+      <Button
         fullWidth
         variant="contained"
         onClick={handleTryAgain}
         sx={{ mt: 3, py: 1.5 }}
       >
         Try Again
-      </LoadingButton>
+      </Button>
     </Box>
   );
 

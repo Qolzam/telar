@@ -17,8 +17,8 @@ import {
   Alert,
   CircularProgress,
   useTheme,
+  Button,
 } from '@mui/material';
-import { LoadingButton } from '@mui/lab';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { useLogin } from '@/features/auth/client';
 import SocialLoginButtons from '@/features/auth/components/SocialLoginButtons';
@@ -194,17 +194,16 @@ function LoginFormContent() {
           </Link>
         </Box>
 
-        <LoadingButton
+        <Button
           fullWidth
           size="large"
           type="submit"
           variant="contained"
-          loading={isSubmitting}
-          loadingIndicator="Signing in..."
+          disabled={isSubmitting}
           sx={{ mt: 2, mb: 3, py: 1.5 }}
         >
-          Sign In
-        </LoadingButton>
+          {isSubmitting ? 'Signing in...' : 'Sign In'}
+        </Button>
 
         <Box sx={{ mt: 4, textAlign: 'center' }}>
           <Typography variant="body2" color="text.secondary">

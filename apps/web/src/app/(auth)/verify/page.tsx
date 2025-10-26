@@ -3,7 +3,7 @@
 import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Box, CircularProgress, Alert, Typography, Container } from '@mui/material';
-import { LoadingButton } from '@mui/lab';
+import { Button } from '@mui/material';
 import AuthLayout from '@/components/auth/AuthLayout';
 import { useVerifyEmail } from '@/features/auth/client';
 import { mapAuthError } from '@/features/auth/utils/errorMapper';
@@ -84,13 +84,13 @@ function VerifyContent() {
       <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>
         You can try entering the code manually or request a new verification email.
       </Typography>
-      <LoadingButton
+      <Button
         variant="contained"
         onClick={() => router.push('/signup')}
         sx={{ mt: 2, px: 4, py: 1.5 }}
       >
         Back to Signup
-      </LoadingButton>
+      </Button>
     </Box>
   );
 

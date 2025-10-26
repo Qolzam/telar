@@ -7,12 +7,14 @@ import { AccountGeneral } from '../AccountGeneral';
 import { AccountNotifications } from '../AccountNotifications';
 import { AccountSocial } from '../AccountSocial';
 import { AccountSecurity } from '../AccountSecurity';
+import { AccountTheme } from '../AccountTheme';
 
 const TABS = [
   { value: 'general', label: 'General' },
   { value: 'notifications', label: 'Notifications' },
   { value: 'social', label: 'Social Links' },
   { value: 'security', label: 'Security' },
+  { value: 'theme', label: 'Theme' },
 ];
 
 export function AccountView() {
@@ -49,6 +51,7 @@ export function AccountView() {
       {currentTab === 'notifications' && <AccountNotifications />}
       {currentTab === 'social' && <AccountSocial profile={profile} />}
       {currentTab === 'security' && <AccountSecurity />}
+      {currentTab === 'theme' && <AccountTheme />}
     </Stack>
   );
 }

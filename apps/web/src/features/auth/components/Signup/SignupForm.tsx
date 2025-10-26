@@ -12,8 +12,8 @@ import {
   Stack,
   Alert,
   useTheme,
+  Button,
 } from '@mui/material';
-import { LoadingButton } from '@mui/lab';
 import PasswordStrengthBar from 'react-password-strength-bar';
 import { useSignup } from '@/features/auth/client';
 import SocialLoginButtons from '@/features/auth/components/SocialLoginButtons';
@@ -172,17 +172,16 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
           </Box>
         )}
 
-        <LoadingButton
+        <Button
           fullWidth
           size="large"
           type="submit"
           variant="contained"
-          loading={isSubmitting}
-          loadingIndicator="Creating account..."
+          disabled={isSubmitting}
           sx={{ mt: 2, mb: 3, py: 1.5 }}
         >
-          Sign Up
-        </LoadingButton>
+          {isSubmitting ? 'Creating account...' : 'Sign Up'}
+        </Button>
 
         <Divider sx={{ my: 3 }}>
           <Typography variant="body2" color="text.secondary">
