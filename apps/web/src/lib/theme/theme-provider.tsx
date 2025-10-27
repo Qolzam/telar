@@ -17,11 +17,11 @@ export type ThemeProviderProps = {
   direction?: 'ltr' | 'rtl';
 };
 
-export function ThemeProvider({ children, direction = 'ltr' }: ThemeProviderProps): React.ReactElement {
+export function AppThemeProvider({ children, direction = 'ltr' }: ThemeProviderProps): React.ReactElement {
   const theme = createAppTheme(direction);
   
   return (
-    <MuiThemeProvider theme={theme} defaultMode={schemeConfig.defaultMode}>
+    <MuiThemeProvider theme={theme} defaultMode={schemeConfig.defaultMode} modeStorageKey={schemeConfig.modeStorageKey}>
       <CssBaseline enableColorScheme />
       {children}
     </MuiThemeProvider>

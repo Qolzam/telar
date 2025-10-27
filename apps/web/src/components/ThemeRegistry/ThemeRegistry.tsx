@@ -1,6 +1,6 @@
 'use client';
 
-import { ThemeProvider } from '@/lib/theme/theme-provider';
+import { AppThemeProvider } from '@/lib/theme/theme-provider';
 import EmotionCacheProvider from './EmotionCache';
 
 export type ThemeRegistryProps = {
@@ -11,9 +11,9 @@ export type ThemeRegistryProps = {
 export default function ThemeRegistry({ children, direction = 'ltr' }: ThemeRegistryProps) {
   return (
     <EmotionCacheProvider direction={direction}>
-      <ThemeProvider direction={direction}>
+      <AppThemeProvider direction={direction}>
         {children}
-      </ThemeProvider>
+      </AppThemeProvider>
     </EmotionCacheProvider>
   );
 }

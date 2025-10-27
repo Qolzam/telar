@@ -42,17 +42,17 @@ export default function DashboardHeader() {
   };
 
   const handleProfileClick = () => {
-    handleMenuClose();
+    setAnchorEl(null);
     router.push('/profile');
   };
 
   const handleSettingsClick = () => {
-    handleMenuClose();
+    setAnchorEl(null);
     router.push('/settings');
   };
 
   const handleLogoutClick = () => {
-    handleMenuClose();
+    setAnchorEl(null);
     logout();
   };
 
@@ -105,6 +105,8 @@ export default function DashboardHeader() {
               open={open}
               onClose={handleMenuClose}
               onClick={handleMenuClose}
+              autoFocus={false}
+              disableAutoFocusItem={true}
               transformOrigin={{ horizontal: 'right', vertical: 'top' }}
               anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
             >

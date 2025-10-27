@@ -48,6 +48,10 @@ export function ThemeToggle({
     setAnchorEl(null);
   }, []);
 
+  const handleMenuClose = useCallback((_event: Record<string, never>, _reason: 'backdropClick' | 'escapeKeyDown') => {
+    handleClose();
+  }, [handleClose]);
+
   const handleThemeChange = useCallback((scheme: 'light' | 'dark' | 'system') => {
     setColorScheme(scheme);
     handleClose();
@@ -117,7 +121,9 @@ export function ThemeToggle({
         <Menu
           anchorEl={anchorEl}
           open={open}
-          onClose={handleClose}
+          onClose={handleMenuClose}
+          autoFocus={false}
+          disableAutoFocusItem={true}
           anchorOrigin={{
             vertical: 'bottom',
             horizontal: 'right',
