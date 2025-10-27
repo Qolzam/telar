@@ -3,9 +3,11 @@
 import { useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import * as Yup from 'yup';
-import { useFormik, Form, FormikProvider } from 'formik';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { useTranslation } from 'react-i18next';
+import { useValidationSchema } from '@/lib/i18n/useValidationSchema';
 import {
   TextField,
   Typography,
@@ -38,59 +40,65 @@ function LoginFormContent() {
     setShowPassword((prev) => !prev);
   };
 
-  const LoginSchema = Yup.object().shape({
-    email: Yup.string()
-      .email(t('validation:email.invalid'))
-      .required(t('validation:email.required')),
-    password: Yup.string()
-      .required(t('validation:password.required')),
+  const validationSchemas = useValidationSchema();
+
+  const loginSchema = z.object({
+    email: validationSchemas.email,
+    password: validationSchemas.password(),
+    rememberMe: z.boolean().optional(),
   });
 
-  const formik = useFormik({
-    initialValues: {
+  type LoginFormData = z.infer<typeof loginSchema>;
+
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+    setError,
+    clearErrors,
+    watch,
+  } = useForm<LoginFormData>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: {
       email: '',
       password: '',
       rememberMe: false,
     },
-    validationSchema: LoginSchema,
-    onSubmit: async (values, { setStatus, setSubmitting }) => {
-      try {
-        setStatus(null);
-        
-        await loginAsync({ 
-          username: values.email, 
-          password: values.password 
-        });
-        
-        if (values.rememberMe) {
-          localStorage.setItem('rememberMe', 'true');
-        } else {
-          localStorage.removeItem('rememberMe');
-        }
-        
-        if (setSubmitting) {
-          setSubmitting(false);
-        }
-      } catch (error: unknown) {
-        console.error('[Login] Login failed:', error);
-        
-        if (setSubmitting) {
-          setSubmitting(false);
-        }
-        
-        const errorMessage = mapAuthError(error, 'login');
-        setStatus({ error: errorMessage });
-      }
-    },
   });
 
-  const { status, errors, touched, isSubmitting, handleSubmit, getFieldProps, setStatus } = formik;
+  const rememberMeValue = watch('rememberMe');
+
+  const onSubmit = async (data: LoginFormData) => {
+    try {
+      clearErrors('root');
+      
+      await loginAsync({ 
+        username: data.email, 
+        password: data.password 
+      });
+      
+      if (data.rememberMe) {
+        localStorage.setItem('rememberMe', 'true');
+      } else {
+        localStorage.removeItem('rememberMe');
+      }
+    } catch (error: unknown) {
+      console.error('[Login] Login failed:', error);
+      const errorMessage = mapAuthError(error, 'login');
+      setError('root', { message: errorMessage });
+    }
+  };
 
   const enabledOAuthLogin = false; // TODO: Move to config
 
   return (
-    <FormikProvider value={formik}>
-      <Box component={Form} sx={{ width: '100%' }} autoComplete="off" noValidate onSubmit={handleSubmit}>
+    <Box 
+      component="form" 
+      sx={{ width: '100%' }} 
+      autoComplete="off" 
+      noValidate 
+      onSubmit={handleSubmit(onSubmit)}
+    >
         <Box sx={{ mb: 4, textAlign: 'center' }}>
           <Typography variant="h4" component="h1" gutterBottom>
             {t('login.title')}
@@ -125,9 +133,13 @@ function LoginFormContent() {
           </Alert>
         )}
 
-        {status && status.error && (
-          <Alert severity="error" sx={{ mb: 3 }}>
-            {status.error}
+        {errors.root && (
+          <Alert 
+            severity="error" 
+            sx={{ mb: 3 }}
+            onClose={() => clearErrors('root')}
+          >
+            {errors.root.message}
           </Alert>
         )}
 
@@ -136,13 +148,13 @@ function LoginFormContent() {
           autoComplete="email"
           type="email"
           label={t('login.fields.email')}
-          {...getFieldProps('email')}
-          error={Boolean(touched.email && errors.email)}
-          helperText={touched.email && errors.email}
+          {...register('email')}
+          error={!!errors.email}
+          helperText={errors.email?.message}
           disabled={isSubmitting}
           variant="outlined"
           margin="normal"
-          onFocus={() => setStatus(null)}
+          onFocus={() => clearErrors('root')}
         />
 
         <TextField
@@ -150,13 +162,13 @@ function LoginFormContent() {
           autoComplete="current-password"
           type={showPassword ? 'text' : 'password'}
           label={t('login.fields.password')}
-          {...getFieldProps('password')}
-          error={Boolean(touched.password && errors.password)}
-          helperText={touched.password && errors.password}
+          {...register('password')}
+          error={!!errors.password}
+          helperText={errors.password?.message}
           disabled={isSubmitting}
           variant="outlined"
           margin="normal"
-          onFocus={() => setStatus(null)}
+          onFocus={() => clearErrors('root')}
           InputProps={{
             endAdornment: (
               <InputAdornment position="end">
@@ -176,8 +188,8 @@ function LoginFormContent() {
           <FormControlLabel
             control={
               <Checkbox
-                {...getFieldProps('rememberMe')}
-                checked={formik.values.rememberMe}
+                {...register('rememberMe')}
+                checked={rememberMeValue}
                 color="primary"
                 disabled={isSubmitting}
               />
@@ -223,7 +235,6 @@ function LoginFormContent() {
           </Typography>
         </Box>
       </Box>
-    </FormikProvider>
   );
 }
 

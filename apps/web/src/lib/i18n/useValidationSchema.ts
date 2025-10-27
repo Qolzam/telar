@@ -31,6 +31,15 @@ export function useValidationSchema() {
       .min(1, t('name.required')),
     
     /**
+     * First/Last name validation with min/max
+     * @param min - Minimum length (default: 2)
+     * @param max - Maximum length (default: 50)
+     */
+    nameWithLength: (min = 2, max = 50) => z.string()
+      .min(min, t('name.minLength', { min }))
+      .max(max, t('name.maxLength', { max })),
+    
+    /**
      * URL validation schema
      */
     url: z.string()
