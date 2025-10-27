@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslation } from 'react-i18next';
 import { Box, Card, Divider, Stack } from '@mui/material';
 
 interface ProfileFollowsProps {
@@ -8,6 +9,8 @@ interface ProfileFollowsProps {
 }
 
 export function ProfileFollows({ followerCount, followCount }: ProfileFollowsProps) {
+  const { t } = useTranslation('profile');
+  
   return (
     <Card sx={{ py: 3, textAlign: 'center', typography: 'h4' }}>
       <Stack
@@ -17,14 +20,14 @@ export function ProfileFollows({ followerCount, followCount }: ProfileFollowsPro
         <Stack width={1}>
           {followerCount.toLocaleString()}
           <Box component="span" sx={{ color: 'text.secondary', typography: 'body2' }}>
-            Follower{followerCount !== 1 ? 's' : ''}
+            {t('follows.follower', { count: followerCount })}
           </Box>
         </Stack>
 
         <Stack width={1}>
           {followCount.toLocaleString()}
           <Box component="span" sx={{ color: 'text.secondary', typography: 'body2' }}>
-            Following
+            {t('follows.following')}
           </Box>
         </Stack>
       </Stack>

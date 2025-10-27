@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslation } from 'react-i18next';
 import { Box, Card, CardHeader, Link, Stack } from '@mui/material';
 import EmailIcon from '@mui/icons-material/Email';
 import BusinessIcon from '@mui/icons-material/Business';
@@ -11,9 +12,11 @@ interface ProfileAboutProps {
 }
 
 export function ProfileAbout({ profile }: ProfileAboutProps) {
+  const { t } = useTranslation('profile');
+  
   return (
     <Card>
-      <CardHeader title="About" />
+      <CardHeader title={t('about.title')} />
 
       <Stack spacing={2} sx={{ p: 3 }}>
         {profile.tagLine && (
@@ -33,7 +36,7 @@ export function ProfileAbout({ profile }: ProfileAboutProps) {
           <Stack direction="row" spacing={2}>
             <BusinessIcon sx={{ color: 'text.secondary' }} />
             <Box sx={{ typography: 'body2' }}>
-              Works at{' '}
+              {t('about.worksAt')}{' '}
               <Link variant="subtitle2" color="inherit">
                 {profile.companyName}
               </Link>

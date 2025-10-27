@@ -2,6 +2,7 @@
 
 import { useState, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslation } from 'react-i18next';
 import { 
   Box, 
   Typography, 
@@ -27,6 +28,7 @@ enum VerificationState {
 }
 
 export default function VerificationCodeInput({ verificationId, email }: VerificationCodeInputProps) {
+  const { t } = useTranslation('auth');
   const router = useRouter();
   const { verifyAsync, isLoading, error, isError } = useVerifyEmail();
   const { resendAsync, isLoading: resendLoading } = useResendVerification();
@@ -42,12 +44,12 @@ export default function VerificationCodeInput({ verificationId, email }: Verific
     setFormError(null);
     
     if (!code) {
-      setFormError('Verification code is required');
+      setFormError(t('verification.errors.required'));
       return;
     }
     
     if (code.length < 6) {
-      setFormError('Verification code must be 6 digits');
+      setFormError(t('verification.errors.invalidLength'));
       return;
     }
 
@@ -123,18 +125,18 @@ export default function VerificationCodeInput({ verificationId, email }: Verific
 
       {resendSuccess && (
         <Alert severity="success" sx={{ mb: 3 }}>
-          Verification email resent! Check your inbox.
+          {t('verification.messages.resendSuccess')}
         </Alert>
       )}
 
       <TextField
         fullWidth
-        label="Verification Code"
+        label={t('verification.fields.code')}
         name="code"
         value={code}
         onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
         error={!!formError}
-        helperText={formError || 'Enter the 6-digit code from your email'}
+        helperText={formError || t('verification.helperText')}
         sx={{ mb: 3 }}
         inputProps={{ 
           maxLength: 6,
@@ -152,7 +154,7 @@ export default function VerificationCodeInput({ verificationId, email }: Verific
         disabled={isLoading || code.length !== 6} 
         sx={{ mb: 2, py: 1.5 }}
       >
-        {isLoading ? 'Verifying...' : 'Verify Email'}
+        {isLoading ? t('verification.actions.submitting') : t('verification.actions.submit')}
       </Button>
 
       <Stack direction="row" justifyContent="space-between" sx={{ mt: 3 }}>
@@ -162,7 +164,7 @@ export default function VerificationCodeInput({ verificationId, email }: Verific
           sx={{ color: 'text.secondary' }}
           disabled={isLoading}
         >
-          Back to Login
+          {t('verification.actions.backToLogin')}
         </Button>
 
         <Button 
@@ -170,7 +172,7 @@ export default function VerificationCodeInput({ verificationId, email }: Verific
           onClick={handleResendEmail} 
           disabled={isLoading || resendLoading || resendCooldown > 0}
         >
-          {resendLoading ? 'Sending...' : resendCooldown > 0 ? `Resend (${resendCooldown}s)` : 'Resend Code'}
+          {resendLoading ? t('verification.actions.sending') : resendCooldown > 0 ? t('verification.actions.resendCooldown', { seconds: resendCooldown }) : t('verification.actions.resend')}
         </Button>
       </Stack>
     </Box>
@@ -179,11 +181,11 @@ export default function VerificationCodeInput({ verificationId, email }: Verific
   const renderSuccess = () => (
     <Box sx={{ textAlign: 'center', my: 5 }}>
       <Alert severity="success" sx={{ mb: 3 }}>
-        Email verified successfully!
+        {t('verification.messages.success')}
       </Alert>
 
       <Typography variant="body1" sx={{ mb: 3 }}>
-        Redirecting you to the dashboard...
+        {t('verification.messages.redirecting')}
       </Typography>
 
       <CircularProgress size={32} />
@@ -193,7 +195,7 @@ export default function VerificationCodeInput({ verificationId, email }: Verific
   const renderError = () => (
     <Box sx={{ my: 5 }}>
       <Alert severity="error" sx={{ mb: 3 }}>
-        {error || formError || 'Verification failed. Please try again.'}
+        {error || formError || t('verification.errors.failed')}
       </Alert>
 
       <Button
@@ -202,7 +204,7 @@ export default function VerificationCodeInput({ verificationId, email }: Verific
         onClick={handleTryAgain}
         sx={{ mt: 3, py: 1.5 }}
       >
-        Try Again
+        {t('verification.actions.tryAgain')}
       </Button>
     </Box>
   );
@@ -211,13 +213,13 @@ export default function VerificationCodeInput({ verificationId, email }: Verific
     <Container maxWidth="sm">
       <Box sx={{ textAlign: 'center', mb: 5 }}>
         <Typography variant="h4" gutterBottom>
-          Verify Your Email
+          {t('verification.title')}
         </Typography>
 
         <Typography variant="body1" color="text.secondary">
           {email 
-            ? `We've sent a verification code to ${email}` 
-            : 'Enter the verification code sent to your email'}
+            ? t('verification.subtitleWithEmail', { email }) 
+            : t('verification.subtitle')}
         </Typography>
       </Box>
 

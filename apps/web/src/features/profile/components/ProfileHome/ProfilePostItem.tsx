@@ -3,10 +3,11 @@
 import { Card, CardContent, Typography } from '@mui/material';
 
 interface ProfilePostItemProps {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   post: any;
 }
 
-export function ProfilePostItem({ post }: ProfilePostItemProps) {
+export function ProfilePostItem({ post: _post }: ProfilePostItemProps) {
   return (
     <Card>
       <CardContent>

@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import * as Yup from 'yup';
 import { useFormik, Form, FormikProvider } from 'formik';
+import { useTranslation } from 'react-i18next';
 import {
   TextField,
   Typography,
@@ -25,6 +26,7 @@ import SocialLoginButtons from '@/features/auth/components/SocialLoginButtons';
 import { mapAuthError } from '@/features/auth/utils/errorMapper';
 
 function LoginFormContent() {
+  const { t } = useTranslation(['auth', 'validation']);
   const searchParams = useSearchParams();
   const theme = useTheme();
   const { loginAsync } = useLogin();
@@ -38,10 +40,10 @@ function LoginFormContent() {
 
   const LoginSchema = Yup.object().shape({
     email: Yup.string()
-      .email('Email must be a valid email address')
-      .required('Email is required'),
+      .email(t('validation:email.invalid'))
+      .required(t('validation:email.required')),
     password: Yup.string()
-      .required('Password is required'),
+      .required(t('validation:password.required')),
   });
 
   const formik = useFormik({
@@ -91,10 +93,10 @@ function LoginFormContent() {
       <Box component={Form} sx={{ width: '100%' }} autoComplete="off" noValidate onSubmit={handleSubmit}>
         <Box sx={{ mb: 4, textAlign: 'center' }}>
           <Typography variant="h4" component="h1" gutterBottom>
-            Welcome Back
+            {t('login.title')}
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            Sign in to continue to Telar
+            {t('login.subtitle')}
           </Typography>
         </Box>
 
@@ -103,7 +105,7 @@ function LoginFormContent() {
             <SocialLoginButtons disabled={isSubmitting} />
             <Divider sx={{ mb: 3, mt: 3 }}>
               <Typography variant="body2" color="text.secondary">
-                or continue with email
+                {t('login.divider')}
               </Typography>
             </Divider>
           </>
@@ -111,15 +113,15 @@ function LoginFormContent() {
 
         {urlError && (
           <Alert severity="warning" sx={{ mb: 3 }}>
-            {urlError === 'invalid_token' && 'Your session is invalid. Please log in again.'}
-            {urlError === 'expired_token' && 'Your session has expired. Please log in again.'}
-            {urlError === 'verification_failed' && 'Session verification failed. Please log in again.'}
+            {urlError === 'invalid_token' && t('login.errors.invalidToken')}
+            {urlError === 'expired_token' && t('login.errors.expiredToken')}
+            {urlError === 'verification_failed' && t('login.errors.verificationFailed')}
           </Alert>
         )}
         
         {urlMessage === 'password_reset_success' && (
           <Alert severity="success" sx={{ mb: 3 }}>
-            Password reset successfully! You can now log in with your new password.
+            {t('login.messages.passwordResetSuccess')}
           </Alert>
         )}
 
@@ -133,7 +135,7 @@ function LoginFormContent() {
           fullWidth
           autoComplete="email"
           type="email"
-          label="Email Address"
+          label={t('login.fields.email')}
           {...getFieldProps('email')}
           error={Boolean(touched.email && errors.email)}
           helperText={touched.email && errors.email}
@@ -147,7 +149,7 @@ function LoginFormContent() {
           fullWidth
           autoComplete="current-password"
           type={showPassword ? 'text' : 'password'}
-          label="Password"
+          label={t('login.fields.password')}
           {...getFieldProps('password')}
           error={Boolean(touched.password && errors.password)}
           helperText={touched.password && errors.password}
@@ -161,7 +163,7 @@ function LoginFormContent() {
                 <IconButton
                   onClick={togglePasswordVisibility}
                   edge="end"
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-label={showPassword ? t('login.actions.hidePassword') : t('login.actions.showPassword')}
                 >
                   {showPassword ? <VisibilityOff /> : <Visibility />}
                 </IconButton>
@@ -180,7 +182,7 @@ function LoginFormContent() {
                 disabled={isSubmitting}
               />
             }
-            label="Remember me"
+            label={t('login.fields.rememberMe')}
           />
           <Link
             href="/forgot-password"
@@ -190,7 +192,7 @@ function LoginFormContent() {
               textDecoration: 'none',
             }}
           >
-            Forgot password?
+            {t('login.actions.forgotPassword')}
           </Link>
         </Box>
 
@@ -202,12 +204,12 @@ function LoginFormContent() {
           disabled={isSubmitting}
           sx={{ mt: 2, mb: 3, py: 1.5 }}
         >
-          {isSubmitting ? 'Signing in...' : 'Sign In'}
+          {isSubmitting ? t('login.actions.submitting') : t('login.actions.submit')}
         </Button>
 
         <Box sx={{ mt: 4, textAlign: 'center' }}>
           <Typography variant="body2" color="text.secondary">
-            Don&apos;t have an account?{' '}
+            {t('login.footer.noAccount')}{' '}
             <Link 
               href="/signup"
               style={{
@@ -216,7 +218,7 @@ function LoginFormContent() {
                 fontWeight: 500,
               }}
             >
-              Sign up
+              {t('login.footer.signUp')}
             </Link>
           </Typography>
         </Box>

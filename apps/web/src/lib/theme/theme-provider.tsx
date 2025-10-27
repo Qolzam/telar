@@ -3,7 +3,7 @@
 import React from 'react';
 import CssBaseline from '@mui/material/CssBaseline';
 import { ThemeProvider as MuiThemeProvider } from '@mui/material/styles';
-import { theme } from './theme';
+import { createAppTheme } from './theme';
 
 // ----------------------------------------------------------------------
 
@@ -12,7 +12,14 @@ export const schemeConfig = {
   defaultMode: 'light' as const,
 };
 
-export function ThemeProvider({ children }: { children: React.ReactNode }): React.ReactElement {
+export type ThemeProviderProps = {
+  children: React.ReactNode;
+  direction?: 'ltr' | 'rtl';
+};
+
+export function ThemeProvider({ children, direction = 'ltr' }: ThemeProviderProps): React.ReactElement {
+  const theme = createAppTheme(direction);
+  
   return (
     <MuiThemeProvider theme={theme} defaultMode={schemeConfig.defaultMode}>
       <CssBaseline enableColorScheme />

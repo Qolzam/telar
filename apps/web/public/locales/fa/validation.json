@@ -1,0 +1,33 @@
+{
+  "email": {
+    "required": "Email is required",
+    "invalid": "Email must be a valid email address",
+    "exists": "Email already exists"
+  },
+  "password": {
+    "required": "Password is required",
+    "minLength": "Password must be at least {{min}} characters",
+    "maxLength": "Password must be at most {{max}} characters",
+    "weak": "Password is too weak",
+    "mismatch": "Passwords do not match"
+  },
+  "name": {
+    "required": "Name is required",
+    "minLength": "Name must be at least {{min}} characters",
+    "maxLength": "Name must be at most {{max}} characters"
+  },
+  "profile": {
+    "fullName": "Full name is required",
+    "socialName": "Social name is required",
+    "tagLine": "Tag line",
+    "webUrl": "Must be a valid URL",
+    "company": "Company name"
+  },
+  "url": {
+    "invalid": "Must be a valid URL"
+  },
+  "required": "This field is required",
+  "invalid": "Invalid value",
+  "tooShort": "Too short",
+  "tooLong": "Too long"
+}

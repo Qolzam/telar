@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import * as Yup from 'yup';
 import { useFormik, Form, FormikProvider } from 'formik';
+import { useTranslation } from 'react-i18next';
 import {
   TextField,
   Typography,
@@ -24,25 +25,26 @@ interface SignupFormProps {
 }
 
 export default function SignupForm({ onSuccess }: SignupFormProps) {
+  const { t } = useTranslation(['auth', 'validation']);
   const theme = useTheme();
   const { signup } = useSignup();
   const [verificationId, setVerificationId] = useState<string | null>(null);
 
   const RegisterSchema = Yup.object().shape({
     firstName: Yup.string()
-      .min(2, 'First name is too short')
-      .max(50, 'First name is too long')
-      .required('First name is required'),
+      .min(2, t('validation:name.minLength', { min: 2 }))
+      .max(50, t('validation:name.maxLength', { max: 50 }))
+      .required(t('validation:name.required')),
     lastName: Yup.string()
-      .min(2, 'Last name is too short')
-      .max(50, 'Last name is too long')
-      .required('Last name is required'),
+      .min(2, t('validation:name.minLength', { min: 2 }))
+      .max(50, t('validation:name.maxLength', { max: 50 }))
+      .required(t('validation:name.required')),
     email: Yup.string()
-      .email('Email must be a valid email address')
-      .required('Email is required'),
+      .email(t('validation:email.invalid'))
+      .required(t('validation:email.required')),
     password: Yup.string()
-      .required('Password is required')
-      .min(8, 'Password must be at least 8 characters'),
+      .required(t('validation:password.required'))
+      .min(8, t('validation:password.minLength', { min: 8 })),
   });
 
   const formik = useFormik({
@@ -97,10 +99,10 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
       <Box component={Form} sx={{ width: '100%' }} autoComplete="off" noValidate onSubmit={handleSubmit}>
         <Box sx={{ mb: 4, textAlign: 'center' }}>
           <Typography variant="h4" component="h1" gutterBottom>
-            Create Account
+            {t('signup.title')}
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            Join Telar and connect with friends
+            {t('signup.subtitle')}
           </Typography>
         </Box>
 
@@ -113,7 +115,7 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }}>
           <TextField
             fullWidth
-            label="First Name"
+            label={t('signup.fields.firstName')}
             {...getFieldProps('firstName')}
             error={Boolean(touched.firstName && errors.firstName)}
             helperText={touched.firstName && errors.firstName}
@@ -124,7 +126,7 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
           />
           <TextField
             fullWidth
-            label="Last Name"
+            label={t('signup.fields.lastName')}
             {...getFieldProps('lastName')}
             error={Boolean(touched.lastName && errors.lastName)}
             helperText={touched.lastName && errors.lastName}
@@ -139,7 +141,7 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
           fullWidth
           autoComplete="email"
           type="email"
-          label="Email Address"
+          label={t('signup.fields.email')}
           {...getFieldProps('email')}
           error={Boolean(touched.email && errors.email)}
           helperText={touched.email && errors.email}
@@ -153,7 +155,7 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
           fullWidth
           autoComplete="new-password"
           type="password"
-          label="Password"
+          label={t('signup.fields.password')}
           {...getFieldProps('password')}
           error={Boolean(touched.password && errors.password)}
           helperText={touched.password && errors.password}
@@ -180,12 +182,12 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
           disabled={isSubmitting}
           sx={{ mt: 2, mb: 3, py: 1.5 }}
         >
-          {isSubmitting ? 'Creating account...' : 'Sign Up'}
+          {isSubmitting ? t('signup.actions.submitting') : t('signup.actions.submit')}
         </Button>
 
         <Divider sx={{ my: 3 }}>
           <Typography variant="body2" color="text.secondary">
-            or sign up with
+            {t('signup.divider')}
           </Typography>
         </Divider>
 
@@ -193,7 +195,7 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
 
         <Box sx={{ mt: 4, textAlign: 'center' }}>
           <Typography variant="body2" color="text.secondary">
-            Already have an account?{' '}
+            {t('signup.footer.hasAccount')}{' '}
             <Link 
               href="/login"
               style={{
@@ -202,23 +204,14 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
                 fontWeight: 500,
               }}
             >
-              Sign in
+              {t('signup.footer.signIn')}
             </Link>
           </Typography>
         </Box>
 
         <Box sx={{ mt: 2, textAlign: 'center' }}>
           <Typography variant="caption" color="text.secondary">
-            By signing up, you agree to our{' '}
-            <Link 
-              href="/terms"
-              style={{
-                color: theme.palette.primary.main,
-                textDecoration: 'none',
-              }}
-            >
-              Terms & Conditions
-            </Link>
+            {t('signup.terms')}
           </Typography>
         </Box>
       </Box>

@@ -1,0 +1,80 @@
+{
+  "app": {
+    "name": "Telar",
+    "tagline": "Modern Social Network Platform",
+    "description": "Connect with friends and share your moments"
+  },
+  "navigation": {
+    "home": "Home",
+    "dashboard": "Dashboard",
+    "profile": "Profile",
+    "settings": "Settings",
+    "messages": "Messages",
+    "notifications": "Notifications",
+    "logout": "Log Out",
+    "openMenu": "Open navigation menu",
+    "accountMenu": "Account menu",
+    "posts": "Posts",
+    "connections": "Connections",
+    "search": "Search"
+  },
+  "homepage": {
+    "title": "Welcome to Telar",
+    "subtitle": "Next.js 15 + MUI v7 + React Query v5 + TypeScript 5.6",
+    "getStarted": "Get Started",
+    "learnMore": "Learn More"
+  },
+  "theme": {
+    "toggle": "Theme toggle",
+    "selection": "Theme selection",
+    "light": "Light theme",
+    "dark": "Dark theme",
+    "system": "System theme",
+    "systemCurrent": "System theme ({{mode}})",
+    "settings": "Theme settings",
+    "switchToLight": "Switch to light theme",
+    "switchToDark": "Switch to dark theme",
+    "switchToSystem": "Switch to system theme",
+    "labels": {
+      "light": "Light",
+      "dark": "Dark",
+      "system": "System"
+    }
+  },
+  "actions": {
+    "toggleTheme": "Toggle theme"
+  },
+  "buttons": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "submit": "Submit",
+    "delete": "Delete",
+    "edit": "Edit",
+    "confirm": "Confirm",
+    "close": "Close",
+    "back": "Back",
+    "next": "Next",
+    "previous": "Previous",
+    "continue": "Continue",
+    "finish": "Finish",
+    "skip": "Skip"
+  },
+  "states": {
+    "loading": "Loading...",
+    "saving": "Saving...",
+    "submitting": "Submitting...",
+    "processing": "Processing...",
+    "success": "Success",
+    "error": "Error",
+    "noData": "No data available",
+    "empty": "Nothing to show"
+  },
+  "errors": {
+    "general": "Something went wrong. Please try again.",
+    "network": "Network error. Please check your connection.",
+    "notFound": "Not found",
+    "unauthorized": "Unauthorized access",
+    "forbidden": "Access forbidden",
+    "serverError": "Server error. Please try again later."
+  }
+}

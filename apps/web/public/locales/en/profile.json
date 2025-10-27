@@ -1,0 +1,36 @@
+{
+  "tabs": {
+    "home": "Profile",
+    "followers": "Followers",
+    "friends": "Friends",
+    "gallery": "Gallery"
+  },
+  "about": {
+    "title": "About",
+    "worksAt": "Works at"
+  },
+  "social": {
+    "title": "Social"
+  },
+  "follows": {
+    "follower_one": "Follower",
+    "follower_other": "Followers",
+    "following": "Following"
+  },
+  "followers": {
+    "comingSoon": "Followers Feature Coming Soon",
+    "description": "This will display the list of users following this profile"
+  },
+  "friends": {
+    "comingSoon": "Friends Feature Coming Soon",
+    "description": "This will display mutual connections and friends"
+  },
+  "gallery": {
+    "comingSoon": "Gallery Feature Coming Soon",
+    "description": "This will display photos and media shared by this user"
+  },
+  "errors": {
+    "notFound": "Profile not found"
+  },
+  "editProfile": "Edit Profile"
+}

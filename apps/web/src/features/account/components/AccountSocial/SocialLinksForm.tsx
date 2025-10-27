@@ -3,6 +3,7 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { useTranslation } from 'react-i18next';
 import {
   Card,
   Grid,
@@ -11,8 +12,8 @@ import {
   Typography,
   InputAdornment,
   Alert,
+  Button,
 } from '@mui/material';
-import { Button } from '@mui/material';
 import FacebookIcon from '@mui/icons-material/Facebook';
 import TwitterIcon from '@mui/icons-material/Twitter';
 import InstagramIcon from '@mui/icons-material/Instagram';
@@ -33,6 +34,7 @@ interface SocialLinksFormProps {
 }
 
 export function SocialLinksForm({ profile }: SocialLinksFormProps) {
+  const { t } = useTranslation(['settings', 'common']);
   const updateMutation = useUpdateProfileMutation();
   const [successMessage, setSuccessMessage] = useState('');
 
@@ -53,7 +55,7 @@ export function SocialLinksForm({ profile }: SocialLinksFormProps) {
     try {
       setSuccessMessage('');
       await updateMutation.mutateAsync(data);
-      setSuccessMessage('Social links updated successfully!');
+      setSuccessMessage(t('settings:messages.settingsSaved'));
     } catch (error) {
       console.error('Failed to update social links:', error);
     }
@@ -63,7 +65,7 @@ export function SocialLinksForm({ profile }: SocialLinksFormProps) {
     <form onSubmit={handleSubmit(onSubmit)}>
       <Card sx={{ p: 3 }}>
         <Stack spacing={3}>
-          <Typography variant="h6">Social Links</Typography>
+          <Typography variant="h6">{t('settings:social.title')}</Typography>
 
           {successMessage && <Alert severity="success">{successMessage}</Alert>}
 
@@ -72,7 +74,7 @@ export function SocialLinksForm({ profile }: SocialLinksFormProps) {
               <TextField
                 {...register('facebookId')}
                 fullWidth
-                label="Facebook"
+                label={t('settings:social.fields.facebook')}
                 placeholder="username"
                 error={!!errors.facebookId}
                 helperText={errors.facebookId?.message}
@@ -90,7 +92,7 @@ export function SocialLinksForm({ profile }: SocialLinksFormProps) {
               <TextField
                 {...register('twitterId')}
                 fullWidth
-                label="Twitter"
+                label={t('settings:social.fields.twitter')}
                 placeholder="username"
                 error={!!errors.twitterId}
                 helperText={errors.twitterId?.message}
@@ -108,7 +110,7 @@ export function SocialLinksForm({ profile }: SocialLinksFormProps) {
               <TextField
                 {...register('instagramId')}
                 fullWidth
-                label="Instagram"
+                label={t('settings:social.fields.instagram')}
                 placeholder="username"
                 error={!!errors.instagramId}
                 helperText={errors.instagramId?.message}
@@ -129,7 +131,7 @@ export function SocialLinksForm({ profile }: SocialLinksFormProps) {
             disabled={isSubmitting}
             sx={{ alignSelf: 'flex-start' }}
           >
-            {isSubmitting ? 'Saving...' : 'Save Changes'}
+            {isSubmitting ? t('common:states.saving') : t('common:buttons.save')}
           </Button>
         </Stack>
       </Card>

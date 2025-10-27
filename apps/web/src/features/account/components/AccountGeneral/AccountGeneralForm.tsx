@@ -3,6 +3,7 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { useTranslation } from 'react-i18next';
 import {
   Box,
   Card,
@@ -19,25 +20,35 @@ import PhotoCameraIcon from '@mui/icons-material/PhotoCamera';
 import { useUpdateProfileMutation } from '@/features/profile/client';
 import type { UserProfileModel } from '@telar/sdk';
 
-const profileSchema = z.object({
-  fullName: z.string().min(1, 'Full name is required'),
-  socialName: z.string().min(1, 'Social name is required'),
-  tagLine: z.string().optional(),
-  webUrl: z.string().url('Must be a valid URL').optional().or(z.literal('')),
-  companyName: z.string().optional(),
-  facebookId: z.string().optional(),
-  instagramId: z.string().optional(),
-  twitterId: z.string().optional(),
-});
-
-type ProfileFormData = z.infer<typeof profileSchema>;
+type ProfileFormData = {
+  fullName: string;
+  socialName: string;
+  tagLine?: string;
+  webUrl?: string;
+  companyName?: string;
+  facebookId?: string;
+  instagramId?: string;
+  twitterId?: string;
+};
 
 interface AccountGeneralFormProps {
   profile: UserProfileModel;
 }
 
 export function AccountGeneralForm({ profile }: AccountGeneralFormProps) {
+  const { t } = useTranslation(['settings', 'validation', 'common']);
   const updateMutation = useUpdateProfileMutation();
+
+  const profileSchema = z.object({
+    fullName: z.string().min(1, t('validation:profile.fullName')),
+    socialName: z.string().min(1, t('validation:profile.socialName')),
+    tagLine: z.string().optional(),
+    webUrl: z.string().url(t('validation:url.invalid')).optional().or(z.literal('')),
+    companyName: z.string().optional(),
+    facebookId: z.string().optional(),
+    instagramId: z.string().optional(),
+    twitterId: z.string().optional(),
+  });
 
   const {
     register,
@@ -92,9 +103,9 @@ export function AccountGeneralForm({ profile }: AccountGeneralFormProps) {
               </IconButton>
             </Box>
             <Typography variant="caption" color="text.secondary">
-              Allowed *.jpeg, *.jpg, *.png, *.gif
+              {t('settings:general.avatar.allowedFormats')}
               <br />
-              Max size of 3.1 MB
+              {t('settings:general.avatar.maxSize')}
             </Typography>
           </Card>
         </Grid>
@@ -102,14 +113,14 @@ export function AccountGeneralForm({ profile }: AccountGeneralFormProps) {
         <Grid size={{ xs: 12, md: 8 }}>
           <Card sx={{ p: 3 }}>
             <Stack spacing={3}>
-              <Typography variant="h6">General Information</Typography>
+              <Typography variant="h6">{t('settings:general.title')}</Typography>
 
               <Grid container spacing={2}>
                 <Grid size={{ xs: 12, sm: 6 }}>
                   <TextField
                     {...register('fullName')}
                     fullWidth
-                    label="Full Name"
+                    label={t('settings:general.fields.fullName')}
                     error={!!errors.fullName}
                     helperText={errors.fullName?.message}
                   />
@@ -119,7 +130,7 @@ export function AccountGeneralForm({ profile }: AccountGeneralFormProps) {
                   <TextField
                     {...register('socialName')}
                     fullWidth
-                    label="Social Name"
+                    label={t('settings:general.fields.socialName')}
                     error={!!errors.socialName}
                     helperText={errors.socialName?.message}
                   />
@@ -129,8 +140,8 @@ export function AccountGeneralForm({ profile }: AccountGeneralFormProps) {
                   <TextField
                     {...register('tagLine')}
                     fullWidth
-                    label="Tag Line"
-                    placeholder="A short description about you"
+                    label={t('settings:general.fields.tagLine')}
+                    placeholder={t('settings:general.fields.tagLinePlaceholder')}
                     error={!!errors.tagLine}
                     helperText={errors.tagLine?.message}
                   />
@@ -140,7 +151,7 @@ export function AccountGeneralForm({ profile }: AccountGeneralFormProps) {
                   <TextField
                     {...register('companyName')}
                     fullWidth
-                    label="Company"
+                    label={t('settings:general.fields.company')}
                     error={!!errors.companyName}
                     helperText={errors.companyName?.message}
                   />
@@ -150,8 +161,8 @@ export function AccountGeneralForm({ profile }: AccountGeneralFormProps) {
                   <TextField
                     {...register('webUrl')}
                     fullWidth
-                    label="Website"
-                    placeholder="https://example.com"
+                    label={t('settings:general.fields.website')}
+                    placeholder={t('settings:general.fields.websitePlaceholder')}
                     error={!!errors.webUrl}
                     helperText={errors.webUrl?.message}
                   />
@@ -160,7 +171,7 @@ export function AccountGeneralForm({ profile }: AccountGeneralFormProps) {
 
               <Stack direction="row" justifyContent="flex-end" spacing={2}>
                 <Button variant="outlined" type="button">
-                  Cancel
+                  {t('common:buttons.cancel')}
                 </Button>
                 <Button
                   type="submit"
@@ -168,7 +179,7 @@ export function AccountGeneralForm({ profile }: AccountGeneralFormProps) {
                   disabled={isSubmitting}
                   startIcon={isSubmitting && <CircularProgress size={16} />}
                 >
-                  {isSubmitting ? 'Saving...' : 'Save Changes'}
+                  {isSubmitting ? t('common:states.saving') : t('common:buttons.save')}
                 </Button>
               </Stack>
             </Stack>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   AppBar,
   Toolbar,
@@ -25,14 +26,17 @@ interface HeaderProps {
 }
 
 export function Header({ 
-  title = 'Telar Social', 
+  title, 
   onMenuClick,
   onAccountClick,
   className,
   elevation = 1
 }: HeaderProps) {
+  const { t } = useTranslation('common');
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  
+  const displayTitle = title || t('app.name');
 
   const handleMenuClick = useCallback(() => {
     onMenuClick?.();
@@ -56,7 +60,7 @@ export function Header({
           <IconButton
             edge="start"
             color="inherit"
-            aria-label="Open navigation menu"
+            aria-label={t('navigation.openMenu')}
             onClick={handleMenuClick}
             sx={{ 
               mr: 2,
@@ -76,7 +80,7 @@ export function Header({
             letterSpacing: '-0.025em',
           }}
         >
-          {title}
+          {displayTitle}
         </Typography>
 
         <Stack 
@@ -88,13 +92,13 @@ export function Header({
           <ThemeToggle 
             variant="icon" 
             size={isMobile ? "small" : "medium"}
-            aria-label="Toggle theme"
+            aria-label={t('actions.toggleTheme')}
           />
           
           {onAccountClick && (
             <IconButton
               color="inherit"
-              aria-label="Account menu"
+              aria-label={t('navigation.accountMenu')}
               onClick={handleAccountClick}
               size={isMobile ? "small" : "medium"}
             >

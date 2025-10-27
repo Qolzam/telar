@@ -16,6 +16,7 @@ import {
   CircularProgress,
 } from '@mui/material';
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useSession, useLogout } from '@/features/auth/client';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -24,6 +25,7 @@ import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import { useRouter } from 'next/navigation';
 
 export default function DashboardHeader() {
+  const { t } = useTranslation('common');
   const { user, isAuthenticated, isLoading } = useSession();
   const { logout, isLoading: isLoggingOut } = useLogout();
   const router = useRouter();
@@ -108,15 +110,15 @@ export default function DashboardHeader() {
             >
               <MenuItem onClick={handleProfileClick}>
                 <AccountCircleIcon sx={{ mr: 1.5 }} />
-                Profile
+                {t('navigation.profile')}
               </MenuItem>
               <MenuItem onClick={handleSettingsClick}>
                 <SettingsIcon sx={{ mr: 1.5 }} />
-                Settings
+                {t('navigation.settings')}
               </MenuItem>
               <MenuItem onClick={handleLogoutClick} disabled={isLoggingOut}>
                 <LogoutIcon sx={{ mr: 1.5 }} />
-                {isLoggingOut ? 'Logging out...' : 'Logout'}
+                {isLoggingOut ? t('states.processing') : t('navigation.logout')}
               </MenuItem>
             </Menu>
           </>

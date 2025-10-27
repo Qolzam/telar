@@ -15,6 +15,7 @@ import {
   Box,
   Typography,
 } from '@mui/material';
+import { useTranslation } from 'react-i18next';
 import { useRouter, usePathname } from 'next/navigation';
 import HomeIcon from '@mui/icons-material/Home';
 import PersonIcon from '@mui/icons-material/Person';
@@ -23,22 +24,49 @@ import ChatIcon from '@mui/icons-material/Chat';
 import GroupIcon from '@mui/icons-material/Group';
 import SearchIcon from '@mui/icons-material/Search';
 import SettingsIcon from '@mui/icons-material/Settings';
+import { isRTL } from '@/lib/i18n/utils';
+import { useEffect, useState } from 'react';
 
 const DRAWER_WIDTH = 240;
 
-const MENU_ITEMS = [
-  { label: 'Home', path: '/dashboard', icon: <HomeIcon /> },
-  { label: 'Profile', path: '/profile', icon: <PersonIcon /> },
-  { label: 'Posts', path: '/posts', icon: <PostAddIcon /> },
-  { label: 'Messages', path: '/messages', icon: <ChatIcon /> },
-  { label: 'Connections', path: '/connections', icon: <GroupIcon /> },
-  { label: 'Search', path: '/search', icon: <SearchIcon /> },
-  { label: 'Settings', path: '/settings', icon: <SettingsIcon /> },
-] as const;
-
 export default function DashboardSidebar() {
+  const { t, i18n } = useTranslation('common');
   const router = useRouter();
   const pathname = usePathname();
+  const [direction, setDirection] = useState<'ltr' | 'rtl'>('ltr');
+  
+  // Get language from cookie first, then update with i18n.language
+  useEffect(() => {
+    const getLanguage = () => {
+      if (typeof document !== 'undefined') {
+        const getCookieValue = (name: string): string | null => {
+          const value = `; ${document.cookie}`;
+          const parts = value.split(`; ${name}=`);
+          if (parts.length === 2) {
+            return parts.pop()?.split(';').shift() || null;
+          }
+          return null;
+        };
+        
+        const cookieLang = getCookieValue('i18next') || 'en';
+        return cookieLang;
+      }
+      return i18n.language || 'en';
+    };
+    
+    const lang = getLanguage();
+    setDirection(isRTL(lang) ? 'rtl' : 'ltr');
+  }, [i18n.language]);
+
+  const MENU_ITEMS = [
+    { label: t('navigation.home'), path: '/dashboard', icon: <HomeIcon /> },
+    { label: t('navigation.profile'), path: '/profile', icon: <PersonIcon /> },
+    { label: t('navigation.posts'), path: '/posts', icon: <PostAddIcon /> },
+    { label: t('navigation.messages'), path: '/messages', icon: <ChatIcon /> },
+    { label: t('navigation.connections'), path: '/connections', icon: <GroupIcon /> },
+    { label: t('navigation.search'), path: '/search', icon: <SearchIcon /> },
+    { label: t('navigation.settings'), path: '/settings', icon: <SettingsIcon /> },
+  ];
 
   const handleNavigation = (path: string) => {
     router.push(path);
@@ -47,6 +75,7 @@ export default function DashboardSidebar() {
   return (
     <Drawer
       variant="permanent"
+      anchor={direction === 'rtl' ? 'right' : 'left'}
       sx={{
         width: DRAWER_WIDTH,
         flexShrink: 0,
@@ -216,7 +245,7 @@ export default function DashboardSidebar() {
               letterSpacing: '-0.02em',
             }}
           >
-            Telar
+            {t('app.name')}
           </Typography>
           <Typography
             variant="caption"
@@ -227,7 +256,7 @@ export default function DashboardSidebar() {
               letterSpacing: '0.1em',
             }}
           >
-            SOCIAL NETWORK
+            {t('app.tagline')}
           </Typography>
         </Box>
 

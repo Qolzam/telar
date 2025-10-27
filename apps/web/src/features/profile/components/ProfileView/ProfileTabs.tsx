@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslation } from 'react-i18next';
 import { Tab, Tabs } from '@mui/material';
 
 interface ProfileTabsProps {
@@ -7,14 +8,16 @@ interface ProfileTabsProps {
   onChange: (event: React.SyntheticEvent, newValue: string) => void;
 }
 
-const TABS = [
-  { value: 'profile', label: 'Profile' },
-  { value: 'followers', label: 'Followers' },
-  { value: 'friends', label: 'Friends' },
-  { value: 'gallery', label: 'Gallery' },
-];
-
 export function ProfileTabs({ value, onChange }: ProfileTabsProps) {
+  const { t } = useTranslation('profile');
+  
+  const TABS = [
+    { value: 'profile', label: t('tabs.home') },
+    { value: 'followers', label: t('tabs.followers') },
+    { value: 'friends', label: t('tabs.friends') },
+    { value: 'gallery', label: t('tabs.gallery') },
+  ];
+
   return (
     <Tabs value={value} onChange={onChange}>
       {TABS.map((tab) => (

@@ -5,10 +5,10 @@ const GO_API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8080';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { name: string } }
+  { params }: { params: Promise<{ name: string }> }
 ) {
   try {
-    const { name } = params;
+    const { name } = await params;
 
     const response = await fetch(`${GO_API_URL}/profile/social/${name}`, {
       method: 'GET',

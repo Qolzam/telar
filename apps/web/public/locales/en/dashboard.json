@@ -1,0 +1,11 @@
+{
+  "title": "Welcome to Your Dashboard",
+  "description": "This is your personalized dashboard. More features will be added as we migrate additional plugins.",
+  "greeting": "Hello, {{name}}",
+  "stats": {
+    "posts": "Posts",
+    "followers": "Followers",
+    "following": "Following",
+    "likes": "Likes"
+  }
+}

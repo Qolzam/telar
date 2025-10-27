@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   IconButton,
   Tooltip,
@@ -34,6 +35,7 @@ export function ThemeToggle({
   showLabel = false,
   className 
 }: ThemeToggleProps) {
+  const { t } = useTranslation('common');
   const { colorScheme, setColorScheme, resolvedMode } = useTheme();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const open = Boolean(anchorEl);
@@ -67,28 +69,28 @@ export function ThemeToggle({
   const getTooltipTitle = useCallback(() => {
     switch (colorScheme) {
       case 'light':
-        return 'Light theme';
+        return t('theme.light');
       case 'dark':
-        return 'Dark theme';
+        return t('theme.dark');
       case 'system':
-        return `System theme (${resolvedMode})`;
+        return t('theme.systemCurrent', { mode: resolvedMode });
       default:
-        return 'Theme settings';
+        return t('theme.settings');
     }
-  }, [colorScheme, resolvedMode]);
+  }, [colorScheme, resolvedMode, t]);
 
   const getCurrentLabel = useCallback(() => {
     switch (colorScheme) {
       case 'light':
-        return 'Light';
+        return t('theme.labels.light');
       case 'dark':
-        return 'Dark';
+        return t('theme.labels.dark');
       case 'system':
-        return `System (${resolvedMode})`;
+        return `${t('theme.labels.system')} (${resolvedMode})`;
       default:
-        return 'Theme';
+        return t('theme.settings');
     }
-  }, [colorScheme, resolvedMode]);
+  }, [colorScheme, resolvedMode, t]);
 
   if (variant === 'button') {
     return (
@@ -99,7 +101,7 @@ export function ThemeToggle({
             color="inherit"
             size={size}
             className={className}
-            aria-label="Theme toggle"
+            aria-label={t('theme.toggle')}
             aria-haspopup="true"
             aria-expanded={open}
           >
@@ -137,7 +139,7 @@ export function ThemeToggle({
         >
           <Box sx={{ px: 2, py: 1 }}>
             <Typography variant="subtitle2" color="text.secondary">
-              Theme
+              {t('theme.settings')}
             </Typography>
           </Box>
           <Divider />
@@ -145,36 +147,36 @@ export function ThemeToggle({
           <MenuItem 
             onClick={() => handleThemeChange('light')}
             selected={colorScheme === 'light'}
-            aria-label="Switch to light theme"
+            aria-label={t('theme.switchToLight')}
           >
             <ListItemIcon>
               <LightModeIcon fontSize="small" />
             </ListItemIcon>
-            <ListItemText primary="Light" />
+            <ListItemText primary={t('theme.labels.light')} />
           </MenuItem>
 
           <MenuItem 
             onClick={() => handleThemeChange('dark')}
             selected={colorScheme === 'dark'}
-            aria-label="Switch to dark theme"
+            aria-label={t('theme.switchToDark')}
           >
             <ListItemIcon>
               <DarkModeIcon fontSize="small" />
             </ListItemIcon>
-            <ListItemText primary="Dark" />
+            <ListItemText primary={t('theme.labels.dark')} />
           </MenuItem>
 
           <MenuItem 
             onClick={() => handleThemeChange('system')}
             selected={colorScheme === 'system'}
-            aria-label="Switch to system theme"
+            aria-label={t('theme.switchToSystem')}
           >
             <ListItemIcon>
               <SystemIcon fontSize="small" />
             </ListItemIcon>
             <ListItemText 
-              primary="System" 
-              secondary={resolvedMode === 'dark' ? 'Dark' : 'Light'}
+              primary={t('theme.labels.system')} 
+              secondary={resolvedMode === 'dark' ? t('theme.labels.dark') : t('theme.labels.light')}
             />
           </MenuItem>
         </Menu>
@@ -189,7 +191,7 @@ export function ThemeToggle({
         color="inherit"
         size={size}
         className={className}
-        aria-label="Theme toggle"
+        aria-label={t('theme.toggle')}
         aria-haspopup="true"
         aria-expanded={open}
       >

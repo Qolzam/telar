@@ -2,7 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { sdk } from '@/lib/sdk';
-import type { UpdateProfileRequest, UserProfileModel } from '@telar/sdk';
+import type { UpdateProfileRequest } from '@telar/sdk';
 
 export function useProfile(userId?: string) {
   return useQuery({

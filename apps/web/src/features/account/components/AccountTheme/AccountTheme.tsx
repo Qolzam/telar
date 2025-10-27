@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Box,
   Card,
@@ -29,6 +30,7 @@ interface AccountThemeProps {
 }
 
 export function AccountTheme({ className }: AccountThemeProps) {
+  const { t } = useTranslation('settings');
   const { colorScheme, setColorScheme, resolvedMode } = useTheme();
 
   const handleThemeChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
@@ -39,15 +41,15 @@ export function AccountTheme({ className }: AccountThemeProps) {
   const getThemeDescription = useCallback((scheme: 'light' | 'dark' | 'system') => {
     switch (scheme) {
       case 'light':
-        return 'Always use light theme regardless of system settings';
+        return t('theme.modes.light.description');
       case 'dark':
-        return 'Always use dark theme regardless of system settings';
+        return t('theme.modes.dark.description');
       case 'system':
-        return `Follow your system settings (Currently: ${resolvedMode})`;
+        return t('theme.modes.system.description', { mode: resolvedMode });
       default:
         return '';
     }
-  }, [resolvedMode]);
+  }, [t, resolvedMode]);
 
   const getThemeIcon = useCallback((scheme: 'light' | 'dark' | 'system') => {
     switch (scheme) {
@@ -67,10 +69,10 @@ export function AccountTheme({ className }: AccountThemeProps) {
       <Stack spacing={3}>
         <Box>
           <Typography variant="h6" gutterBottom>
-            Theme Preferences
+            {t('theme.title')}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Customize the appearance of your interface. You can choose a specific theme or let it follow your system settings.
+            {t('theme.description')}
           </Typography>
         </Box>
 
@@ -78,13 +80,13 @@ export function AccountTheme({ className }: AccountThemeProps) {
 
         <FormControl component="fieldset" fullWidth>
           <FormLabel component="legend" sx={{ mb: 2, fontWeight: 600 }}>
-            Color Scheme
+            {t('theme.colorScheme')}
           </FormLabel>
           <RadioGroup
             value={colorScheme}
             onChange={handleThemeChange}
             sx={{ gap: 1 }}
-            aria-label="Theme selection"
+            aria-label={t('theme.selection')}
           >
             <FormControlLabel
               value="light"
@@ -94,7 +96,7 @@ export function AccountTheme({ className }: AccountThemeProps) {
                   {getThemeIcon('light')}
                   <Box sx={{ flex: 1 }}>
                     <Typography variant="body2" fontWeight={500}>
-                      Light
+                      {t('theme.modes.light.label')}
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
                       {getThemeDescription('light')}
@@ -102,7 +104,7 @@ export function AccountTheme({ className }: AccountThemeProps) {
                   </Box>
                   {colorScheme === 'light' && (
                     <Chip 
-                      label="Active" 
+                      label={t('theme.active')} 
                       size="small" 
                       color="primary" 
                       variant="outlined"
@@ -133,7 +135,7 @@ export function AccountTheme({ className }: AccountThemeProps) {
                   {getThemeIcon('dark')}
                   <Box sx={{ flex: 1 }}>
                     <Typography variant="body2" fontWeight={500}>
-                      Dark
+                      {t('theme.modes.dark.label')}
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
                       {getThemeDescription('dark')}
@@ -141,7 +143,7 @@ export function AccountTheme({ className }: AccountThemeProps) {
                   </Box>
                   {colorScheme === 'dark' && (
                     <Chip 
-                      label="Active" 
+                      label={t('theme.active')} 
                       size="small" 
                       color="primary" 
                       variant="outlined"
@@ -172,7 +174,7 @@ export function AccountTheme({ className }: AccountThemeProps) {
                   {getThemeIcon('system')}
                   <Box sx={{ flex: 1 }}>
                     <Typography variant="body2" fontWeight={500}>
-                      System
+                      {t('theme.modes.system.label')}
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
                       {getThemeDescription('system')}
@@ -180,7 +182,7 @@ export function AccountTheme({ className }: AccountThemeProps) {
                   </Box>
                   {colorScheme === 'system' && (
                     <Chip 
-                      label="Active" 
+                      label={t('theme.active')} 
                       size="small" 
                       color="primary" 
                       variant="outlined"
@@ -206,12 +208,12 @@ export function AccountTheme({ className }: AccountThemeProps) {
         </FormControl>
 
         <Alert severity="info" icon={<InfoIcon />}>
-          <AlertTitle>Theme Information</AlertTitle>
+          <AlertTitle>{t('theme.info.title')}</AlertTitle>
           <Typography variant="body2">
-            <strong>Current theme:</strong> {colorScheme === 'system' ? `System (${resolvedMode})` : colorScheme}
+            {t('theme.info.currentTheme', { theme: colorScheme === 'system' ? `System (${resolvedMode})` : colorScheme })}
           </Typography>
           <Typography variant="body2" sx={{ mt: 1 }}>
-            Your theme preference is saved automatically and will be restored when you return to the application.
+            {t('theme.info.persistence')}
           </Typography>
         </Alert>
       </Stack>

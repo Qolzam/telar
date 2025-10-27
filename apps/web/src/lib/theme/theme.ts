@@ -76,8 +76,9 @@ const COLORS = {
   }
 };
 
-// MUI v7 Theme with CSS Variables - Updated for proper dark mode support
-export const theme = createTheme({
+
+export const createAppTheme = (direction: 'ltr' | 'rtl' = 'ltr') => createTheme({
+  direction,
   cssVariables: {
     colorSchemeSelector: 'data-mui-color-scheme',
   },
@@ -258,3 +259,6 @@ export const theme = createTheme({
     },
   },
 });
+
+// Export default theme with LTR direction
+export const theme = createAppTheme('ltr');

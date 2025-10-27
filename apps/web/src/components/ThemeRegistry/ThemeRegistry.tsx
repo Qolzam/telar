@@ -3,10 +3,15 @@
 import { ThemeProvider } from '@/lib/theme/theme-provider';
 import EmotionCacheProvider from './EmotionCache';
 
-export default function ThemeRegistry({ children }: { children: React.ReactNode }) {
+export type ThemeRegistryProps = {
+  children: React.ReactNode;
+  direction?: 'ltr' | 'rtl';
+};
+
+export default function ThemeRegistry({ children, direction = 'ltr' }: ThemeRegistryProps) {
   return (
-    <EmotionCacheProvider>
-      <ThemeProvider>
+    <EmotionCacheProvider direction={direction}>
+      <ThemeProvider direction={direction}>
         {children}
       </ThemeProvider>
     </EmotionCacheProvider>

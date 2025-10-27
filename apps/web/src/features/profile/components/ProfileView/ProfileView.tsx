@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Box, Card, CircularProgress, Stack, Typography } from '@mui/material';
 import { useProfile } from '../../client';
 import { ProfileCover } from './ProfileCover';
@@ -15,6 +16,7 @@ interface ProfileViewProps {
 }
 
 export function ProfileView({ userId }: ProfileViewProps) {
+  const { t } = useTranslation('profile');
   const [currentTab, setCurrentTab] = useState('profile');
   const { data: profile, isLoading, error } = useProfile(userId);
 
@@ -31,7 +33,7 @@ export function ProfileView({ userId }: ProfileViewProps) {
       <Card>
         <Box sx={{ textAlign: 'center', py: 8 }}>
           <Typography variant="h6" color="text.secondary">
-            Profile not found
+            {t('errors.notFound')}
           </Typography>
         </Box>
       </Card>

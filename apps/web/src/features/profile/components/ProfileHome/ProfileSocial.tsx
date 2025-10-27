@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslation } from 'react-i18next';
 import { Card, CardHeader, Link, Stack } from '@mui/material';
 import FacebookIcon from '@mui/icons-material/Facebook';
 import TwitterIcon from '@mui/icons-material/Twitter';
@@ -32,6 +33,7 @@ const socialLinks = [
 ] as const;
 
 export function ProfileSocial({ profile }: ProfileSocialProps) {
+  const { t } = useTranslation('profile');
   const hasAnySocial = profile.facebookId || profile.twitterId || profile.instagramId;
 
   if (!hasAnySocial) {
@@ -40,10 +42,10 @@ export function ProfileSocial({ profile }: ProfileSocialProps) {
 
   return (
     <Card>
-      <CardHeader title="Social" />
+      <CardHeader title={t('social.title')} />
 
       <Stack spacing={2} sx={{ p: 3 }}>
-        {socialLinks.map(({ key, icon: Icon, label, baseUrl }) => {
+        {socialLinks.map(({ key, icon: Icon, label: _label, baseUrl }) => {
           const value = profile[key];
           if (!value) return null;
 

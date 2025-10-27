@@ -2,24 +2,28 @@
 
 import { useState } from 'react';
 import { Box, CircularProgress, Stack, Tab, Tabs, Typography } from '@mui/material';
+import { useTranslation } from 'react-i18next';
 import { useProfile } from '@/features/profile/client';
 import { AccountGeneral } from '../AccountGeneral';
 import { AccountNotifications } from '../AccountNotifications';
 import { AccountSocial } from '../AccountSocial';
 import { AccountSecurity } from '../AccountSecurity';
+import { AccountLanguage } from '../AccountLanguage';
 import { AccountTheme } from '../AccountTheme';
 
-const TABS = [
-  { value: 'general', label: 'General' },
-  { value: 'notifications', label: 'Notifications' },
-  { value: 'social', label: 'Social Links' },
-  { value: 'security', label: 'Security' },
-  { value: 'theme', label: 'Theme' },
-];
-
 export function AccountView() {
+  const { t } = useTranslation('settings');
   const [currentTab, setCurrentTab] = useState('general');
   const { data: profile, isLoading, error } = useProfile();
+
+  const TABS = [
+    { value: 'general', label: t('tabs.general') },
+    { value: 'notifications', label: t('tabs.notifications') },
+    { value: 'social', label: t('tabs.social') },
+    { value: 'security', label: t('tabs.security') },
+    { value: 'language', label: t('tabs.language') },
+    { value: 'theme', label: t('tabs.theme') },
+  ];
 
   if (isLoading) {
     return (
@@ -51,6 +55,7 @@ export function AccountView() {
       {currentTab === 'notifications' && <AccountNotifications />}
       {currentTab === 'social' && <AccountSocial profile={profile} />}
       {currentTab === 'security' && <AccountSecurity />}
+      {currentTab === 'language' && <AccountLanguage />}
       {currentTab === 'theme' && <AccountTheme />}
     </Stack>
   );
