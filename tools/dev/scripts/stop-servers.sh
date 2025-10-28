@@ -24,11 +24,6 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 readonly LOG_DIR="/tmp/telar-logs"
 
-# Server process patterns
-readonly GO_API_PATTERN="go run cmd/server/main.go"
-readonly GO_API_BINARY_PATTERN="main"
-readonly NEXTJS_PATTERN="next dev"
-
 # Colors for output
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
@@ -60,12 +55,6 @@ log_error() {
 # Process Management Functions
 # ============================================================================
 
-# Find processes by pattern
-find_processes() {
-    local pattern="$1"
-    pgrep -f "$pattern" 2>/dev/null || true
-}
-
 # Graceful shutdown of a process
 graceful_shutdown() {
     local pid="$1"
@@ -94,79 +83,44 @@ graceful_shutdown() {
     fi
 }
 
-# Force kill a process
-force_kill() {
-    local pid="$1"
-    local service_name="$2"
-    
-    log_warning "Force killing ${service_name} (PID: ${pid})..."
-    kill -KILL "$pid" 2>/dev/null || true
-}
-
 # ============================================================================
 # Server Management Functions
 # ============================================================================
 
 # Stop Go API server
 stop_go_api() {
-    local pids
-    local all_pids=""
+    local pids=""
     
-    # Check for both patterns: "go run" and compiled "main" binary
-    pids=$(find_processes "$GO_API_PATTERN")
+    # Pattern 1: "go run cmd/server/main.go" (very specific)
+    pids=$(pgrep -f "go run cmd/server/main.go" 2>/dev/null || true)
     if [ -n "$pids" ]; then
-        all_pids="$pids"
         log_info "Found Go API server processes (go run): $pids"
-    fi
-    
-    pids=$(find_processes "$GO_API_BINARY_PATTERN")
-    if [ -n "$pids" ]; then
-        if [ -n "$all_pids" ]; then
-            all_pids="$all_pids $pids"
-        else
-            all_pids="$pids"
-        fi
-        log_info "Found Go API server processes (main binary): $pids"
-    fi
-    
-    if [ -z "$all_pids" ]; then
-        log_info "No Go API server processes found"
-        return 0
-    fi
-    
-    log_info "Stopping all Go API server processes: $all_pids"
-    
-    for pid in $all_pids; do
-        graceful_shutdown "$pid" "Go API Server"
-    done
-    
-    # Double-check for any remaining processes
-    local remaining_pids=""
-    pids=$(find_processes "$GO_API_PATTERN")
-    if [ -n "$pids" ]; then
-        remaining_pids="$pids"
-    fi
-    
-    pids=$(find_processes "$GO_API_BINARY_PATTERN")
-    if [ -n "$pids" ]; then
-        if [ -n "$remaining_pids" ]; then
-            remaining_pids="$remaining_pids $pids"
-        else
-            remaining_pids="$pids"
-        fi
-    fi
-    
-    if [ -n "$remaining_pids" ]; then
-        for pid in $remaining_pids; do
-            force_kill "$pid" "Go API Server"
+        for pid in $pids; do
+            graceful_shutdown "$pid" "Go API Server"
         done
+    fi
+    
+    # Pattern 2: Only kill "main" processes that are in our project directory
+    pids=$(pgrep -f "main" 2>/dev/null || true)
+    if [ -n "$pids" ]; then
+        for pid in $pids; do
+            local cmdline=$(cat /proc/$pid/cmdline 2>/dev/null | tr '\0' ' ' || echo "")
+            if [[ "$cmdline" == *"$PROJECT_ROOT"* ]] && [[ "$cmdline" == *"main"* ]]; then
+                log_info "Found Go API server process (main binary): $pid"
+                graceful_shutdown "$pid" "Go API Server"
+            fi
+        done
+    fi
+    
+    if [ -z "$pids" ]; then
+        log_info "No Go API server processes found"
     fi
 }
 
 # Stop Next.js web server
 stop_nextjs() {
     local pids
-    pids=$(find_processes "$NEXTJS_PATTERN")
+    pids=$(pgrep -f "next dev" 2>/dev/null || true)
     
     if [ -z "$pids" ]; then
         log_info "No Next.js server processes found"
@@ -178,14 +132,6 @@ stop_nextjs() {
     for pid in $pids; do
         graceful_shutdown "$pid" "Next.js Server"
     done
-    
-    # Double-check for any remaining processes
-    pids=$(find_processes "$NEXTJS_PATTERN")
-    if [ -n "$pids" ]; then
-        for pid in $pids; do
-            force_kill "$pid" "Next.js Server"
-        done
-    fi
 }
 
 # Clean up log files and PID files
@@ -220,8 +166,38 @@ main() {
     cleanup_logs
     
     # Final verification
-    local remaining_processes
-    remaining_processes=$(find_processes "$GO_API_PATTERN" && find_processes "$NEXTJS_PATTERN")
+    local remaining_processes=""
+    
+    # Check for remaining Go API processes
+    local go_pids=$(pgrep -f "go run cmd/server/main.go" 2>/dev/null || true)
+    if [ -n "$go_pids" ]; then
+        remaining_processes="$go_pids"
+    fi
+    
+    # Check for remaining main processes in project directory
+    local main_pids=$(pgrep -f "main" 2>/dev/null || true)
+    if [ -n "$main_pids" ]; then
+        for pid in $main_pids; do
+            local cmdline=$(cat /proc/$pid/cmdline 2>/dev/null | tr '\0' ' ' || echo "")
+            if [[ "$cmdline" == *"$PROJECT_ROOT"* ]] && [[ "$cmdline" == *"main"* ]]; then
+                if [ -n "$remaining_processes" ]; then
+                    remaining_processes="$remaining_processes $pid"
+                else
+                    remaining_processes="$pid"
+                fi
+            fi
+        done
+    fi
+    
+    # Check for remaining Next.js processes
+    local nextjs_pids=$(pgrep -f "next dev" 2>/dev/null || true)
+    if [ -n "$nextjs_pids" ]; then
+        if [ -n "$remaining_processes" ]; then
+            remaining_processes="$remaining_processes $nextjs_pids"
+        else
+            remaining_processes="$nextjs_pids"
+        fi
+    fi
     
     if [ -n "$remaining_processes" ]; then
         log_warning "Some processes may still be running: $remaining_processes"
