@@ -1,7 +1,12 @@
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 import type { TokenClaim, JWKS } from '@telar/sdk';
 
-const AUTH_API_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:8080';
+const getAuthApiUrl = () => {
+  const url = process.env.AUTH_SERVICE_URL || 'http://localhost:8080';
+  return url.replace('localhost', '127.0.0.1');
+};
+
+const AUTH_API_URL = getAuthApiUrl();
 const JWKS_URL = `${AUTH_API_URL}/auth/.well-known/jwks.json`;
 
 const JWKS = createRemoteJWKSet(new URL(JWKS_URL));

@@ -21,8 +21,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log('[Login] Authenticating user:', body.username);
-    
     const loginResponse = await apiRequest<GoApiLoginResponse>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({
@@ -32,7 +30,6 @@ export async function POST(request: NextRequest) {
     });
 
     if (!loginResponse.accessToken) {
-      console.error('[Login] No accessToken in response');
       return NextResponse.json(
         { error: 'Authentication failed' },
         { status: 500 }
@@ -54,7 +51,6 @@ export async function POST(request: NextRequest) {
 
     response.headers.set('Set-Cookie', createSessionCookie(loginResponse.accessToken));
 
-    console.log('[Login] ✅ Login successful for:', body.username);
     return response;
 
   } catch (error) {

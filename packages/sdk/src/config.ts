@@ -18,7 +18,7 @@ export const SDK_CONFIG = {
    */
   GO_API_BASE_URL: typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_API_URL 
     ? process.env.NEXT_PUBLIC_API_URL 
-    : 'http://127.0.0.1:8080',
+    : 'http://localhost:8080',
 
   /**
    * Default request timeout in milliseconds
@@ -50,15 +50,16 @@ export const ENDPOINTS = {
   },
 
   /**
-   * Profile endpoints (via BFF for authentication)
+   * Profile endpoints (direct Go API calls)
+   * These call the Go API directly via NEXT_PUBLIC_API_URL env var
    */
   PROFILE: {
-    MY: '/api/profile/my',
-    BY_ID: (userId: string) => `/api/profile/id/${userId}`,
-    BY_SOCIAL_NAME: (socialName: string) => `/api/profile/social/${socialName}`,
-    UPDATE: '/api/profile',
-    BY_IDS: '/api/profile/ids',
-    QUERY: '/api/profile',
+    MY: '/profile/my',
+    BY_ID: (userId: string) => `/profile/id/${userId}`,
+    BY_SOCIAL_NAME: (socialName: string) => `/profile/social/${socialName}`,
+    UPDATE: '/profile',
+    BY_IDS: '/profile/ids',
+    QUERY: '/profile',
   },
 
   /**

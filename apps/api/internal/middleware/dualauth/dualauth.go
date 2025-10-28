@@ -42,13 +42,22 @@ func CreateDualAuthMiddleware(cfg Config) fiber.Handler {
 		PayloadSecret: cfg.PayloadSecret,
 	})
 
-	// Create dual auth middleware (JWT + HMAC only)
+	// Create dual auth middleware (JWT/Cookie + HMAC)
 	return func(c *fiber.Ctx) error {
 		authHeader := c.Get(types.HeaderAuthorization)
 		hmacHeader := c.Get(types.HeaderHMACAuthenticate)
+		sessionCookie := c.Cookies("session")
 		
-		// Try JWT middleware first
+		// Try JWT middleware first (Authorization header OR session cookie)
 		if authHeader != "" && strings.HasPrefix(authHeader, types.BearerPrefix) {
+			err := jwtMiddleware(c)
+			if err == nil {
+				return c.Next()
+			}
+		}
+
+		// Try JWT middleware with session cookie
+		if sessionCookie != "" {
 			err := jwtMiddleware(c)
 			if err == nil {
 				return c.Next()

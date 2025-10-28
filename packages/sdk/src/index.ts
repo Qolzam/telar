@@ -58,14 +58,21 @@ export interface ITelarSDK {
  * @returns Initialized SDK instance
  */
 export const createTelarSDK = (): ITelarSDK => {
-  const client = new ApiClient({
-    baseUrl: SDK_CONFIG.BFF_BASE_URL,
+  // BFF Client for authentication operations (same-origin)
+  const bffClient = new ApiClient({
+    baseUrl: SDK_CONFIG.BFF_BASE_URL,  // Empty string = same-origin
+    timeout: SDK_CONFIG.TIMEOUT,
+  });
+
+  // Direct API Client for data operations (Go API)
+  const apiClient = new ApiClient({
+    baseUrl: SDK_CONFIG.GO_API_BASE_URL,  // Read from NEXT_PUBLIC_API_URL env var
     timeout: SDK_CONFIG.TIMEOUT,
   });
 
   return {
-    auth: authApi(client),
-    profile: profileApi(client),
+    auth: authApi(bffClient),       // Auth uses BFF (cookie management)
+    profile: profileApi(apiClient), // Profile uses direct API
   };
 };
 

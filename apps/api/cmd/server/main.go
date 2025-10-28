@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/qolzam/telar/apps/api/auth"
 	adminUC "github.com/qolzam/telar/apps/api/auth/admin"
 	jwksUC "github.com/qolzam/telar/apps/api/auth/jwks"
@@ -51,6 +52,7 @@ func main() {
 		},
 	})
 
+
 	payloadSecret := cfg.HMAC.Secret
 	publicKey := cfg.JWT.PublicKey
 	privateKey := cfg.JWT.PrivateKey
@@ -58,6 +60,14 @@ func main() {
 	smtpEmail := cfg.Email.SMTPEmail
 	refEmail := cfg.Email.RefEmail
 	refEmailPass := cfg.Email.RefEmailPass
+
+	// CORS Configuration for Browser Direct Access
+	app.Use(cors.New(cors.Config{
+		AllowOrigins:     webDomain,
+		AllowCredentials: true,
+		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
+		AllowMethods:     "GET, POST, PUT, DELETE, PATCH, OPTIONS",
+	}))
 
 	baseService, err := platform.NewBaseService(context.Background(), cfg)
 	if err != nil {

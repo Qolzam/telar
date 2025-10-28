@@ -1,6 +1,11 @@
 
+const getAuthServiceUrl = () => {
+  const url = process.env.AUTH_SERVICE_URL || 'http://localhost:8080';
+  return url.replace('localhost', '127.0.0.1');
+};
+
 export const API_CONFIG = {
-  AUTH_SERVICE_URL: process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:8080',
+  AUTH_SERVICE_URL: getAuthServiceUrl(),
   TIMEOUT: 10000, // 10 seconds
 } as const;
 
@@ -31,7 +36,7 @@ export async function apiRequest<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const url = `${API_CONFIG.AUTH_SERVICE_URL}${endpoint}`;
-  
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), API_CONFIG.TIMEOUT);
 
@@ -72,7 +77,7 @@ export async function apiRequest<T>(
     }
   } catch (error) {
     clearTimeout(timeoutId);
-    
+
     if (error instanceof ApiError) {
       throw error;
     }
