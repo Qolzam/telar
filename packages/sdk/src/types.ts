@@ -301,7 +301,7 @@ export interface Post {
   score: number;
   commentCounter: number;
   viewCount: number;
-  votes: { [userId: string]: boolean };
+  votes: Record<string, string>;
   tags: string[];
   postTypeId: PostType;
   permission: UserPermissionType;
@@ -312,8 +312,8 @@ export interface Post {
   deletedDate?: number;
   urlKey?: string;
   version?: string;
-  created_date: number;
-  last_updated: number;
+  createdDate: number;
+  lastUpdated?: number;
 }
 
 // ============================================================================
@@ -379,5 +379,43 @@ export interface ProfileQueryFilter {
 export interface ProfilesResponse {
   profiles: UserProfileModel[];
   total: number;
+}
+
+// ============================================================================
+// Posts Request/Response Types (MVP)
+// ============================================================================
+
+/**
+ * Create post request payload (minimal for MVP)
+ */
+export interface CreatePostRequest {
+  postTypeId: number;
+  body: string;
+  permission?: string;
+}
+
+/**
+ * Create post response (backend returns only objectId)
+ */
+export interface CreatePostResponse {
+  objectId: string;
+  message?: string;
+}
+
+/**
+ * Cursor query parameters for pagination
+ */
+export interface CursorQueryParams {
+  limit?: number;
+  cursor?: string;
+}
+
+/**
+ * Posts response with cursor pagination
+ */
+export interface PostsResponse {
+  posts: Post[];
+  nextCursor?: string;
+  hasNext?: boolean;
 }
 

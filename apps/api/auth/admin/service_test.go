@@ -16,9 +16,9 @@ func TestAdminService_CheckCreateLogin_Coverage(t *testing.T) {
 	suite := testutil.Setup(t)
 
 	// Create isolated test environment with transaction
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 	if iso.Repo == nil {
-		t.Skip("MongoDB not available, skipping")
+		t.Skip("PostgreSQL not available, skipping")
 	}
 
 	ctx := context.Background()

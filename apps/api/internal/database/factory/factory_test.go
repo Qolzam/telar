@@ -11,9 +11,6 @@ func TestRepositoryFactory_ValidateConfigErrors(t *testing.T) {
     f := NewRepositoryFactory(&interfaces.RepositoryConfig{})
     if err := f.ValidateConfig(); err == nil { t.Fatalf("expected error for empty config") }
 
-    f = NewRepositoryFactory(&interfaces.RepositoryConfig{ DatabaseType: interfaces.DatabaseTypeMongoDB })
-    if err := f.ValidateConfig(); err == nil { t.Fatalf("expected error for missing mongo config") }
-
     f = NewRepositoryFactory(&interfaces.RepositoryConfig{ DatabaseType: interfaces.DatabaseTypePostgreSQL })
     if err := f.ValidateConfig(); err == nil { t.Fatalf("expected error for missing postgres config") }
 }

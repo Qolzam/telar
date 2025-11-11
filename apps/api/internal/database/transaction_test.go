@@ -8,7 +8,7 @@
 //
 // Purpose: Complete transaction lifecycle testing, enterprise features, stress testing
 // Coverage: Basic operations, configuration, concurrent transactions, metrics, stress scenarios
-// Databases: PostgreSQL and MongoDB with identical behavior validation
+// Database: PostgreSQL with full behavior validation
 //
 // Run with: go test -v ./internal/database -run TestTransactionSuite
 
@@ -23,7 +23,6 @@ import (
 
 	uuid "github.com/gofrs/uuid"
 	"github.com/qolzam/telar/apps/api/internal/database/interfaces"
-	"github.com/qolzam/telar/apps/api/internal/database/mongodb"
 	"github.com/qolzam/telar/apps/api/internal/database/observability"
 	"github.com/qolzam/telar/apps/api/internal/database/postgresql"
 	"github.com/qolzam/telar/apps/api/internal/database/utils"
@@ -45,7 +44,6 @@ type TestData struct {
 // DatabaseTestConfig holds database configuration for tests
 type DatabaseTestConfig struct {
 	PostgreSQL *interfaces.PostgreSQLConfig
-	MongoDB    *interfaces.MongoDBConfig
 }
 
 // TransactionTestSuite provides comprehensive transaction testing
@@ -106,20 +104,6 @@ func (ts *TransactionTestSuite) SetupDatabases() {
 		ts.t.Logf("PostgreSQL not available: %v", err)
 	}
 	
-	// Setup MongoDB - matching test_env.sh configuration (no auth for local testing)
-	mongoConfig := &interfaces.MongoDBConfig{
-		Host:     "127.0.0.1",
-		Port:     27017,
-		Username: "",  // No authentication for local test containers
-		Password: "",
-	}
-	
-	if mongoRepo, err := mongodb.NewMongoRepository(context.Background(), mongoConfig, "telar_social_test"); err == nil {
-		ts.repos["mongodb"] = mongoRepo
-		ts.t.Logf("MongoDB repository initialized")
-	} else {
-		ts.t.Logf("MongoDB not available: %v", err)
-	}
 	
 	if len(ts.repos) == 0 {
 		ts.t.Skip("No databases available for testing")
@@ -207,13 +191,19 @@ func (ts *TransactionTestSuite) TestTransactionOperations() {
 			
 			// Test Save operation
 			testItem := ts.testData[0]
-			result := <-tx.Save(ctx, collectionName, testItem)
+			ownerID, err := uuid.FromString(testItem.OwnerUserId)
+			require.NoError(t, err)
+			result := <-tx.Save(ctx, collectionName, testItem.ObjectId, ownerID, testItem.CreatedDate, testItem.LastUpdated, testItem)
 			require.NoError(t, result.Error, "Save operation failed")
 			require.NotNil(t, result.Result, "Save result should not be nil")
 			
-			// Test FindOne operation
-			filter := map[string]interface{}{"objectId": testItem.ObjectId}
-			findResult := <-tx.FindOne(ctx, collectionName, filter)
+			// Test FindOne operation - use Query object
+			queryObj := &interfaces.Query{
+				Conditions: []interfaces.Field{
+					{Name: "object_id", Value: testItem.ObjectId, Operator: "="},
+				},
+			}
+			findResult := <-tx.FindOne(ctx, collectionName, queryObj)
 			require.NoError(t, findResult.Error(), "FindOne operation failed")
 			
 			var retrievedItem TestData
@@ -221,18 +211,18 @@ func (ts *TransactionTestSuite) TestTransactionOperations() {
 			require.NoError(t, err, "Failed to decode retrieved item")
 			assert.Equal(t, testItem.Name, retrievedItem.Name, "Retrieved item name should match")
 			
-			// Test Update operation
+			// Test Update operation - use Query object
 			updates := map[string]interface{}{"value": 999}
-			updateResult := <-tx.UpdateFields(ctx, collectionName, filter, updates)
+			updateResult := <-tx.UpdateFields(ctx, collectionName, queryObj, updates)
 			require.NoError(t, updateResult.Error, "Update operation failed")
 			
-			// Test Increment operation
+			// Test Increment operation - use Query object
 			increments := map[string]interface{}{"value": 1}
-			incResult := <-tx.IncrementFields(ctx, collectionName, filter, increments)
+			incResult := <-tx.IncrementFields(ctx, collectionName, queryObj, increments)
 			require.NoError(t, incResult.Error, "Increment operation failed")
 			
-			// Test Delete operation
-			deleteResult := <-tx.Delete(ctx, collectionName, filter)
+			// Test Delete operation - use Query object
+			deleteResult := <-tx.Delete(ctx, collectionName, queryObj)
 			require.NoError(t, deleteResult.Error, "Delete operation failed")
 			
 			// Verify final operation count has increased
@@ -258,7 +248,9 @@ func (ts *TransactionTestSuite) TestTransactionRollback() {
 			
 			// Perform some operations
 			testItem := ts.testData[1]
-			result := <-tx.Save(ctx, collectionName, testItem)
+			ownerID, err := uuid.FromString(testItem.OwnerUserId)
+			require.NoError(t, err)
+			result := <-tx.Save(ctx, collectionName, testItem.ObjectId, ownerID, testItem.CreatedDate, testItem.LastUpdated, testItem)
 			require.NoError(t, result.Error, "Save operation failed")
 			
 			// Rollback the transaction
@@ -292,7 +284,9 @@ func (ts *TransactionTestSuite) TestTransactionTimeout() {
 			
 			// Operations should fail due to timeout
 			testItem := ts.testData[2]
-			<-tx.Save(ctx, collectionName, testItem)
+			ownerID, err := uuid.FromString(testItem.OwnerUserId)
+			require.NoError(t, err)
+			<-tx.Save(ctx, collectionName, testItem.ObjectId, ownerID, testItem.CreatedDate, testItem.LastUpdated, testItem)
 			// This may or may not error depending on database implementation
 			// The important thing is that the transaction respects the timeout
 			
@@ -328,8 +322,10 @@ func (ts *TransactionTestSuite) TestConcurrentTransactions() {
 					
 					testItem := ts.testData[index]
 					testItem.Name = fmt.Sprintf("concurrent_test_%d_%d", index, time.Now().UnixNano())
+					ownerID, err := uuid.FromString(testItem.OwnerUserId)
+			require.NoError(t, err)
 					
-					result := <-tx.Save(ctx, collectionName, testItem)
+					result := <-tx.Save(ctx, collectionName, testItem.ObjectId, ownerID, testItem.CreatedDate, testItem.LastUpdated, testItem)
 					if result.Error != nil {
 						results <- result.Error
 						_ = tx.Rollback()
@@ -371,7 +367,9 @@ func (ts *TransactionTestSuite) TestOwnershipOperations() {
 			testItem := ts.testData[3]
 			
 			// Save test item first
-			result := <-tx.Save(ctx, collectionName, testItem)
+			ownerID, err := uuid.FromString(testItem.OwnerUserId)
+			require.NoError(t, err)
+			result := <-tx.Save(ctx, collectionName, testItem.ObjectId, ownerID, testItem.CreatedDate, testItem.LastUpdated, testItem)
 			require.NoError(t, result.Error, "Save operation failed")
 			
 			// Test UpdateWithOwnership - valid owner
@@ -463,7 +461,9 @@ func (ts *TransactionTestSuite) TestTransactionMetrics() {
 				uniqueItem.ObjectId, _ = uuid.NewV4()
 				uniqueItem.Name = fmt.Sprintf("metrics_test_%d_%d_%s", time.Now().UnixNano(), i, uniqueItem.ObjectId.String()[:8])
 				
-				result := <-tx.Save(ctx, collectionName, uniqueItem)
+				ownerID, err := uuid.FromString(uniqueItem.OwnerUserId)
+				require.NoError(t, err)
+				result := <-tx.Save(ctx, collectionName, uniqueItem.ObjectId, ownerID, uniqueItem.CreatedDate, uniqueItem.LastUpdated, uniqueItem)
 				require.NoError(t, result.Error, "Save operation failed")
 			}
 			
@@ -536,7 +536,7 @@ func (ts *TransactionTestSuite) testEnterpriseOperationsInTransaction(t *testing
 				ObjectId:    uuid.Must(uuid.NewV4()),
 				Name:        fmt.Sprintf("bulk_item_%d_%d", i, time.Now().UnixNano()),
 				Value:       i * 10,
-				OwnerUserId: "bulk_owner",
+				OwnerUserId: uuid.Must(uuid.NewV4()).String(),
 				CreatedDate: time.Now().Unix(),
 				LastUpdated: time.Now().Unix(),
 				Deleted:     false,
@@ -544,8 +544,21 @@ func (ts *TransactionTestSuite) testEnterpriseOperationsInTransaction(t *testing
 			bulkData = append(bulkData, data)
 		}
 
-		// Save many documents in transaction
-		result := <-tx.SaveMany(ctx, collectionName, bulkData)
+		// Save many documents in transaction - convert to SaveItem format
+		saveItems := make([]interfaces.SaveItem, len(bulkData))
+		for i, data := range bulkData {
+			td := data.(TestData)
+			ownerID, err := uuid.FromString(td.OwnerUserId)
+			require.NoError(t, err)
+			saveItems[i] = interfaces.SaveItem{
+				ObjectID:    td.ObjectId,
+				OwnerUserID: ownerID,
+				CreatedDate: td.CreatedDate,
+				LastUpdated: td.LastUpdated,
+				Data:        td,
+			}
+		}
+		result := <-tx.SaveMany(ctx, collectionName, saveItems)
 		assert.NoError(t, result.Error, "SaveMany should succeed in transaction")
 		assert.NotNil(t, result.Result, "SaveMany should return result")
 
@@ -568,12 +581,14 @@ func (ts *TransactionTestSuite) testEnterpriseOperationsInTransaction(t *testing
 				ObjectId:    id,
 				Name:        fmt.Sprintf("delete_many_%d_%d", i, time.Now().UnixNano()),
 				Value:       i,
-				OwnerUserId: "delete_owner",
+				OwnerUserId: uuid.Must(uuid.NewV4()).String(),
 				CreatedDate: time.Now().Unix(),
 				LastUpdated: time.Now().Unix(),
 				Deleted:     false,
 			}
-			result := <-repo.Save(ctx, collectionName, data)
+			ownerID, err := uuid.FromString(data.OwnerUserId)
+			require.NoError(t, err)
+			result := <-repo.Save(ctx, collectionName, data.ObjectId, ownerID, data.CreatedDate, data.LastUpdated, data)
 			require.NoError(t, result.Error)
 		}
 
@@ -581,14 +596,18 @@ func (ts *TransactionTestSuite) testEnterpriseOperationsInTransaction(t *testing
 		tx, err := repo.Begin(ctx)
 		require.NoError(t, err)
 
-		// Prepare delete filters
-		deleteFilters := make([]interface{}, len(testIds))
+		// Prepare delete queries - use Query objects
+		deleteQueries := make([]*interfaces.Query, len(testIds))
 		for i, id := range testIds {
-			deleteFilters[i] = map[string]interface{}{"objectId": id}
+			deleteQueries[i] = &interfaces.Query{
+				Conditions: []interfaces.Field{
+					{Name: "object_id", Value: id, Operator: "="},
+				},
+			}
 		}
 
 		// Delete many documents in transaction
-		result := <-tx.DeleteMany(ctx, collectionName, deleteFilters)
+		result := <-tx.DeleteMany(ctx, collectionName, deleteQueries)
 		assert.NoError(t, result.Error, "DeleteMany should succeed in transaction")
 
 		err = tx.Commit()
@@ -603,21 +622,27 @@ func (ts *TransactionTestSuite) testEnterpriseOperationsInTransaction(t *testing
 				ObjectId:    uuid.Must(uuid.NewV4()),
 				Name:        fmt.Sprintf("countable_%d", time.Now().UnixNano()),
 				Value:       100, // Specific value to filter on
-				OwnerUserId: "count_owner",
+				OwnerUserId: uuid.Must(uuid.NewV4()).String(),
 				CreatedDate: time.Now().Unix(),
 				LastUpdated: time.Now().Unix(),
 				Deleted:     false,
 			}
-			result := <-repo.Save(ctx, collectionName, data)
+			ownerID, err := uuid.FromString(data.OwnerUserId)
+			require.NoError(t, err)
+			result := <-repo.Save(ctx, collectionName, data.ObjectId, ownerID, data.CreatedDate, data.LastUpdated, data)
 			require.NoError(t, result.Error)
 		}
 
 		tx, err := repo.Begin(ctx)
 		require.NoError(t, err)
 
-		// Count documents with specific filter
-		filter := map[string]interface{}{"value": 100}
-		countResult := <-tx.CountWithFilter(ctx, collectionName, filter)
+		// Count documents with specific filter - use Query object
+		queryObj := &interfaces.Query{
+			Conditions: []interfaces.Field{
+				{Name: "data->>'value'", Value: 100, Operator: "=", IsJSONB: true},
+			},
+		}
+		countResult := <-tx.Count(ctx, collectionName, queryObj)
 		assert.NoError(t, countResult.Error, "CountWithFilter should succeed in transaction")
 		assert.GreaterOrEqual(t, countResult.Count, int64(3), "Should count at least 3 documents with value=100")
 
@@ -633,12 +658,14 @@ func (ts *TransactionTestSuite) testEnterpriseOperationsInTransaction(t *testing
 				ObjectId:    uuid.Must(uuid.NewV4()),
 				Name:        fmt.Sprintf("paginated_%d_%d", i, time.Now().UnixNano()),
 				Value:       i + 1,
-				OwnerUserId: "cursor_owner",
+				OwnerUserId: uuid.Must(uuid.NewV4()).String(),
 				CreatedDate: time.Now().Unix() + int64(i), // Different timestamps
 				LastUpdated: time.Now().Unix() + int64(i),
 				Deleted:     false,
 			}
-			result := <-repo.Save(ctx, collectionName, data)
+			ownerID, err := uuid.FromString(data.OwnerUserId)
+			require.NoError(t, err)
+			result := <-repo.Save(ctx, collectionName, data.ObjectId, ownerID, data.CreatedDate, data.LastUpdated, data)
 			require.NoError(t, result.Error)
 		}
 
@@ -646,7 +673,6 @@ func (ts *TransactionTestSuite) testEnterpriseOperationsInTransaction(t *testing
 		require.NoError(t, err)
 
 		// Test cursor-based pagination
-		filter := map[string]interface{}{"ownerUserId": "cursor_owner"}
 		limit := int64(2)
 		opts := &interfaces.CursorFindOptions{
 			Limit:         &limit,
@@ -655,7 +681,12 @@ func (ts *TransactionTestSuite) testEnterpriseOperationsInTransaction(t *testing
 			SortDirection: "asc",
 		}
 
-		queryResult := <-tx.FindWithCursor(ctx, collectionName, filter, opts)
+		queryObj := &interfaces.Query{
+			Conditions: []interfaces.Field{
+				{Name: "data->>'value'", Value: 50, Operator: "=", IsJSONB: true},
+			},
+		}
+		queryResult := <-tx.FindWithCursor(ctx, collectionName, queryObj, opts)
 		assert.NoError(t, queryResult.Error(), "FindWithCursor should succeed in transaction")
 
 		err = tx.Commit()
@@ -746,13 +777,15 @@ func (ts *TransactionTestSuite) testAdvancedConfiguration(t *testing.T, repo int
 					ObjectId:    uuid.Must(uuid.NewV4()),
 					Name:        fmt.Sprintf("isolation_test_%d", level),
 					Value:       1,
-					OwnerUserId: "isolation_owner",
+					OwnerUserId: uuid.Must(uuid.NewV4()).String(),
 					CreatedDate: time.Now().Unix(),
 					LastUpdated: time.Now().Unix(),
 					Deleted:     false,
 				}
 
-				result := <-tx.Save(ctx, collectionName, data)
+				ownerID, err := uuid.FromString(data.OwnerUserId)
+				require.NoError(t, err)
+				result := <-tx.Save(ctx, collectionName, data.ObjectId, ownerID, data.CreatedDate, data.LastUpdated, data)
 				assert.NoError(t, result.Error, "Save should succeed with isolation level %d", level)
 
 				err = tx.Commit()
@@ -801,33 +834,43 @@ func (ts *TransactionTestSuite) testLargeTransactionStress(t *testing.T, repo in
 			ObjectId:    id,
 			Name:        fmt.Sprintf("stress_test_%d_%d", i, time.Now().UnixNano()),
 			Value:       i,
-			OwnerUserId: "stress_owner",
+			OwnerUserId: uuid.Must(uuid.NewV4()).String(),
 			CreatedDate: time.Now().Unix(),
 			LastUpdated: time.Now().Unix(),
 			Deleted:     false,
 		}
 
-		result := <-tx.Save(ctx, collectionName, data)
+		ownerID, err := uuid.FromString(data.OwnerUserId)
+		require.NoError(t, err)
+		result := <-tx.Save(ctx, collectionName, data.ObjectId, ownerID, data.CreatedDate, data.LastUpdated, data)
 		assert.NoError(t, result.Error, "Save %d should succeed", i)
 	}
 
 	// Phase 2: Update some documents
 	for i := 0; i < numUpdates; i++ {
-		filter := map[string]interface{}{"objectId": savedIds[i]}
 		updates := map[string]interface{}{
 			"name":        fmt.Sprintf("updated_stress_%d", i),
 			"value":       i + 100,
 			"lastUpdated": time.Now().Unix(),
 		}
 
-		result := <-tx.Update(ctx, collectionName, filter, updates, nil)
+		queryObj := &interfaces.Query{
+			Conditions: []interfaces.Field{
+				{Name: "object_id", Value: savedIds[i], Operator: "="},
+			},
+		}
+		result := <-tx.Update(ctx, collectionName, queryObj, updates, nil)
 		assert.NoError(t, result.Error, "Update %d should succeed", i)
 	}
 
 	// Phase 3: Delete some documents
 	for i := 0; i < numDeletes; i++ {
-		filter := map[string]interface{}{"objectId": savedIds[40+i]}
-		result := <-tx.Delete(ctx, collectionName, filter)
+		queryObj := &interfaces.Query{
+			Conditions: []interfaces.Field{
+				{Name: "object_id", Value: savedIds[40+i], Operator: "="},
+			},
+		}
+		result := <-tx.Delete(ctx, collectionName, queryObj)
 		assert.NoError(t, result.Error, "Delete %d should succeed", i)
 	}
 
@@ -871,7 +914,11 @@ func BenchmarkTransactionOperations(b *testing.B) {
 						b.Fatalf("Failed to begin transaction: %v", err)
 					}
 					
-					result := <-tx.Save(ctx, collectionName, testData)
+					ownerID, err := uuid.FromString(testData.OwnerUserId)
+					if err != nil {
+						b.Fatalf("Failed to parse owner ID: %v", err)
+					}
+					result := <-tx.Save(ctx, collectionName, testData.ObjectId, ownerID, testData.CreatedDate, testData.LastUpdated, testData)
 					if result.Error != nil {
 						b.Fatalf("Save operation failed: %v", result.Error)
 					}

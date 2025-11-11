@@ -16,7 +16,6 @@ import (
 // Suite manages shared, pooled database connections for high-performance testing.
 type Suite struct {
 	mu                 sync.RWMutex
-	mongoConnection    dbi.Repository
 	postgresConnection dbi.Repository
 	initialized        bool
 	config             *platformconfig.Config
@@ -37,18 +36,12 @@ func Setup(t *testing.T) *Suite {
 		cfg, err := platformconfig.LoadFromEnv()
 		if err != nil {
 			cfg = &platformconfig.Config{
-				JWT: platformconfig.JWTConfig{
-				},
+				JWT: platformconfig.JWTConfig{},
 				HMAC: platformconfig.HMACConfig{
 					Secret: "test-secret",
 				},
 				Database: platformconfig.DatabaseConfig{
-					Type: "mongodb",
-					MongoDB: platformconfig.MongoDBConfig{
-						Host:     "localhost",
-						Port:     27017,
-						Database: "telar_test",
-					},
+					Type: "postgresql",
 					Postgres: platformconfig.PostgreSQLConfig{
 						Host:     "localhost",
 						Port:     5432,
@@ -74,10 +67,6 @@ func Setup(t *testing.T) *Suite {
 		globalSuite.initialized = true
 	})
 	
-	if globalSuite.mongoConnection == nil && globalSuite.config.Database.MongoDB.Host != "" {
-		t.Log("Mongo connection lost, attempting to reconnect...")
-		_ = globalSuite.createSharedConnections()
-	}
 	if globalSuite.postgresConnection == nil && globalSuite.config.Database.Postgres.Host != "" {
 		t.Log("Postgres connection lost, attempting to reconnect...")
 		_ = globalSuite.createSharedConnections()
@@ -116,46 +105,16 @@ func (s *Suite) createSharedConnections() error {
 		return fmt.Errorf("test environment validation failed: %w", err)
 	}
 
-	var wg sync.WaitGroup
-	var mongoErr, pgErr error
-
-	wg.Add(2)
-
-	go func() {
-		defer wg.Done()
-		if base, err := platform.NewBaseService(ctx, s.config); err == nil {
-			s.mu.Lock()
-			s.mongoConnection = base.Repository
-			s.mu.Unlock()
-		} else {
-			mongoErr = err
-		}
-	}()
-
-	go func() {
-		defer wg.Done()
-		if base, err := platform.NewBaseService(ctx, s.config); err == nil {
-			s.mu.Lock()
-			s.postgresConnection = base.Repository
-			s.mu.Unlock()
-		} else {
-			pgErr = err
-		}
-	}()
-
-	wg.Wait()
-
-	if mongoErr != nil || pgErr != nil {
-		return fmt.Errorf("mongoErr: [%v], pgErr: [%v]", mongoErr, pgErr)
+	base, err := platform.NewBaseService(ctx, s.config)
+	if err != nil {
+		return fmt.Errorf("postgres connection failed: %w", err)
 	}
-	return nil
-}
 
-// GetMongoPool returns the shared MongoDB connection pool.
-func (s *Suite) GetMongoPool() dbi.Repository {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.mongoConnection
+	s.mu.Lock()
+	s.postgresConnection = base.Repository
+	s.mu.Unlock()
+
+	return nil
 }
 
 // GetPostgresPool returns the shared PostgreSQL connection pool.

@@ -2,7 +2,6 @@ package postgresql
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -10,7 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
+	uuid "github.com/gofrs/uuid"
 	"github.com/qolzam/telar/apps/api/internal/database/interfaces"
 	"github.com/qolzam/telar/apps/api/internal/database/observability"
 	"github.com/qolzam/telar/apps/api/internal/pkg/log"
@@ -20,7 +21,7 @@ import (
 // It embeds PostgreSQLRepository and adds transaction-specific operations
 type PostgreSQLTransaction struct {
 	*PostgreSQLRepository
-	tx            *sql.Tx
+	tx            *sqlx.Tx // Changed from *sql.Tx to *sqlx.Tx
 	ctx           context.Context
 	cancel        context.CancelFunc
 	config        *interfaces.TransactionConfig
@@ -121,7 +122,7 @@ func (t *PostgreSQLTransaction) Rollback() error {
 
 // Override repository methods to use transaction context
 // For PostgreSQL, we need to override methods to use the transaction instead of the main DB connection
-func (t *PostgreSQLTransaction) Save(ctx context.Context, collectionName string, data interface{}) <-chan interfaces.RepositoryResult {
+func (t *PostgreSQLTransaction) Save(ctx context.Context, collectionName string, objectID uuid.UUID, ownerUserID uuid.UUID, createdDate, lastUpdated int64, data interface{}) <-chan interfaces.RepositoryResult {
 	result := make(chan interfaces.RepositoryResult)
 	
 	go func() {
@@ -148,17 +149,15 @@ func (t *PostgreSQLTransaction) Save(ctx context.Context, collectionName string,
 			return
 		}
 		
-		// Extract common fields if they exist
-		objectID, createdDate, lastUpdated := t.extractCommonFields(data)
-		
+				
 		tableName := t.getTableName(collectionName)
 		query := fmt.Sprintf(`
-			INSERT INTO %s (object_id, data, created_date, last_updated) 
-			VALUES ($1, $2, $3, $4) 
+			INSERT INTO %s (object_id, owner_user_id, data, created_date, last_updated) 
+			VALUES ($1, $2, $3, $4, $5) 
 			RETURNING id`, tableName)
 		
 		var id int64
-		err = t.tx.QueryRowContext(ctx, query, objectID, jsonData, createdDate, lastUpdated).Scan(&id)
+		err = t.tx.QueryRowContext(ctx, query, objectID, ownerUserID, jsonData, createdDate, lastUpdated).Scan(&id)
 		if err != nil {
 			if pgErr, ok := err.(*pq.Error); ok && pgErr.Code == "23505" { // Unique violation
 				result <- interfaces.RepositoryResult{Error: interfaces.ErrDuplicateKey}
@@ -175,7 +174,7 @@ func (t *PostgreSQLTransaction) Save(ctx context.Context, collectionName string,
 	return result
 }
 
-func (t *PostgreSQLTransaction) Delete(ctx context.Context, collectionName string, filter interface{}) <-chan interfaces.RepositoryResult {
+func (t *PostgreSQLTransaction) Delete(ctx context.Context, collectionName string, query *interfaces.Query) <-chan interfaces.RepositoryResult {
 	result := make(chan interfaces.RepositoryResult)
 	
 	go func() {
@@ -195,30 +194,71 @@ func (t *PostgreSQLTransaction) Delete(ctx context.Context, collectionName strin
 			return
 		}
 		
-		// Build WHERE clause
-		whereClause, args, err := t.buildWhereClause(filter)
+		// Build WHERE clause using the hybrid approach
+		whereClause, namedArgs, positionalArgs, err := t.buildWhereClause(query)
 		if err != nil {
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
 		
 		tableName := t.getTableName(collectionName)
-		query := fmt.Sprintf("DELETE FROM %s WHERE %s", tableName, whereClause)
+		fullQuery := fmt.Sprintf("DELETE FROM %s WHERE %s", tableName, whereClause)
 		
-		_, err = t.tx.ExecContext(ctx, query, args...)
+		// Use sqlx to bind named parameters
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(namedArgs) > 0 {
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = t.tx.BindNamed(tempEscapedQuery, namedArgs)
+			if err2 != nil {
+				result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			reboundQuery = t.tx.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
+		}
+		
+		// Replace temporary array placeholders
+		finalQuery := reboundQuery
+		for i := range positionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+		
+		// Restore ::type casts
+		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+		
+		// Combine argument slices
+		allArgs := append(namedArgsSlice, positionalArgs...)
+
+		execResult, err := t.tx.ExecContext(ctx, finalQuery, allArgs...)
 		if err != nil {
 			log.Error("PostgreSQL Transaction Delete error: %s", err.Error())
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
-		
+
+		rowsAffected, err := execResult.RowsAffected()
+		if err != nil {
+			result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to get rows affected: %w", err)}
+			return
+		}
+
+		if rowsAffected == 0 {
+			result <- interfaces.RepositoryResult{Error: interfaces.ErrNoDocuments}
+			return
+		}
+
 		result <- interfaces.RepositoryResult{Result: "OK"}
 	}()
 	
 	return result
 }
 
-func (t *PostgreSQLTransaction) Count(ctx context.Context, collectionName string, filter interface{}) <-chan interfaces.CountResult {
+func (t *PostgreSQLTransaction) Count(ctx context.Context, collectionName string, query *interfaces.Query) <-chan interfaces.CountResult {
 	result := make(chan interfaces.CountResult)
 	
 	go func() {
@@ -238,21 +278,51 @@ func (t *PostgreSQLTransaction) Count(ctx context.Context, collectionName string
 			return
 		}
 		
-		// Build WHERE clause
-		whereClause, args, err := t.buildWhereClause(filter)
+		// Build WHERE clause using Query object (returns named parameters)
+		whereClause, namedArgs, positionalArgs, err := t.buildWhereClause(query)
 		if err != nil {
 			result <- interfaces.CountResult{Error: err}
 			return
 		}
 		
 		tableName := t.getTableName(collectionName)
-		query := fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)
-		if whereClause != "" {
-			query += " WHERE " + whereClause
+		fullQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)
+		if whereClause != "" && whereClause != "TRUE" {
+			fullQuery += " WHERE " + whereClause
 		}
 		
+		// Use sqlx to bind named parameters
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(namedArgs) > 0 {
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = t.tx.BindNamed(tempEscapedQuery, namedArgs)
+			if err2 != nil {
+				result <- interfaces.CountResult{Error: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			reboundQuery = t.tx.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
+		}
+		
+		// Replace temporary array placeholders
+		finalQuery := reboundQuery
+		for i := range positionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+		
+		// Restore ::type casts
+		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+		
+		// Combine argument slices
+		allArgs := append(namedArgsSlice, positionalArgs...)
+
 		var count int64
-		err = t.tx.QueryRowContext(ctx, query, args...).Scan(&count)
+		err = t.tx.QueryRowContext(ctx, finalQuery, allArgs...).Scan(&count)
 		if err != nil {
 			log.Error("PostgreSQL Transaction Count error: %s", err.Error())
 			result <- interfaces.CountResult{Error: err}
@@ -265,7 +335,7 @@ func (t *PostgreSQLTransaction) Count(ctx context.Context, collectionName string
 	return result
 }
 
-func (t *PostgreSQLTransaction) FindOne(ctx context.Context, collectionName string, filter interface{}) <-chan interfaces.SingleResult {
+func (t *PostgreSQLTransaction) FindOne(ctx context.Context, collectionName string, query *interfaces.Query) <-chan interfaces.SingleResult {
 	result := make(chan interfaces.SingleResult)
 	
 	go func() {
@@ -287,19 +357,50 @@ func (t *PostgreSQLTransaction) FindOne(ctx context.Context, collectionName stri
 		
 		tableName := t.getTableName(collectionName)
 		
-		whereClause, args, err := t.buildWhereClause(filter)
+		// Build WHERE clause using Query object (returns named parameters)
+		whereClause, namedArgs, positionalArgs, err := t.buildWhereClause(query)
 		if err != nil {
 			result <- &PostgreSQLSingleResult{err: err}
 			return
 		}
 		
-		query := fmt.Sprintf("SELECT data FROM %s", tableName)
-		if whereClause != "" {
-			query += " WHERE " + whereClause
+		fullQuery := fmt.Sprintf("SELECT data FROM %s", tableName)
+		if whereClause != "" && whereClause != "TRUE" {
+			fullQuery += " WHERE " + whereClause
 		}
-		query += " LIMIT 1"
+		fullQuery += " LIMIT 1"
 		
-		row := t.tx.QueryRowContext(ctx, query, args...)
+		// Use sqlx to bind named parameters
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(namedArgs) > 0 {
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = t.tx.BindNamed(tempEscapedQuery, namedArgs)
+			if err2 != nil {
+				result <- &PostgreSQLSingleResult{err: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			reboundQuery = t.tx.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
+		}
+		
+		// Replace temporary array placeholders
+		finalQuery := reboundQuery
+		for i := range positionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+		
+		// Restore ::type casts
+		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+		
+		// Combine argument slices
+		allArgs := append(namedArgsSlice, positionalArgs...)
+
+		row := t.tx.QueryRowContext(ctx, finalQuery, allArgs...)
 		result <- &PostgreSQLSingleResult{row: row, columns: []string{"data"}}
 	}()
 	
@@ -343,7 +444,7 @@ func (t *PostgreSQLTransaction) Close() error {
 }
 
 // Implement remaining methods to use transaction context properly
-func (t *PostgreSQLTransaction) SaveMany(ctx context.Context, collectionName string, data []interface{}) <-chan interfaces.RepositoryResult {
+func (t *PostgreSQLTransaction) SaveMany(ctx context.Context, collectionName string, items []interfaces.SaveItem) <-chan interfaces.RepositoryResult {
 	result := make(chan interfaces.RepositoryResult)
 	
 	go func() {
@@ -363,7 +464,7 @@ func (t *PostgreSQLTransaction) SaveMany(ctx context.Context, collectionName str
 			return
 		}
 		
-		if len(data) == 0 {
+		if len(items) == 0 {
 			result <- interfaces.RepositoryResult{Result: []int64{}}
 			return
 		}
@@ -371,24 +472,23 @@ func (t *PostgreSQLTransaction) SaveMany(ctx context.Context, collectionName str
 		tableName := t.getTableName(collectionName)
 		
 		// Build bulk insert query
-		valueStrings := make([]string, 0, len(data))
-		valueArgs := make([]interface{}, 0, len(data)*4)
+		valueStrings := make([]string, 0, len(items))
+		valueArgs := make([]interface{}, 0, len(items)*5)
 		
-		for i, item := range data {
-			jsonData, err := json.Marshal(item)
+		for i, item := range items {
+			jsonData, err := json.Marshal(item.Data)
 			if err != nil {
 				result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to marshal data at index %d: %w", i, err)}
 				return
 			}
 			
-			objectID, createdDate, lastUpdated := t.extractCommonFields(item)
-			
-			valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d, $%d)", i*4+1, i*4+2, i*4+3, i*4+4))
-			valueArgs = append(valueArgs, objectID, jsonData, createdDate, lastUpdated)
+						
+			valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d)", i*5+1, i*5+2, i*5+3, i*5+4, i*5+5))
+			valueArgs = append(valueArgs, item.ObjectID, item.OwnerUserID, jsonData, item.CreatedDate, item.LastUpdated)
 		}
 		
 		query := fmt.Sprintf(`
-			INSERT INTO %s (object_id, data, created_date, last_updated) 
+			INSERT INTO %s (object_id, owner_user_id, data, created_date, last_updated) 
 			VALUES %s 
 			RETURNING id`, tableName, strings.Join(valueStrings, ","))
 		
@@ -416,7 +516,7 @@ func (t *PostgreSQLTransaction) SaveMany(ctx context.Context, collectionName str
 	return result
 }
 
-func (t *PostgreSQLTransaction) Find(ctx context.Context, collectionName string, filter interface{}, opts *interfaces.FindOptions) <-chan interfaces.QueryResult {
+func (t *PostgreSQLTransaction) Find(ctx context.Context, collectionName string, query *interfaces.Query, opts *interfaces.FindOptions) <-chan interfaces.QueryResult {
 	result := make(chan interfaces.QueryResult)
 	
 	go func() {
@@ -429,37 +529,68 @@ func (t *PostgreSQLTransaction) Find(ctx context.Context, collectionName string,
 		
 		tableName := t.getTableName(collectionName)
 		
-		// Build query
-		query := fmt.Sprintf("SELECT data FROM %s", tableName)
-		whereClause, args, err := t.buildWhereClause(filter)
+		// Build WHERE clause using Query object (returns named parameters)
+		whereClause, namedArgs, positionalArgs, err := t.buildWhereClause(query)
 		if err != nil {
 			result <- &PostgreSQLQueryResult{err: err}
 			return
 		}
 		
-		if whereClause != "" {
-			query += " WHERE " + whereClause
+		// Build query
+		fullQuery := fmt.Sprintf("SELECT data FROM %s", tableName)
+		if whereClause != "" && whereClause != "TRUE" {
+			fullQuery += " WHERE " + whereClause
 		}
 		
 		// Add sorting
 		if opts != nil && opts.Sort != nil {
 			orderBy := t.buildOrderByClause(opts.Sort)
 			if orderBy != "" {
-				query += " ORDER BY " + orderBy
+				fullQuery += " ORDER BY " + orderBy
 			}
 		}
 		
 		// Add limit and offset
 		if opts != nil {
 			if opts.Limit != nil {
-				query += fmt.Sprintf(" LIMIT %d", *opts.Limit)
+				fullQuery += fmt.Sprintf(" LIMIT %d", *opts.Limit)
 			}
 			if opts.Skip != nil {
-				query += fmt.Sprintf(" OFFSET %d", *opts.Skip)
+				fullQuery += fmt.Sprintf(" OFFSET %d", *opts.Skip)
 			}
 		}
 		
-		rows, err := t.tx.QueryContext(ctx, query, args...)
+		// Use sqlx to bind named parameters
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(namedArgs) > 0 {
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = t.tx.BindNamed(tempEscapedQuery, namedArgs)
+			if err2 != nil {
+				result <- &PostgreSQLQueryResult{err: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			reboundQuery = t.tx.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
+		}
+		
+		// Replace temporary array placeholders
+		finalQuery := reboundQuery
+		for i := range positionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+		
+		// Restore ::type casts
+		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+		
+		// Combine argument slices
+		allArgs := append(namedArgsSlice, positionalArgs...)
+		
+		rows, err := t.tx.QueryContext(ctx, finalQuery, allArgs...)
 		if err != nil {
 			log.Error("PostgreSQL Transaction Find error: %s", err.Error())
 			result <- &PostgreSQLQueryResult{err: err}
@@ -472,7 +603,7 @@ func (t *PostgreSQLTransaction) Find(ctx context.Context, collectionName string,
 	return result
 }
 
-func (t *PostgreSQLTransaction) Update(ctx context.Context, collectionName string, filter interface{}, data interface{}, opts *interfaces.UpdateOptions) <-chan interfaces.RepositoryResult {
+func (t *PostgreSQLTransaction) Update(ctx context.Context, collectionName string, query *interfaces.Query, data interface{}, opts *interfaces.UpdateOptions) <-chan interfaces.RepositoryResult {
 	result := make(chan interfaces.RepositoryResult)
 	
 	go func() {
@@ -492,27 +623,64 @@ func (t *PostgreSQLTransaction) Update(ctx context.Context, collectionName strin
 			return
 		}
 		
-		// Build UPDATE clause first
+		// Build UPDATE clause first (returns named parameters)
 		updateClause, updateArgs, err := t.buildUpdateClause(data)
 		if err != nil {
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
 		
-		// Build WHERE clause with offset after UPDATE parameters
-		whereClause, args, err := t.buildWhereClauseWithOffset(filter, len(updateArgs)+1)
+		// Build WHERE clause using Query object (returns named parameters)
+		whereClause, whereNamedArgs, wherePositionalArgs, err := t.buildWhereClause(query)
 		if err != nil {
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
 		
-		// Combine all arguments
-		allArgs := append(updateArgs, args...)
+		// Combine all named argument maps for sqlx
+		allNamedArgs := make(map[string]interface{})
+		for k, v := range updateArgs {
+			allNamedArgs[k] = v
+		}
+		for k, v := range whereNamedArgs {
+			allNamedArgs[k] = v
+		}
 		
 		tableName := t.getTableName(collectionName)
-		query := fmt.Sprintf("UPDATE %s SET %s WHERE %s", tableName, updateClause, whereClause)
+		fullQuery := fmt.Sprintf("UPDATE %s SET %s WHERE %s", tableName, updateClause, whereClause)
 		
-		_, err = t.tx.ExecContext(ctx, query, allArgs...)
+		// Use sqlx to bind named parameters
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(allNamedArgs) > 0 {
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = t.tx.BindNamed(tempEscapedQuery, allNamedArgs)
+			if err2 != nil {
+				result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			reboundQuery = t.tx.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
+		}
+		
+		// Replace temporary array placeholders
+		finalQuery := reboundQuery
+		for i := range wherePositionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+		
+		// Restore ::type casts
+		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+		
+		// Combine argument slices
+		allArgs := append(namedArgsSlice, wherePositionalArgs...)
+
+		// Execute the query with the combined arguments
+		_, err = t.tx.ExecContext(ctx, finalQuery, allArgs...)
 		if err != nil {
 			log.Error("PostgreSQL Transaction Update error: %s", err.Error())
 			result <- interfaces.RepositoryResult{Error: err}
@@ -525,12 +693,12 @@ func (t *PostgreSQLTransaction) Update(ctx context.Context, collectionName strin
 	return result
 }
 
-func (t *PostgreSQLTransaction) UpdateMany(ctx context.Context, collectionName string, filter interface{}, data interface{}, opts *interfaces.UpdateOptions) <-chan interfaces.RepositoryResult {
+func (t *PostgreSQLTransaction) UpdateMany(ctx context.Context, collectionName string, query *interfaces.Query, data interface{}, opts *interfaces.UpdateOptions) <-chan interfaces.RepositoryResult {
 	// For PostgreSQL, UpdateMany is the same as Update since we don't have document-level operations
-	return t.Update(ctx, collectionName, filter, data, opts)
+	return t.Update(ctx, collectionName, query, data, opts)
 }
 
-func (t *PostgreSQLTransaction) DeleteMany(ctx context.Context, collectionName string, filters []interface{}) <-chan interfaces.RepositoryResult {
+func (t *PostgreSQLTransaction) DeleteMany(ctx context.Context, collectionName string, queries []*interfaces.Query) <-chan interfaces.RepositoryResult {
 	result := make(chan interfaces.RepositoryResult)
 	
 	go func() {
@@ -544,16 +712,47 @@ func (t *PostgreSQLTransaction) DeleteMany(ctx context.Context, collectionName s
 		tableName := t.getTableName(collectionName)
 		var totalDeleted int64
 		
-		for _, filter := range filters {
-			// Build WHERE clause for each filter
-			whereClause, args, err := t.buildWhereClause(filter)
+		for _, query := range queries {
+			// Build WHERE clause for each query (returns named parameters)
+			whereClause, namedArgs, positionalArgs, err := t.buildWhereClause(query)
 			if err != nil {
 				result <- interfaces.RepositoryResult{Error: err}
 				return
 			}
 			
-			query := fmt.Sprintf("DELETE FROM %s WHERE %s", tableName, whereClause)
-			res, err := t.tx.ExecContext(ctx, query, args...)
+			fullQuery := fmt.Sprintf("DELETE FROM %s WHERE %s", tableName, whereClause)
+			
+			// Use sqlx to bind named parameters
+			tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+			var reboundQuery string
+			var namedArgsSlice []interface{}
+			if len(namedArgs) > 0 {
+				var err2 error
+				reboundQuery, namedArgsSlice, err2 = t.tx.BindNamed(tempEscapedQuery, namedArgs)
+				if err2 != nil {
+					result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to bind named query: %w", err2)}
+					return
+				}
+			} else {
+				reboundQuery = t.tx.Rebind(tempEscapedQuery)
+				namedArgsSlice = []interface{}{}
+			}
+			
+			// Replace temporary array placeholders
+			finalQuery := reboundQuery
+			for i := range positionalArgs {
+				tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+				finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+				finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+			}
+			
+			// Restore ::type casts
+			finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+			
+			// Combine argument slices
+			allArgs := append(namedArgsSlice, positionalArgs...)
+
+			res, err := t.tx.ExecContext(ctx, finalQuery, allArgs...)
 			if err != nil {
 				result <- interfaces.RepositoryResult{Error: err}
 				return
@@ -573,7 +772,7 @@ func (t *PostgreSQLTransaction) DeleteMany(ctx context.Context, collectionName s
 	return result
 }
 
-func (t *PostgreSQLTransaction) FindWithCursor(ctx context.Context, collectionName string, filter interface{}, opts *interfaces.CursorFindOptions) <-chan interfaces.QueryResult {
+func (t *PostgreSQLTransaction) FindWithCursor(ctx context.Context, collectionName string, query *interfaces.Query, opts *interfaces.CursorFindOptions) <-chan interfaces.QueryResult {
 	result := make(chan interfaces.QueryResult)
 	
 	go func() {
@@ -586,53 +785,101 @@ func (t *PostgreSQLTransaction) FindWithCursor(ctx context.Context, collectionNa
 		
 		tableName := t.getTableName(collectionName)
 		
-		// Build query
-		query := fmt.Sprintf("SELECT data FROM %s", tableName)
-		whereClause, args, err := t.buildWhereClause(filter)
+		// Build WHERE clause using Query object (returns named parameters)
+		whereClause, namedArgs, positionalArgs, err := t.buildWhereClause(query)
 		if err != nil {
 			result <- &PostgreSQLQueryResult{err: err}
 			return
 		}
 		
-		if whereClause != "" {
-			query += " WHERE " + whereClause
+		// Determine sort field and direction for cursor conditions
+		var sortField string
+		var sortDirection string
+		var primary string
+		if opts != nil {
+			sortField = opts.SortField
+			if sortField == "" {
+				sortField = "created_date" // Default sort field (snake_case)
+			}
+
+			sortDirection = "DESC" // Default desc
+			if opts.SortDirection == "asc" {
+				sortDirection = "ASC"
+			}
+
+			// Use snake_case column names directly (service layer should provide correct field names)
+			// For indexed columns, use them directly; for others, use JSONB access
+			if sortField == "object_id" || sortField == "created_date" || sortField == "last_updated" {
+				primary = sortField
+			} else {
+				// Use JSONB path with type casting
+				// Service layer can provide explicit type via SortFieldType, otherwise use safe default
+				castType := opts.SortFieldType
+				if castType == "" {
+					// Default to numeric for most numeric sorts (works for integers, floats, timestamps)
+					castType = "numeric"
+				}
+				primary = fmt.Sprintf("(data->>'%s')::%s", sortField, castType)
+			}
+		} else {
+			sortField = "created_date"
+			sortDirection = "DESC"
+			primary = "created_date"
+		}
+
+		// NOTE: Cursor conditions are already in the Query object from the service layer
+		// (via WhereCursorCondition). We do not add them here to avoid duplication.
+		// The service layer is responsible for adding cursor pagination filters to the Query.
+		
+		// Build query
+		fullQuery := fmt.Sprintf("SELECT data FROM %s", tableName)
+		if whereClause != "" && whereClause != "TRUE" {
+			fullQuery += " WHERE " + whereClause
 		}
 		
 		// Add cursor-based sorting
 		if opts != nil {
-			sortField := opts.SortField
-			if sortField == "" {
-				sortField = "createdDate" // Default sort field
-			}
-			
-			sortDirection := "DESC" // Default desc
-			if opts.SortDirection == "asc" {
-				sortDirection = "ASC"
-			}
-			
-			// Build primary sort expression
-			var primary string
-			switch sortField {
-			case "createdDate":
-				primary = "created_date"
-			case "lastUpdated":
-				primary = "last_updated"
-			default:
-				// Use JSONB path with appropriate cast for other fields
-				primary = fmt.Sprintf("(data->>'%s')::text", sortField)
-			}
-			
 			// For compound sorting, always include object_id as tiebreaker (indexed)
 			orderBy := fmt.Sprintf("%s %s, object_id %s", primary, sortDirection, sortDirection)
-			query += " ORDER BY " + orderBy
+			fullQuery += " ORDER BY " + orderBy
 		}
 		
 		// Add limit
 		if opts != nil && opts.Limit != nil {
-			query += fmt.Sprintf(" LIMIT %d", *opts.Limit)
+			fullQuery += fmt.Sprintf(" LIMIT %d", *opts.Limit)
 		}
 		
-		rows, err := t.tx.QueryContext(ctx, query, args...)
+		// Use sqlx to bind named parameters
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(namedArgs) > 0 {
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = t.tx.BindNamed(tempEscapedQuery, namedArgs)
+			if err2 != nil {
+				result <- &PostgreSQLQueryResult{err: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			reboundQuery = t.tx.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
+		}
+		
+		// Replace temporary array placeholders
+		finalQuery := reboundQuery
+		for i := range positionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+		
+		// Restore ::type casts
+		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+		
+		// Combine argument slices
+		allArgs := append(namedArgsSlice, positionalArgs...)
+		
+		rows, err := t.tx.QueryContext(ctx, finalQuery, allArgs...)
 		if err != nil {
 			log.Error("PostgreSQL Transaction FindWithCursor error: %s", err.Error())
 			result <- &PostgreSQLQueryResult{err: err}
@@ -645,7 +892,7 @@ func (t *PostgreSQLTransaction) FindWithCursor(ctx context.Context, collectionNa
 	return result
 }
 
-func (t *PostgreSQLTransaction) CountWithFilter(ctx context.Context, collectionName string, filter interface{}) <-chan interfaces.CountResult {
+func (t *PostgreSQLTransaction) CountWithFilter(ctx context.Context, collectionName string, query *interfaces.Query) <-chan interfaces.CountResult {
 	result := make(chan interfaces.CountResult)
 	
 	go func() {
@@ -658,20 +905,51 @@ func (t *PostgreSQLTransaction) CountWithFilter(ctx context.Context, collectionN
 		
 		tableName := t.getTableName(collectionName)
 		
-		// Build count query
-		query := fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)
-		whereClause, args, err := t.buildWhereClause(filter)
+		// Build WHERE clause using Query object (returns named parameters)
+		whereClause, namedArgs, positionalArgs, err := t.buildWhereClause(query)
 		if err != nil {
 			result <- interfaces.CountResult{Count: 0, Error: err}
 			return
 		}
-		
-		if whereClause != "" {
-			query += " WHERE " + whereClause
+
+		// Build count query
+		fullQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)
+		if whereClause != "" && whereClause != "TRUE" {
+			fullQuery += " WHERE " + whereClause
+		}
+
+		// Use sqlx to bind named parameters
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(namedArgs) > 0 {
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = t.tx.BindNamed(tempEscapedQuery, namedArgs)
+			if err2 != nil {
+				result <- interfaces.CountResult{Error: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			reboundQuery = t.tx.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
 		}
 		
+		// Replace temporary array placeholders
+		finalQuery := reboundQuery
+		for i := range positionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+		
+		// Restore ::type casts
+		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+		
+		// Combine argument slices
+		allArgs := append(namedArgsSlice, positionalArgs...)
+
 		var count int64
-		err = t.tx.QueryRowContext(ctx, query, args...).Scan(&count)
+		err = t.tx.QueryRowContext(ctx, finalQuery, allArgs...).Scan(&count)
 		if err != nil {
 			log.Error("PostgreSQL Transaction CountWithFilter error: %s", err.Error())
 			result <- interfaces.CountResult{Count: 0, Error: err}
@@ -684,7 +962,7 @@ func (t *PostgreSQLTransaction) CountWithFilter(ctx context.Context, collectionN
 	return result
 }
 
-func (t *PostgreSQLTransaction) UpdateFields(ctx context.Context, collectionName string, filter interface{}, updates map[string]interface{}) <-chan interfaces.RepositoryResult {
+func (t *PostgreSQLTransaction) UpdateFields(ctx context.Context, collectionName string, query *interfaces.Query, updates map[string]interface{}) <-chan interfaces.RepositoryResult {
 	result := make(chan interfaces.RepositoryResult)
 	
 	go func() {
@@ -704,43 +982,91 @@ func (t *PostgreSQLTransaction) UpdateFields(ctx context.Context, collectionName
 			return
 		}
 		
-		// Build SET clause for plain field updates
+		// Build SET clause for plain field updates (returns named parameters)
 		setClause, setArgs, err := t.buildSetOperation(updates)
 		if err != nil {
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
 		
-		// Build WHERE clause with offset after SET parameters
-		whereClause, args, err := t.buildWhereClauseWithOffset(filter, len(setArgs)+1)
+		// Build WHERE clause using Query object (returns named parameters)
+		whereClause, whereNamedArgs, wherePositionalArgs, err := t.buildWhereClause(query)
 		if err != nil {
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
 		
-		// Combine all arguments
-		allArgs := append(setArgs, args...)
+		// Combine all named argument maps for sqlx
+		allNamedArgs := make(map[string]interface{})
+		for k, v := range setArgs {
+			allNamedArgs[k] = v
+		}
+		for k, v := range whereNamedArgs {
+			allNamedArgs[k] = v
+		}
 		
 		tableName := t.getTableName(collectionName)
-		query := fmt.Sprintf(`
+		fullQuery := fmt.Sprintf(`
 			UPDATE %s 
 			SET %s
 			WHERE %s`, tableName, setClause, whereClause)
 		
-		_, err = t.tx.ExecContext(ctx, query, allArgs...)
+		// Use sqlx to bind named parameters
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(allNamedArgs) > 0 {
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = t.tx.BindNamed(tempEscapedQuery, allNamedArgs)
+			if err2 != nil {
+				result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			reboundQuery = t.tx.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
+		}
+		
+		// Replace temporary array placeholders
+		finalQuery := reboundQuery
+		for i := range wherePositionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+		
+		// Restore ::type casts
+		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+		
+		// Combine argument slices
+		allArgs := append(namedArgsSlice, wherePositionalArgs...)
+
+		// Execute the query with the combined arguments
+		execResult, err := t.tx.ExecContext(ctx, finalQuery, allArgs...)
 		if err != nil {
 			log.Error("PostgreSQL Transaction UpdateFields error: %s", err.Error())
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
-		
+
+		rowsAffected, err := execResult.RowsAffected()
+		if err != nil {
+			result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to get rows affected: %w", err)}
+			return
+		}
+
+		if rowsAffected == 0 {
+			result <- interfaces.RepositoryResult{Error: interfaces.ErrNoDocuments}
+			return
+		}
+
 		result <- interfaces.RepositoryResult{Result: "OK"}
 	}()
 	
 	return result
 }
 
-func (t *PostgreSQLTransaction) IncrementFields(ctx context.Context, collectionName string, filter interface{}, increments map[string]interface{}) <-chan interfaces.RepositoryResult {
+func (t *PostgreSQLTransaction) IncrementFields(ctx context.Context, collectionName string, query *interfaces.Query, increments map[string]interface{}) <-chan interfaces.RepositoryResult {
 	result := make(chan interfaces.RepositoryResult)
 	
 	go func() {
@@ -760,80 +1086,171 @@ func (t *PostgreSQLTransaction) IncrementFields(ctx context.Context, collectionN
 			return
 		}
 		
-		// Build increment clause first
+		// Build increment clause (returns named parameters)
 		incClause, incArgs, err := t.buildIncrementOperation(increments)
 		if err != nil {
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
 		
-		// Build WHERE clause with correct parameter offset
-		whereClause, args, err := t.buildWhereClauseWithOffset(filter, len(incArgs)+1)
+		// Build WHERE clause using Query object (returns named parameters)
+		whereClause, whereNamedArgs, wherePositionalArgs, err := t.buildWhereClause(query)
 		if err != nil {
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
 		
-		// Combine all arguments
-		allArgs := append(incArgs, args...)
+		// Combine all named argument maps for sqlx
+		allNamedArgs := make(map[string]interface{})
+		for k, v := range incArgs {
+			allNamedArgs[k] = v
+		}
+		for k, v := range whereNamedArgs {
+			allNamedArgs[k] = v
+		}
 		
 		tableName := t.getTableName(collectionName)
-		query := fmt.Sprintf(`
-			UPDATE %s 
-			SET %s
-			WHERE %s`, tableName, incClause, whereClause)
+		fullQuery := fmt.Sprintf(`
+            UPDATE %s 
+            SET %s
+            WHERE %s`, tableName, incClause, whereClause)
 		
-		_, err = t.tx.ExecContext(ctx, query, allArgs...)
+		// Use sqlx to bind named parameters
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(allNamedArgs) > 0 {
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = t.tx.BindNamed(tempEscapedQuery, allNamedArgs)
+			if err2 != nil {
+				result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			reboundQuery = t.tx.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
+		}
+		
+		// Replace temporary array placeholders
+		finalQuery := reboundQuery
+		for i := range wherePositionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+		
+		// Restore ::type casts
+		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+		
+		// Combine argument slices
+		allArgs := append(namedArgsSlice, wherePositionalArgs...)
+
+		// Execute the query with the combined arguments
+		execResult, err := t.tx.ExecContext(ctx, finalQuery, allArgs...)
 		if err != nil {
 			log.Error("PostgreSQL Transaction IncrementFields error: %s", err.Error())
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
-		
+
+		rowsAffected, err := execResult.RowsAffected()
+		if err != nil {
+			result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to get rows affected: %w", err)}
+			return
+		}
+
+		if rowsAffected == 0 {
+			result <- interfaces.RepositoryResult{Error: interfaces.ErrNoDocuments}
+			return
+		}
+
 		result <- interfaces.RepositoryResult{Result: "OK"}
 	}()
 	
 	return result
 }
 
-func (t *PostgreSQLTransaction) UpdateAndIncrement(ctx context.Context, collectionName string, filter interface{}, updates map[string]interface{}, increments map[string]interface{}) <-chan interfaces.RepositoryResult {
+func (t *PostgreSQLTransaction) UpdateAndIncrement(ctx context.Context, collectionName string, query *interfaces.Query, updates map[string]interface{}, increments map[string]interface{}) <-chan interfaces.RepositoryResult {
 	result := make(chan interfaces.RepositoryResult)
 	
 	go func() {
 		defer close(result)
+		
+		// Check if transaction is still active
+		if !t.isValidTransaction() {
+			result <- interfaces.RepositoryResult{Error: interfaces.ErrTransactionInactive}
+			return
+		}
+		
+		// Increment operation counter
+		t.incrementOperationCount()
 		
 		if err := t.ensureTable(t.ctx, collectionName); err != nil {
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
 		
-		// Build WHERE clause
-		whereClause, args, err := t.buildWhereClauseWithOffset(filter, 1)
+		// Build WHERE clause using Query object (returns named parameters)
+		whereClause, whereNamedArgs, wherePositionalArgs, err := t.buildWhereClause(query)
 		if err != nil {
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
 		
-		// Build mixed operation clause
+		// Build mixed operation clause (returns named parameters)
 		mixedClause, mixedArgs, err := t.buildMixedOperation(updates, increments)
 		if err != nil {
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
 		
-		// Combine all arguments
-		allArgs := append(mixedArgs, args...)
+		// Combine all named argument maps for sqlx
+		allNamedArgs := make(map[string]interface{})
+		for k, v := range mixedArgs {
+			allNamedArgs[k] = v
+		}
+		for k, v := range whereNamedArgs {
+			allNamedArgs[k] = v
+		}
 		
 		tableName := t.getTableName(collectionName)
-		query := fmt.Sprintf(`
-			UPDATE %s 
-			SET %s, last_updated = $%d
-			WHERE %s`, tableName, mixedClause, len(allArgs)+1, whereClause)
+		fullQuery := fmt.Sprintf(`
+            UPDATE %s 
+            SET %s
+            WHERE %s`, tableName, mixedClause, whereClause)
 		
-		// Add last_updated timestamp
-		allArgs = append(allArgs, time.Now().Unix())
+		// Use sqlx to bind named parameters
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(allNamedArgs) > 0 {
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = t.tx.BindNamed(tempEscapedQuery, allNamedArgs)
+			if err2 != nil {
+				result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			reboundQuery = t.tx.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
+		}
 		
-		_, err = t.tx.ExecContext(ctx, query, allArgs...)
+		// Replace temporary array placeholders
+		finalQuery := reboundQuery
+		for i := range wherePositionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+		
+		// Restore ::type casts
+		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+		
+		// Combine argument slices
+		allArgs := append(namedArgsSlice, wherePositionalArgs...)
+
+		// Execute the query with the combined arguments
+		_, err = t.tx.ExecContext(ctx, finalQuery, allArgs...)
 		if err != nil {
 			log.Error("PostgreSQL Transaction UpdateAndIncrement error: %s", err.Error())
 			result <- interfaces.RepositoryResult{Error: err}
@@ -1039,3 +1456,4 @@ func (t *PostgreSQLTransaction) IncrementWithOwnership(ctx context.Context, coll
 	
 	return result
 }
+

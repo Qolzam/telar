@@ -38,22 +38,8 @@ type ServerConfig struct {
 // DatabaseConfig holds database-related configuration
 type DatabaseConfig struct {
 	Type                  string           `json:"type"`
-	MongoDB               MongoDBConfig    `json:"mongodb"`
 	Postgres              PostgreSQLConfig `json:"postgres"`
 	ForceNonTransactional bool             `json:"forceNonTransactional"`
-}
-
-// MongoDBConfig holds MongoDB-specific configuration
-type MongoDBConfig struct {
-	Host           string        `json:"host"`
-	Port           int           `json:"port"`
-	Username       string        `json:"username"`
-	Password       string        `json:"password"`
-	Database       string        `json:"database"`
-	URI            string        `json:"uri"`
-	MaxPoolSize    int           `json:"maxPoolSize"`
-	ConnectTimeout time.Duration `json:"connectTimeout"`
-	SocketTimeout  time.Duration `json:"socketTimeout"`
 }
 
 // PostgreSQLConfig holds PostgreSQL-specific configuration
@@ -174,7 +160,6 @@ type ClusterConfig struct {
 // 2. Values from the .env file (if it exists)
 // 3. Hardcoded defaults (if applicable)
 func LoadFromEnv() (*Config, error) {
-	// --- THE FIX ---
 	// godotenv.Load() will read the .env file and load its values into the
 	// environment for this process *only if they are not already set*.
 	// This automatically creates the correct precedence.
@@ -199,7 +184,6 @@ func LoadFromEnv() (*Config, error) {
 		// We can log a warning for clarity.
 		fmt.Println("INFO: .env file not found, using environment variables and defaults.")
 	}
-	// --- END OF FIX ---
 
 	// The rest of the function remains the same. The os.Getenv calls will now
 	// automatically see the values that were loaded from the .env file.
@@ -210,23 +194,12 @@ func LoadFromEnv() (*Config, error) {
 			BaseRoute:       getEnvOrDefault("BASE_ROUTE", "/api"),
 			Gateway:         getEnvOrDefault("GATEWAY", "http://localhost:8080"),
 			InternalGateway: getEnvOrDefault("INTERNAL_GATEWAY", "http://localhost:8080"),
-			WebDomain:       getEnvOrDefault("WEB_DOMAIN", "http://localhost:3000"),
+			WebDomain:       getEnvOrDefault("WEB_DOMAIN", "http://localhost:3000,http://localhost:3001"),
 			Debug:           getEnvAsBool("DEBUG", false),
 		},
 		Database: DatabaseConfig{
-			Type:                  getEnvOrDefault("DB_TYPE", "mongodb"),
+			Type:                  getEnvOrDefault("DB_TYPE", "postgresql"),
 			ForceNonTransactional: getEnvAsBool("FORCE_NON_TRANSACTIONAL", false),
-			MongoDB: MongoDBConfig{
-				Host:           getEnvOrDefaultWithFallback("MONGODB_HOST", "MONGO_HOST", "localhost"),
-				Port:           getEnvAsInt("MONGODB_PORT", 27017),
-				Username:       getEnvOrDefault("MONGODB_USERNAME", ""),
-				Password:       getEnvOrDefault("MONGODB_PASSWORD", ""),
-				Database:       getEnvOrDefaultWithFallback("MONGODB_DATABASE", "MONGO_DATABASE", "telar"),
-				MaxPoolSize:    getEnvAsInt("MONGODB_MAX_POOL_SIZE", 100),
-				ConnectTimeout: time.Duration(getEnvAsInt("MONGODB_CONNECT_TIMEOUT", 10)) * time.Second,
-				SocketTimeout:  time.Duration(getEnvAsInt("MONGODB_SOCKET_TIMEOUT", 10)) * time.Second,
-				URI:            getEnvOrDefault("MONGO_URI", "mongodb://localhost:27017/telar_social_test"),
-			},
 			Postgres: PostgreSQLConfig{
 				Host:            getEnvOrDefault("POSTGRES_HOST", "localhost"),
 				Port:            getEnvAsInt("POSTGRES_PORT", 5432),
@@ -262,7 +235,7 @@ func LoadFromEnv() (*Config, error) {
 			Origin:           getEnvOrDefault("ORIGIN", ""),
 		},
 		App: AppConfig{
-			WebDomain:      getEnvOrDefault("WEB_DOMAIN", "http://localhost:3000"),
+			WebDomain:      getEnvOrDefault("WEB_DOMAIN", "http://localhost:3000,http://localhost:3001"),
 			OrgName:        getEnvOrDefault("ORG_NAME", "Telar"),
 			Name:           getEnvOrDefault("APP_NAME", "Telar"),
 			OrgAvatar:      getEnvOrDefault("ORG_AVATAR", ""),
@@ -386,23 +359,7 @@ func LoadFromMap(envMap map[string]string) (*Config, error) {
 		return defaultValue
 	}
 
-	// Helper to get a value with fallback from the map or a default.
-	getWithFallback := func(primaryKey, fallbackKey, defaultValue string) string {
-		if value, exists := envMap[primaryKey]; exists {
-			return value
-		}
-		if value, exists := envMap[fallbackKey]; exists {
-			return value
-		}
-		return defaultValue
-	}
-
 	// Validate required fields
-	mongoURI := get("MONGO_URI", "")
-	if mongoURI == "" {
-		return nil, fmt.Errorf("required configuration MONGO_URI is not set")
-	}
-
 	jwtPrivateKey := get("JWT_PRIVATE_KEY", "")
 	if jwtPrivateKey == "" {
 		return nil, fmt.Errorf("required configuration JWT_PRIVATE_KEY is not set")
@@ -425,23 +382,12 @@ func LoadFromMap(envMap map[string]string) (*Config, error) {
 			BaseRoute:       get("BASE_ROUTE", "/api"),
 			Gateway:         get("GATEWAY", "http://localhost:8080"),
 			InternalGateway: get("INTERNAL_GATEWAY", "http://localhost:8080"),
-			WebDomain:       get("WEB_DOMAIN", "http://localhost:3000"),
+			WebDomain:       get("WEB_DOMAIN", "http://localhost:3000,http://localhost:3001"),
 			Debug:           getBool("DEBUG", false),
 		},
 		Database: DatabaseConfig{
-			Type:                  get("DB_TYPE", "mongodb"),
+			Type:                  get("DB_TYPE", "postgresql"),
 			ForceNonTransactional: getBool("FORCE_NON_TRANSACTIONAL", false),
-			MongoDB: MongoDBConfig{
-				Host:           getWithFallback("MONGODB_HOST", "MONGO_HOST", "localhost"),
-				Port:           getInt("MONGODB_PORT", 27017),
-				Username:       get("MONGODB_USERNAME", ""),
-				Password:       get("MONGODB_PASSWORD", ""),
-				Database:       getWithFallback("MONGODB_DATABASE", "MONGO_DATABASE", "telar"),
-				MaxPoolSize:    getInt("MONGODB_MAX_POOL_SIZE", 100),
-				ConnectTimeout: time.Duration(getInt("MONGODB_CONNECT_TIMEOUT", 10)) * time.Second,
-				SocketTimeout:  time.Duration(getInt("MONGODB_SOCKET_TIMEOUT", 10)) * time.Second,
-				URI:            mongoURI,
-			},
 			Postgres: PostgreSQLConfig{
 				Host:            get("POSTGRES_HOST", "localhost"),
 				Port:            getInt("POSTGRES_PORT", 5432),
@@ -477,7 +423,7 @@ func LoadFromMap(envMap map[string]string) (*Config, error) {
 			Origin:           get("ORIGIN", ""),
 		},
 		App: AppConfig{
-			WebDomain:      get("WEB_DOMAIN", "http://localhost:3000"),
+			WebDomain:      get("WEB_DOMAIN", "http://localhost:3000,http://localhost:3001"),
 			OrgName:        get("ORG_NAME", "Telar"),
 			Name:           get("APP_NAME", "Telar"),
 			OrgAvatar:      get("ORG_AVATAR", ""),
@@ -518,6 +464,28 @@ func LoadFromMap(envMap map[string]string) (*Config, error) {
 				},
 			},
 		},
+		RateLimits: RateLimitsConfig{
+			Signup: RateLimitConfig{
+				Enabled:  getEnvAsBool("RATE_LIMIT_SIGNUP_ENABLED", true),
+				Max:      getEnvAsInt("RATE_LIMIT_SIGNUP_MAX", 10),
+				Duration: getEnvAsDuration("RATE_LIMIT_SIGNUP_DURATION", 1*time.Hour),
+			},
+			Login: RateLimitConfig{
+				Enabled:  getEnvAsBool("RATE_LIMIT_LOGIN_ENABLED", true),
+				Max:      getEnvAsInt("RATE_LIMIT_LOGIN_MAX", 5),
+				Duration: getEnvAsDuration("RATE_LIMIT_LOGIN_DURATION", 15*time.Minute),
+			},
+			PasswordReset: RateLimitConfig{
+				Enabled:  getEnvAsBool("RATE_LIMIT_PASSWORD_RESET_ENABLED", true),
+				Max:      getEnvAsInt("RATE_LIMIT_PASSWORD_RESET_MAX", 3),
+				Duration: getEnvAsDuration("RATE_LIMIT_PASSWORD_RESET_DURATION", 1*time.Hour),
+			},
+			Verification: RateLimitConfig{
+				Enabled:  getEnvAsBool("RATE_LIMIT_VERIFICATION_ENABLED", true),
+				Max:      getEnvAsInt("RATE_LIMIT_VERIFICATION_MAX", 10),
+				Duration: getEnvAsDuration("RATE_LIMIT_VERIFICATION_DURATION", 15*time.Minute),
+			},
+		},
 	}
 
 	if err := config.Validate(); err != nil {
@@ -545,7 +513,7 @@ func (c *Config) Validate() error {
 	}
 
 	// Validate database type
-	validDbTypes := []string{"mongo", "mongodb", "postgresql"}
+	validDbTypes := []string{"postgresql"}
 	if !contains(validDbTypes, c.Database.Type) {
 		errors = append(errors, fmt.Sprintf("DB_TYPE must be one of: %s", strings.Join(validDbTypes, ", ")))
 	}
@@ -560,16 +528,6 @@ func (c *Config) Validate() error {
 // Helper functions
 func getEnvOrDefault(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-func getEnvOrDefaultWithFallback(primaryKey, fallbackKey, defaultValue string) string {
-	if value := os.Getenv(primaryKey); value != "" {
-		return value
-	}
-	if value := os.Getenv(fallbackKey); value != "" {
 		return value
 	}
 	return defaultValue

@@ -20,6 +20,9 @@ import (
 	platform "github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	platformemail "github.com/qolzam/telar/apps/api/internal/platform/email"
+	"github.com/qolzam/telar/apps/api/posts"
+	"github.com/qolzam/telar/apps/api/posts/handlers"
+	postsServices "github.com/qolzam/telar/apps/api/posts/services"
 	"github.com/qolzam/telar/apps/api/profile"
 	profileServices "github.com/qolzam/telar/apps/api/profile/services"
 )
@@ -290,6 +293,28 @@ func main() {
 	auth.RegisterRoutes(app, authHandlers, cfg)
 	profile.RegisterRoutes(app, profileHandlers, cfg)
 
-	log.Printf("Starting Telar API Server (Auth + Profile) on port 8080")
+	// Initialize Posts service
+	postsService := postsServices.NewPostService(baseService, cfg)
+
+	// Create database indexes on startup
+	log.Println("🔧 Creating database indexes for Posts service...")
+	postsIndexCtx, postsIndexCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if err := postsService.CreateIndexes(postsIndexCtx); err != nil {
+		postsIndexCancel()
+		log.Printf("⚠️  Warning: Failed to create Posts indexes (may already exist): %v", err)
+	} else {
+		postsIndexCancel()
+		log.Println("✅ Posts database indexes created successfully")
+	}
+
+	postsHandler := handlers.NewPostHandler(postsService, cfg.JWT, cfg.HMAC)
+
+	postsHandlers := &posts.PostsHandlers{
+		PostHandler: postsHandler,
+	}
+
+	posts.RegisterRoutes(app, postsHandlers, cfg)
+
+	log.Printf("Starting Telar API Server (Auth + Profile + Posts) on port 8080")
 	log.Fatal(app.Listen(":8080"))
 }

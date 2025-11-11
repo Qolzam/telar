@@ -14,16 +14,13 @@ import (
 
 func TestRepositoryCreation(t *testing.T) {
 	// Test that we can create a repository instance
-	config := &interfaces.RepositoryConfig{
-		DatabaseType: interfaces.DatabaseTypeMongoDB,
-		DatabaseName: "test_db",
-		MongoConfig: &interfaces.MongoDBConfig{
-			Host: "localhost",
-			Port: 27017,
-		},
+	pgConfig := &interfaces.PostgreSQLConfig{
+		Host:     "localhost",
+		Port:     5432,
+		Database: "test_db",
 	}
 
-	repo, err := factory.CreateRepositoryFromConfig(nil, interfaces.DatabaseTypeMongoDB, config)
+	repo, err := factory.CreateRepositoryFromConfig(nil, interfaces.DatabaseTypePostgreSQL, pgConfig)
 	if err != nil {
 		t.Logf("Repository creation failed (expected for test environment): %v", err)
 		// This is expected in test environment without actual database
@@ -38,20 +35,6 @@ func TestRepositoryCreation(t *testing.T) {
 }
 
 func TestRepositoryConfigValidation(t *testing.T) {
-	// Test MongoDB config validation
-	mongoConfig := &interfaces.MongoDBConfig{
-		Host: "localhost",
-		Port: 27017,
-	}
-
-	if mongoConfig.Host == "" {
-		t.Error("MongoDB host should not be empty")
-	}
-
-	if mongoConfig.Port <= 0 {
-		t.Error("MongoDB port should be positive")
-	}
-
 	// Test PostgreSQL config validation
 	pgConfig := &interfaces.PostgreSQLConfig{
 		Host:     "localhost",

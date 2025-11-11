@@ -21,7 +21,7 @@ func TestOAuth_User_Account_Management(t *testing.T) {
 	}
 
 	suite := testutil.Setup(t)
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 
 	// Create BaseService from isolated test config
 	base, err := platform.NewBaseService(context.Background(), iso.Config)
@@ -101,7 +101,7 @@ func TestOAuth_User_Account_Management(t *testing.T) {
 			LastUpdated:   time.Now().Unix(),
 		}
 
-		err := (<-base.Repository.Save(context.Background(), "userAuth", &testUser)).Error
+		err := (<-base.Repository.Save(context.Background(), "userAuth", testUser.ObjectId, testUser.ObjectId, testUser.CreatedDate, testUser.LastUpdated, &testUser)).Error
 		require.NoError(t, err)
 
 		// Create corresponding profile
@@ -127,7 +127,7 @@ func TestOAuth_User_Account_Management(t *testing.T) {
 			LastUpdated: time.Now().Unix(),
 		}
 
-		err = (<-base.Repository.Save(context.Background(), "userProfile", &testProfile)).Error
+		err = (<-base.Repository.Save(context.Background(), "userProfile", testProfile.ObjectId, testProfile.ObjectId, testProfile.CreatedDate, testProfile.LastUpdated, &testProfile)).Error
 		require.NoError(t, err)
 
 		// Try OAuth login with existing user

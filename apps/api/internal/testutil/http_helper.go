@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -47,48 +48,59 @@ func NewHTTPHelper(t *testing.T, app *fiber.App) *HTTPHelper {
 	}
 }
 
-// A Request represents a request to be sent.
+// Request represents a test request under construction.
 type Request struct {
-	helper  *HTTPHelper
-	method  string
-	path    string
-	body    io.Reader
-	headers http.Header
+	helper     *HTTPHelper
+	method     string
+	path       string
+	bodyBytes  []byte
+	bodyReader io.Reader
+	headers    http.Header
 }
 
-// NewRequest begins building a new test request.
+// NewRequest begins building a new test request. It centralizes body marshaling.
 func (h *HTTPHelper) NewRequest(method, path string, body interface{}) *Request {
-	var bodyReader io.Reader
+	var bodyBytes []byte
 	if body != nil {
-		// Marshal body to JSON if it's not already bytes
-		if b, ok := body.([]byte); ok {
-			bodyReader = bytes.NewReader(b)
-		} else {
+		switch b := body.(type) {
+		case []byte:
+			bodyBytes = b
+		case string:
+			bodyBytes = []byte(b)
+		default:
 			jsonBytes, err := json.Marshal(body)
 			require.NoError(h.t, err, "Failed to marshal request body to JSON")
-			bodyReader = bytes.NewReader(jsonBytes)
+			bodyBytes = jsonBytes
 		}
 	}
 
-	return &Request{
-		helper:  h,
-		method:  method,
-		path:    path,
-		body:    bodyReader,
-		headers: make(http.Header),
+	req := &Request{
+		helper:     h,
+		method:     method,
+		path:       path,
+		bodyBytes:  bodyBytes,
+		bodyReader: bytes.NewReader(bodyBytes),
+		headers:    make(http.Header),
 	}
+
+	// Set JSON content type when applicable
+	if body != nil {
+		req.WithHeader(types.HeaderContentType, "application/json")
+	}
+
+	return req
 }
 
 // WithHeader adds a header to the request.
 func (r *Request) WithHeader(key, value string) *Request {
-	r.headers.Set(key, value)
+	r.headers.Add(key, value)
 	return r
 }
 
 // WithAuthHeaders adds standard HMAC authentication headers.
 // DEPRECATED: Use WithHMACAuth for clarity
 func (r *Request) WithAuthHeaders(secret, uid string) *Request {
-	return r.WithHMACAuth(secret, uid) // Pass through both parameters
+	return r.WithHMACAuth(secret, uid)
 }
 
 // WithHMACAuth adds HMAC authentication headers with canonical signing
@@ -97,25 +109,31 @@ func (r *Request) WithHMACAuth(secret, uid string) *Request {
 	// Generate timestamp
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 
-	// Extract request details
+	// Extract and normalize path to match Fiber's c.Path()
 	method := r.method
 	path := r.path
-	query := "" // Extract from path if needed
+	query := ""
 	if strings.Contains(path, "?") {
 		parts := strings.SplitN(path, "?", 2)
 		path = parts[0]
 		query = parts[1]
 	}
+	originalPath := path
+	normalizedPath := filepath.Clean(originalPath)
+	if strings.HasSuffix(originalPath, "/") && normalizedPath != "/" {
+		normalizedPath += "/"
+	}
+	path = normalizedPath
 
-	// Get body for signing
-	var bodyBytes []byte
-	if r.body != nil {
-		bodyBytes, _ = io.ReadAll(r.body)
-		r.body = bytes.NewReader(bodyBytes)
+	// Always sign the exact bytes that will be sent in the request
+	bodyBytes := r.bodyBytes
+	if bodyBytes == nil {
+		bodyBytes = []byte{}
 	}
 
 	// Generate canonical signature with injected secret
 	sig := SignHMAC(method, path, query, bodyBytes, uid, timestamp, secret)
+=
 
 	// Set required headers for canonical HMAC
 	r.WithHeader(types.HeaderHMACAuthenticate, sig)
@@ -148,27 +166,21 @@ func (r *Request) WithCookieAuth(userCtx types.UserContext) *Request {
 	// For tests, create a simple mock JWT token without real signing
 	// This avoids the complexity of setting up proper private keys in tests
 	header := `{"alg":"ES256","typ":"JWT"}`
-	payload := `{"user_id":"` + userCtx.UserID.String() + `","email":"` + userCtx.Username + `","role":"` + userCtx.SystemRole + `","iat":` + strconv.FormatInt(time.Now().Unix(), 10) + `}`
-	signature := "test-signature"
-
-	// Encode as base64url (simplified for tests)
-	headerB64 := base64URLEncode([]byte(header))
-	payloadB64 := base64URLEncode([]byte(payload))
-
-	// Use default cookie names if config values are nil
-	// Use default cookie names for testing
-	headerCookieName := "header"
-	payloadCookieName := "payload"
-	signatureCookieName := "signature"
-
-	headerCookie := &http.Cookie{Name: headerCookieName, Value: headerB64, Path: "/"}
-	payloadCookie := &http.Cookie{Name: payloadCookieName, Value: payloadB64, Path: "/"}
-	signatureCookie := &http.Cookie{Name: signatureCookieName, Value: signature, Path: "/"}
-
-	r.headers.Add("Cookie", headerCookie.String())
-	r.headers.Add("Cookie", payloadCookie.String())
-	r.headers.Add("Cookie", signatureCookie.String())
-
+	claims := utils.TokenClaims{
+		Claim: map[string]interface{}{
+			types.HeaderUID: userCtx.UserID.String(),
+			"username":      userCtx.Username,
+			"displayName":   userCtx.DisplayName,
+			"avatar":        userCtx.Avatar,
+			"role":          userCtx.SystemRole,
+			"socialName":    userCtx.SocialName,
+			"banner":        userCtx.Banner,
+			"tagLine":       userCtx.TagLine,
+		},
+	}
+	payloadBytes, _ := json.Marshal(claims)
+	fakeToken := fmt.Sprintf("%s.%x.%s", header, sha256.Sum256(payloadBytes), "signature")
+	r.WithHeader(types.HeaderAuthorization, types.BearerPrefix+fakeToken)
 	return r
 }
 
@@ -193,7 +205,8 @@ func (r *Request) AsMultipartForm(formData map[string]string, files map[string][
 	require.NoError(r.helper.t, err)
 
 	// Set the multipart body and content type
-	r.body = body
+	r.bodyBytes = body.Bytes()
+	r.bodyReader = bytes.NewReader(r.bodyBytes)
 	r.WithHeader(types.HeaderContentType, writer.FormDataContentType())
 
 	return r
@@ -229,7 +242,8 @@ func (r *Request) WithMultipartAuth(secret, uid string, formData map[string]stri
 	bodyBytes := body.Bytes()
 
 	// Set the multipart body and content type
-	r.body = bytes.NewReader(bodyBytes)
+	r.bodyBytes = bodyBytes
+	r.bodyReader = bytes.NewReader(bodyBytes)
 	r.WithHeader(types.HeaderContentType, writer.FormDataContentType())
 
 	// Generate timestamp for canonical signing
@@ -261,7 +275,7 @@ func (r *Request) WithMultipartAuth(secret, uid string, formData map[string]stri
 // Send executes the request and returns the response.
 // It includes robust error handling and a default timeout.
 func (r *Request) Send() *http.Response {
-	req := httptest.NewRequest(r.method, r.path, r.body)
+	req := httptest.NewRequest(r.method, r.path, r.bodyReader)
 	req.Header = r.headers
 
 	// Use a reasonable default timeout to prevent tests from hanging.
@@ -279,7 +293,7 @@ func (r *Request) SendWithRetry(maxRetries int) *http.Response {
 	const timeout = 10 * time.Second
 
 	for i := 0; i < maxRetries; i++ {
-		req := httptest.NewRequest(r.method, r.path, r.body)
+		req := httptest.NewRequest(r.method, r.path, r.bodyReader)
 		req.Header = r.headers
 
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -356,14 +370,11 @@ func (r *Request) WithS2SHMAC(secret, serviceName string) *Request {
 
 	// Get request body as bytes for signing
 	var bodyBytes []byte
-	if r.body != nil {
-		if body, ok := r.body.(*bytes.Buffer); ok {
-			bodyBytes = body.Bytes()
-		} else if body, ok := r.body.(*strings.Reader); ok {
-			bodyBytes = make([]byte, body.Len())
-			body.Read(bodyBytes)
-			body.Seek(0, 0) // Reset reader position
-		}
+	if r.bodyBytes != nil {
+		bodyBytes = r.bodyBytes
+	} else if r.bodyReader != nil {
+		bodyBytes, _ = io.ReadAll(r.bodyReader)
+		r.bodyReader = bytes.NewReader(bodyBytes) // Reset reader position
 	}
 
 	// Build canonical signature
@@ -422,4 +433,28 @@ func GenerateECDSAKeyPairPEM(t *testing.T) (string, string) {
 	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubBytes})
 
 	return string(pubPEM), string(privPEM)
+}
+
+// WithServiceHMACAuth sets HMAC headers where the service name is the uid.
+func (r *Request) WithServiceHMACAuth(secret, serviceName string) *Request {
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+
+	// Ensure path normalization
+	path := r.path
+	if strings.HasSuffix(path, "/") && path != "/" {
+		path = strings.TrimRight(path, "/") + "/"
+	}
+
+	// Use the same pre-marshaled body bytes
+	bodyBytes := r.bodyBytes
+	if bodyBytes == nil {
+		bodyBytes = []byte{}
+	}
+
+	signature := SignHMAC(r.method, path, "", bodyBytes, serviceName, timestamp, secret)
+
+	r.WithHeader(types.HeaderHMACAuthenticate, signature)
+	r.WithHeader(types.HeaderTimestamp, timestamp)
+	r.WithHeader(types.HeaderUID, serviceName)
+	return r
 }

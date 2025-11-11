@@ -26,11 +26,14 @@ export { authApi } from './auth';
 export type { IAuthApi } from './auth';
 export { profileApi } from './profile';
 export type { IProfileApi } from './profile';
+export { postsApi } from './posts';
+export type { IPostsApi } from './posts';
 
 import { ApiClient } from './client';
 import { SDK_CONFIG } from './config';
 import { authApi, IAuthApi } from './auth';
 import { profileApi, IProfileApi } from './profile';
+import { postsApi, IPostsApi } from './posts';
 
 /**
  * Telar SDK interface
@@ -46,9 +49,10 @@ export interface ITelarSDK {
    */
   profile: IProfileApi;
 
-  // Future APIs will be added here:
-  // posts: IPostsApi;
-  // comments: ICommentsApi;
+  /**
+   * Posts API
+   */
+  posts: IPostsApi;
 }
 
 /**
@@ -72,7 +76,8 @@ export const createTelarSDK = (): ITelarSDK => {
 
   return {
     auth: authApi(bffClient),       // Auth uses BFF (cookie management)
-    profile: profileApi(apiClient), // Profile uses direct API
+    profile: profileApi(apiClient),
+    posts: postsApi(apiClient),
   };
 };
 

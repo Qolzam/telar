@@ -1,28 +1,19 @@
 /**
  * Dashboard Home Page
  * 
- * Main authenticated landing page
+ * Main authenticated landing page - shows the feed
  */
 
 'use client';
 
-import { useTranslation } from 'react-i18next';
-import { Box, Typography, Paper } from '@mui/material';
+import { Container } from '@mui/material';
+import { PostForm, PostList } from '@/features/posts/components';
 
 export default function DashboardPage() {
-  const { t } = useTranslation('dashboard');
-  
   return (
-    <Box>
-      <Typography variant="h4" component="h1" gutterBottom>
-        {t('title')}
-      </Typography>
-      
-      <Paper sx={{ p: 3, mt: 3 }}>
-        <Typography variant="body1">
-          {t('description')}
-        </Typography>
-      </Paper>
-    </Box>
+    <Container maxWidth="md" sx={{ py: 4 }}>
+      <PostForm />
+      <PostList />
+    </Container>
   );
 }

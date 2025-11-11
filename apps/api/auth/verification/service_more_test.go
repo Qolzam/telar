@@ -43,9 +43,9 @@ func TestVerificationService_SuccessBranch_Coverage(t *testing.T) {
 	}
 
 	suite := testutil.Setup(t)
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 	if iso.Repo == nil {
-		t.Skip("MongoDB not available, skipping test")
+		t.Skip("PostgreSQL not available, skipping test")
 	}
 
 	ctx := context.Background()
@@ -77,7 +77,7 @@ func TestVerificationService_SuccessBranch_Coverage(t *testing.T) {
 
 	// Test new secure verification method (Phase 1.4: Legacy support removed)
 	// Seed verification doc for success path: not verified and correct code
-	_ = (<-base.Repository.Save(ctx, "userVerification", map[string]interface{}{
+	_ = (<-base.Repository.Save(ctx, "userVerification", vid, uid, now, now, map[string]interface{}{
 		"objectId":        vid,
 		"userId":          uid,
 		"code":            "123456",

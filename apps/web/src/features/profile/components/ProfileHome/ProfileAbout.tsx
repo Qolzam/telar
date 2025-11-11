@@ -26,16 +26,25 @@ export function ProfileAbout({ profile }: ProfileAboutProps) {
         )}
 
         {profile.email && (
-          <Stack direction="row" spacing={2} sx={{ typography: 'body2' }}>
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={2}
+            alignItems={{ xs: 'flex-start', sm: 'center' }}
+            sx={{ typography: 'body2' }}
+          >
             <EmailIcon sx={{ color: 'text.secondary' }} />
-            <Box>{profile.email}</Box>
+            <Box sx={{ overflowWrap: 'anywhere' }}>{profile.email}</Box>
           </Stack>
         )}
 
         {profile.companyName && (
-          <Stack direction="row" spacing={2}>
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={2}
+            alignItems={{ xs: 'flex-start', sm: 'center' }}
+          >
             <BusinessIcon sx={{ color: 'text.secondary' }} />
-            <Box sx={{ typography: 'body2' }}>
+            <Box sx={{ typography: 'body2', overflowWrap: 'anywhere' }}>
               {t('about.worksAt')}{' '}
               <Link variant="subtitle2" color="inherit">
                 {profile.companyName}
@@ -45,14 +54,19 @@ export function ProfileAbout({ profile }: ProfileAboutProps) {
         )}
 
         {profile.webUrl && (
-          <Stack direction="row" spacing={2}>
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={2}
+            alignItems={{ xs: 'flex-start', sm: 'center' }}
+          >
             <LanguageIcon sx={{ color: 'text.secondary' }} />
-            <Link 
+            <Link
               href={profile.webUrl} 
               target="_blank" 
               rel="noopener noreferrer"
               variant="body2"
               color="primary"
+              sx={{ overflowWrap: 'anywhere' }}
             >
               {profile.webUrl}
             </Link>

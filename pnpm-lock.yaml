@@ -80,6 +80,9 @@ importers:
       react-i18next:
         specifier: ^16.0.0
         version: 16.0.0(i18next@25.6.0(typescript@5.9.3))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(typescript@5.9.3)
+      react-intersection-observer:
+        specifier: ^10.0.0
+        version: 10.0.0(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       react-password-strength-bar:
         specifier: ^0.4.1
         version: 0.4.1(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
@@ -2687,6 +2690,15 @@ packages:
       react-native:
         optional: true
       typescript:
+        optional: true
+
+  react-intersection-observer@10.0.0:
+    resolution: {integrity: sha512-JJRgcnFQoVXmbE5+GXr1OS1NDD1gHk0HyfpLcRf0575IbJz+io8yzs4mWVlfaqOQq1FiVjLvuYAdEEcrrCfveg==}
+    peerDependencies:
+      react: ^17.0.0 || ^18.0.0 || ^19.0.0
+      react-dom: ^17.0.0 || ^18.0.0 || ^19.0.0
+    peerDependenciesMeta:
+      react-dom:
         optional: true
 
   react-is@16.13.1:
@@ -5798,6 +5810,12 @@ snapshots:
     optionalDependencies:
       react-dom: 19.1.0(react@19.1.0)
       typescript: 5.9.3
+
+  react-intersection-observer@10.0.0(react-dom@19.1.0(react@19.1.0))(react@19.1.0):
+    dependencies:
+      react: 19.1.0
+    optionalDependencies:
+      react-dom: 19.1.0(react@19.1.0)
 
   react-is@16.13.1: {}
 

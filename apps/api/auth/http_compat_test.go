@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"testing"
@@ -44,7 +45,7 @@ func TestAuth_Login_SPA_Compatibility(t *testing.T) {
 	suite := testutil.Setup(t)
 
 	// 2. Create isolated test environment for configuration
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 
 	// 3. Use base service for all database operations in your test.
 	app := createAuthTestApp(t, iso)
@@ -73,7 +74,7 @@ func TestAuth_OAuth_Redirects(t *testing.T) {
 	suite := testutil.Setup(t)
 
 	// 2. Create isolated test environment for configuration
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 
 	// 3. Use base service for all database operations in your test.
 	app := createAuthTestApp(t, iso)
@@ -99,7 +100,7 @@ func TestAuth_Signup_SPA_ReturnsToken(t *testing.T) {
 	suite := testutil.Setup(t)
 
 	// 2. Create isolated test environment for configuration
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 
 	// 3. Use base service for all database operations in your test.
 	app := createAuthTestApp(t, iso)
@@ -131,7 +132,7 @@ func TestAuth_Verification_SPA_Status(t *testing.T) {
 	suite := testutil.Setup(t)
 
 	// 2. Create isolated test environment for configuration
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 
 	// 3. Use base service for all database operations in your test.
 	app := createAuthTestApp(t, iso)
@@ -159,7 +160,7 @@ func TestAuth_Password_Forget_Status(t *testing.T) {
 	suite := testutil.Setup(t)
 
 	// 2. Create isolated test environment for configuration
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 
 	// 3. Use base service for all database operations in your test.
 	app := createAuthTestApp(t, iso)
@@ -182,7 +183,7 @@ func TestAuth_Routes_HMACCookie_NextBranches(t *testing.T) {
 	suite := testutil.Setup(t)
 
 	// 2. Create isolated test environment for configuration
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 
 	// 3. Use base service for all database operations in your test.
 	app := createAuthTestApp(t, iso)
@@ -211,7 +212,7 @@ func TestAuth_Password_Change_Unauthorized(t *testing.T) {
 	suite := testutil.Setup(t)
 
 	// 2. Create isolated test environment for configuration
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 
 	// 3. Use base service for all database operations in your test.
 	app := createAuthTestApp(t, iso)
@@ -233,7 +234,7 @@ func TestAuth_Verification_SSR_Status(t *testing.T) {
 	suite := testutil.Setup(t)
 
 	// 2. Create isolated test environment for configuration
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 
 	// 3. Use base service for all database operations in your test.
 	app := createAuthTestApp(t, iso)
@@ -261,7 +262,7 @@ func TestAuth_Admin_Check_HMAC(t *testing.T) {
 	suite := testutil.Setup(t)
 
 	// 2. Create isolated test environment for configuration
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 
 	// 3. Use base service for all database operations in your test.
 	app := createAuthTestApp(t, iso)
@@ -290,7 +291,7 @@ func TestAuth_Admin_Signup_Returns201(t *testing.T) {
 	suite := testutil.Setup(t)
 
 	// 2. Create isolated test environment for configuration
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 
 	// 3. Use base service for all database operations in your test.
 	app := createAuthTestApp(t, iso)
@@ -316,6 +317,8 @@ func TestAuth_Admin_Signup_Returns201(t *testing.T) {
 	// --- END OF FIX ---
 	// Admin signup should return 201 Created for create operation
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusConflict {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		t.Logf("Admin signup error response: %s", string(bodyBytes))
 		t.Fatalf("admin signup should return 201 Created or 409 Conflict, got %d", resp.StatusCode)
 	}
 }
@@ -330,7 +333,7 @@ func TestAuth_OAuth_Authorized_Redirect(t *testing.T) {
 	suite := testutil.Setup(t)
 
 	// 2. Create isolated test environment for configuration
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 
 	// 3. Use base service for all database operations in your test.
 	app := createAuthTestApp(t, iso)

@@ -8,9 +8,11 @@ package factory
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strconv"
+	"strings"
 
 	"github.com/qolzam/telar/apps/api/internal/database/interfaces"
-	"github.com/qolzam/telar/apps/api/internal/database/mongodb"
 	"github.com/qolzam/telar/apps/api/internal/database/postgresql"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 )
@@ -36,29 +38,56 @@ func NewRepositoryFactoryFromPlatformConfig(dbConfig platformconfig.DatabaseConf
 
 	// Set database-specific configuration
 	switch dbConfig.Type {
-	case interfaces.DatabaseTypeMongoDB:
-		config.MongoConfig = &interfaces.MongoDBConfig{
-			Host:           dbConfig.MongoDB.Host,
-			Port:           dbConfig.MongoDB.Port,
-			Username:       dbConfig.MongoDB.Username,
-			Password:       dbConfig.MongoDB.Password,
-			MaxPoolSize:    dbConfig.MongoDB.MaxPoolSize,
-			MinPoolSize:    10, // Default minimum pool size
-			ConnectTimeout: int(dbConfig.MongoDB.ConnectTimeout.Seconds()),
-			SocketTimeout:  int(dbConfig.MongoDB.SocketTimeout.Seconds()),
-			MaxIdleTime:    300, // Default 5 minutes
-		}
 	case interfaces.DatabaseTypePostgreSQL:
 		config.PostgresConfig = &interfaces.PostgreSQLConfig{
-			Host:             dbConfig.Postgres.Host,
-			Port:             dbConfig.Postgres.Port,
-			Username:         dbConfig.Postgres.Username,
-			Password:         dbConfig.Postgres.Password,
-			SSLMode:          dbConfig.Postgres.SSLMode,
+			Host:               dbConfig.Postgres.Host,
+			Port:               dbConfig.Postgres.Port,
+			Username:           dbConfig.Postgres.Username,
+			Password:           dbConfig.Postgres.Password,
+			Database:           dbConfig.Postgres.Database,
+			SSLMode:            dbConfig.Postgres.SSLMode,
 			MaxOpenConnections: dbConfig.Postgres.MaxOpenConns,
 			MaxIdleConnections: dbConfig.Postgres.MaxIdleConns,
-			MaxLifetime:      int(dbConfig.Postgres.ConnMaxLifetime.Seconds()),
-			ConnectTimeout:   10, // Default 10 seconds
+			MaxLifetime:        int(dbConfig.Postgres.ConnMaxLifetime.Seconds()),
+			ConnectTimeout:     10, // Default 10 seconds
+		}
+
+		if dsn := dbConfig.Postgres.DSN; dsn != "" {
+			if parsed, err := url.Parse(dsn); err == nil {
+				if host := parsed.Hostname(); host != "" {
+					config.PostgresConfig.Host = host
+				}
+				if portStr := parsed.Port(); portStr != "" {
+					if port, err := strconv.Atoi(portStr); err == nil {
+						config.PostgresConfig.Port = port
+					}
+				}
+				if user := parsed.User; user != nil {
+					config.PostgresConfig.Username = user.Username()
+					if pass, ok := user.Password(); ok {
+						config.PostgresConfig.Password = pass
+					}
+				}
+				if dbName := strings.TrimPrefix(parsed.Path, "/"); dbName != "" {
+					config.PostgresConfig.Database = dbName
+					config.DatabaseName = dbName
+				}
+				query := parsed.Query()
+				if searchPath := query.Get("search_path"); searchPath != "" {
+					config.PostgresConfig.Schema = searchPath
+				}
+				if sslMode := query.Get("sslmode"); sslMode != "" {
+					config.PostgresConfig.SSLMode = sslMode
+				}
+			}
+		}
+
+		if config.PostgresConfig.Port == 0 {
+			config.PostgresConfig.Port = 5432
+		}
+
+		if config.PostgresConfig.Schema == "" {
+			config.PostgresConfig.Schema = "public"
 		}
 	}
 
@@ -70,8 +99,6 @@ func NewRepositoryFactoryFromPlatformConfig(dbConfig platformconfig.DatabaseConf
 // getDatabaseName extracts the database name from platform config
 func getDatabaseName(dbConfig platformconfig.DatabaseConfig) string {
 	switch dbConfig.Type {
-	case interfaces.DatabaseTypeMongoDB:
-		return dbConfig.MongoDB.Database
 	case interfaces.DatabaseTypePostgreSQL:
 		return dbConfig.Postgres.Database
 	default:
@@ -82,27 +109,11 @@ func getDatabaseName(dbConfig platformconfig.DatabaseConfig) string {
 // CreateRepository creates a repository instance based on the configured database type
 func (f *RepositoryFactory) CreateRepository(ctx context.Context) (interfaces.Repository, error) {
 	switch f.config.DatabaseType {
-	case interfaces.DatabaseTypeMongoDB:
-		return f.createMongoRepository(ctx)
 	case interfaces.DatabaseTypePostgreSQL:
 		return f.createPostgreSQLRepository(ctx)
 	default:
-		return nil, fmt.Errorf("unsupported database type: %s", f.config.DatabaseType)
+		return nil, fmt.Errorf("unsupported database type: %s (only PostgreSQL is supported)", f.config.DatabaseType)
 	}
-}
-
-// createMongoRepository creates a MongoDB repository instance
-func (f *RepositoryFactory) createMongoRepository(ctx context.Context) (interfaces.Repository, error) {
-	if f.config.MongoConfig == nil {
-		return nil, fmt.Errorf("MongoDB configuration is missing")
-	}
-
-	mongoRepo, err := mongodb.NewMongoRepository(ctx, f.config.MongoConfig, f.config.DatabaseName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create MongoDB repository: %w", err)
-	}
-
-	return mongoRepo, nil
 }
 
 // createPostgreSQLRepository creates a PostgreSQL repository instance
@@ -128,13 +139,6 @@ func CreateRepositoryFromConnectionString(ctx context.Context, databaseType, con
 	}
 
 	switch databaseType {
-	case interfaces.DatabaseTypeMongoDB:
-		config.MongoConfig = &interfaces.MongoDBConfig{
-			// Parse connection string to extract MongoDB config
-			// This is a simplified version - in production, you'd want proper parsing
-			Host: "localhost",
-			Port: 27017,
-		}
 	case interfaces.DatabaseTypePostgreSQL:
 		config.PostgresConfig = &interfaces.PostgreSQLConfig{
 			// Parse connection string to extract PostgreSQL config
@@ -153,34 +157,20 @@ func CreateRepositoryFromConnectionString(ctx context.Context, databaseType, con
 // CreateRepositoryFromConfig creates a repository from environment/config
 func CreateRepositoryFromConfig(ctx context.Context, databaseType string, config interface{}) (interfaces.Repository, error) {
 	switch databaseType {
-	case interfaces.DatabaseTypeMongoDB:
-		mongoConfig, ok := config.(*interfaces.MongoDBConfig)
-		if !ok {
-			return nil, fmt.Errorf("invalid MongoDB configuration type")
-		}
-		
-		factoryConfig := &interfaces.RepositoryConfig{
-			DatabaseType: databaseType,
-			MongoConfig:  mongoConfig,
-		}
-		
-		factory := NewRepositoryFactory(factoryConfig)
-		return factory.CreateRepository(ctx)
-		
 	case interfaces.DatabaseTypePostgreSQL:
 		pgConfig, ok := config.(*interfaces.PostgreSQLConfig)
 		if !ok {
 			return nil, fmt.Errorf("invalid PostgreSQL configuration type")
 		}
-		
+
 		factoryConfig := &interfaces.RepositoryConfig{
 			DatabaseType:   databaseType,
 			PostgresConfig: pgConfig,
 		}
-		
+
 		factory := NewRepositoryFactory(factoryConfig)
 		return factory.CreateRepository(ctx)
-		
+
 	default:
 		return nil, fmt.Errorf("unsupported database type: %s", databaseType)
 	}
@@ -197,81 +187,48 @@ func (f *RepositoryFactory) ValidateConfig() error {
 	}
 
 	switch f.config.DatabaseType {
-	case interfaces.DatabaseTypeMongoDB:
-		if f.config.MongoConfig == nil {
-			return fmt.Errorf("MongoDB configuration is required")
-		}
-		return f.validateMongoConfig()
-		
 	case interfaces.DatabaseTypePostgreSQL:
 		if f.config.PostgresConfig == nil {
 			return fmt.Errorf("PostgreSQL configuration is required")
 		}
 		return f.validatePostgreSQLConfig()
-		
+
 	default:
 		return fmt.Errorf("unsupported database type: %s", f.config.DatabaseType)
 	}
 }
 
-// validateMongoConfig validates MongoDB configuration
-func (f *RepositoryFactory) validateMongoConfig() error {
-	config := f.config.MongoConfig
-	
-	if config.Host == "" {
-		return fmt.Errorf("MongoDB host is required")
-	}
-	
-	if config.Port <= 0 {
-		config.Port = 27017 // Default MongoDB port
-	}
-	
-	if config.MaxPoolSize <= 0 {
-		config.MaxPoolSize = 100 // Default pool size
-	}
-	
-	if config.MinPoolSize <= 0 {
-		config.MinPoolSize = 10 // Default minimum pool size
-	}
-	
-	if config.ConnectTimeout <= 0 {
-		config.ConnectTimeout = 10 // Default 10 seconds
-	}
-	
-	return nil
-}
-
 // validatePostgreSQLConfig validates PostgreSQL configuration
 func (f *RepositoryFactory) validatePostgreSQLConfig() error {
 	config := f.config.PostgresConfig
-	
+
 	if config.Host == "" {
 		return fmt.Errorf("PostgreSQL host is required")
 	}
-	
+
 	if config.Port <= 0 {
 		config.Port = 5432 // Default PostgreSQL port
 	}
-	
+
 	if config.SSLMode == "" {
 		config.SSLMode = "disable" // Default SSL mode
 	}
-	
+
 	if config.MaxOpenConnections <= 0 {
 		config.MaxOpenConnections = 50 // Increased default max open connections
 	}
-	
+
 	if config.MaxIdleConnections <= 0 {
 		config.MaxIdleConnections = 10 // Increased default max idle connections
 	}
-	
+
 	if config.MaxLifetime <= 0 {
 		config.MaxLifetime = 300 // Default connection lifetime in seconds
 	}
-	
+
 	if config.ConnectTimeout <= 0 {
 		config.ConnectTimeout = 10 // Default 10 seconds
 	}
-	
+
 	return nil
 }

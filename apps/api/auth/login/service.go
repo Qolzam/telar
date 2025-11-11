@@ -8,6 +8,7 @@ import (
 	"github.com/qolzam/telar/apps/api/auth/errors"
 	"github.com/qolzam/telar/apps/api/auth/models"
 	"github.com/qolzam/telar/apps/api/internal/auth/tokens"
+	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
 	platform "github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/internal/types"
@@ -31,6 +32,43 @@ func NewService(base *platform.BaseService, config *ServiceConfig) *Service {
 	}
 }
 
+// loginQueryBuilder is a private helper for building login service queries
+type loginQueryBuilder struct {
+	query *dbi.Query
+}
+
+func newLoginQueryBuilder() *loginQueryBuilder {
+	return &loginQueryBuilder{
+		query: &dbi.Query{
+			Conditions: []dbi.Field{},
+		},
+	}
+}
+
+func (qb *loginQueryBuilder) WhereUsername(username string) *loginQueryBuilder {
+	qb.query.Conditions = append(qb.query.Conditions, dbi.Field{
+		Name:     "data->>'username'", // JSONB field
+		Value:    username,
+		Operator: "=",
+		IsJSONB:  true,
+	})
+	return qb
+}
+
+func (qb *loginQueryBuilder) WhereObjectID(objectID uuid.UUID) *loginQueryBuilder {
+	qb.query.Conditions = append(qb.query.Conditions, dbi.Field{
+		Name:     "object_id", // Indexed column
+		Value:    objectID,
+		Operator: "=",
+		IsJSONB:  false,
+	})
+	return qb
+}
+
+func (qb *loginQueryBuilder) Build() *dbi.Query {
+	return qb.query
+}
+
 type userAuth struct {
 	ObjectId      uuid.UUID `json:"objectId" bson:"objectId" db:"objectId"`
 	Username      string    `json:"username" bson:"username" db:"username"`
@@ -41,9 +79,8 @@ type userAuth struct {
 }
 
 func (s *Service) FindUserByUsername(ctx context.Context, username string) (*userAuth, error) {
-	res := <-s.base.Repository.FindOne(ctx, "userAuth", struct {
-		Username string `json:"username" bson:"username"`
-	}{Username: username})
+	query := newLoginQueryBuilder().WhereUsername(username).Build()
+	res := <-s.base.Repository.FindOne(ctx, "userAuth", query)
 	if res.Error() != nil {
 		return nil, res.Error()
 	}
@@ -67,9 +104,8 @@ type userProfile struct {
 
 func (s *Service) ReadProfileAndLanguage(ctx context.Context, user userAuth) (*userProfile, string, error) {
 	// Read profile
-	profRes := <-s.base.Repository.FindOne(ctx, "userProfile", struct {
-		ObjectId uuid.UUID `json:"objectId" bson:"objectId" db:"objectId"`
-	}{ObjectId: user.ObjectId})
+	query := newLoginQueryBuilder().WhereObjectID(user.ObjectId).Build()
+	profRes := <-s.base.Repository.FindOne(ctx, "userProfile", query)
 	if profRes.Error() != nil {
 		return nil, "", profRes.Error()
 	}

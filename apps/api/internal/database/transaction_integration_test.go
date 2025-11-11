@@ -15,7 +15,6 @@ import (
 
 	uuid "github.com/gofrs/uuid"
 	"github.com/qolzam/telar/apps/api/internal/database/interfaces"
-	"github.com/qolzam/telar/apps/api/internal/database/mongodb"
 	"github.com/qolzam/telar/apps/api/internal/database/postgresql"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/internal/testutil"
@@ -37,14 +36,8 @@ func TestTransactionIntegration(t *testing.T) {
 		})
 	}
 	
-	// Test MongoDB if available  
-	if suite.Config() != nil {
-		t.Run("MongoDB_Integration", func(t *testing.T) {
-			testTransactionIntegration(t, "mongodb")
-		})
-	}
-	
-	if suite.Config() == nil && suite.Config() == nil {
+
+	if suite.Config() == nil {
 		t.Skip("No databases available for integration testing")
 	}
 }
@@ -88,15 +81,10 @@ func testTransactionIntegration(t *testing.T, dbType string) {
 }
 
 func setupRepository(t *testing.T, dbType string) interfaces.Repository {
-	switch dbType {
-	case "postgresql":
-		return setupPostgreSQLRepo(t)
-	case "mongodb":
-		return setupMongoDBRepo(t)
-	default:
-		t.Fatalf("Unknown database type: %s", dbType)
-		return nil
+	if dbType != "postgresql" {
+		t.Fatalf("Only PostgreSQL is supported, got: %s", dbType)
 	}
+	return setupPostgreSQLRepo(t)
 }
 
 func setupPostgreSQLRepo(t *testing.T) interfaces.Repository {
@@ -123,31 +111,6 @@ func setupPostgreSQLRepo(t *testing.T) interfaces.Repository {
 	return repo
 }
 
-func setupMongoDBRepo(t *testing.T) interfaces.Repository {
-	// Use Config-First pattern instead of direct environment access
-	cfg, err := platformconfig.LoadFromEnv()
-	if err != nil {
-		t.Skipf("Failed to load config: %v", err)
-	}
-	
-	config := &interfaces.MongoDBConfig{
-		Host:           cfg.Database.MongoDB.Host,
-		Port:           cfg.Database.MongoDB.Port,
-		Username:       cfg.Database.MongoDB.Username,
-		Password:       cfg.Database.MongoDB.Password,
-		MaxPoolSize:    cfg.Database.MongoDB.MaxPoolSize,
-		ConnectTimeout: int(cfg.Database.MongoDB.ConnectTimeout.Seconds()),
-		SocketTimeout:  int(cfg.Database.MongoDB.SocketTimeout.Seconds()),
-	}
-	
-	databaseName := cfg.Database.MongoDB.Database
-	repo, err := mongodb.NewMongoRepository(context.Background(), config, databaseName)
-	if err != nil {
-		t.Skipf("MongoDB not available: %v", err)
-	}
-	
-	return repo
-}
 
 
 func testBasicLifecycle(t *testing.T, repo interfaces.Repository) {
@@ -425,8 +388,6 @@ func BenchmarkTransactionE2EPerformance(b *testing.B) {
 	
 	if suite.Config() != nil {
 		repo = setupPostgreSQLRepo(&testing.T{})
-	} else if suite.Config() != nil {
-		repo = setupMongoDBRepo(&testing.T{})
 	} else {
 		b.Skip("No databases available for benchmarking")
 	}

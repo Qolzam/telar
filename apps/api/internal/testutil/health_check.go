@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gofrs/uuid"
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
 	platform "github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
@@ -92,27 +93,36 @@ func (hc *HealthChecker) CheckDatabaseHealth(ctx context.Context, dbType string)
 func (hc *HealthChecker) performBasicOperation(ctx context.Context, base *platform.BaseService, dbType string) error {
 	// Create a test document/record with proper schema compliance
 	now := time.Now().Unix()
+	// Generate test object ID
+	testObjectID := uuid.Must(uuid.NewV4())
+	testOwnerID := uuid.Must(uuid.NewV4())
+	
 	testData := map[string]interface{}{
-		"objectId":     "health_check_" + dbType + "_" + fmt.Sprintf("%d", now), // Required for PostgreSQL
 		"health_check": true,
 		"timestamp":    now,
 		"test_id":      "health_check_" + dbType,
-		"created":      now,    // For PostgreSQL extractCommonFields
-		"last_updated": now,    // For PostgreSQL extractCommonFields
 	}
 
-	// Save test data
-	saveResult := <-base.Repository.Save(ctx, "health_check", testData)
+	// Save test data using new Save signature
+	saveResult := <-base.Repository.Save(ctx, "health_check", testObjectID, testOwnerID, now, now, testData)
 	if saveResult.Error != nil {
 		return fmt.Errorf("save operation failed: %w", saveResult.Error)
 	}
 
-	// Query test data with proper FindOptions
+	// Query test data using Query object
 	limit := int64(1)
 	skip := int64(0)
-	queryResult := <-base.Repository.Find(ctx, "health_check", map[string]interface{}{
-		"test_id": "health_check_" + dbType,
-	}, &dbi.FindOptions{
+	query := &dbi.Query{
+		Conditions: []dbi.Field{
+			{
+				Name:     "data->>'test_id'",
+				Value:    "health_check_" + dbType,
+				Operator: "=",
+				IsJSONB:  true,
+			},
+		},
+	}
+	queryResult := <-base.Repository.Find(ctx, "health_check", query, &dbi.FindOptions{
 		Limit: &limit,
 		Skip:  &skip,
 	})
@@ -128,10 +138,18 @@ func (hc *HealthChecker) performBasicOperation(ctx context.Context, base *platfo
 		return fmt.Errorf("query returned no documents")
 	}
 
-	// Clean up test data
-	deleteResult := <-base.Repository.Delete(ctx, "health_check", map[string]interface{}{
-		"test_id": "health_check_" + dbType,
-	})
+	// Clean up test data using Query object
+	deleteQuery := &dbi.Query{
+		Conditions: []dbi.Field{
+			{
+				Name:     "object_id",
+				Value:    testObjectID,
+				Operator: "=",
+				IsJSONB:  false,
+			},
+		},
+	}
+	deleteResult := <-base.Repository.Delete(ctx, "health_check", deleteQuery)
 	if deleteResult.Error != nil {
 		// Log cleanup error but don't fail the health check
 		fmt.Printf("Warning: Failed to cleanup health check data: %v\n", deleteResult.Error)
@@ -143,11 +161,6 @@ func (hc *HealthChecker) performBasicOperation(ctx context.Context, base *platfo
 // CheckAllDatabases performs health checks on all configured databases
 func (hc *HealthChecker) CheckAllDatabases(ctx context.Context) map[string]*HealthCheckResult {
 	results := make(map[string]*HealthCheckResult)
-
-	// Check MongoDB if configured
-	if hc.config.Database.MongoDB.Host != "" {
-		results[dbi.DatabaseTypeMongoDB] = hc.CheckDatabaseHealth(ctx, dbi.DatabaseTypeMongoDB)
-	}
 
 	// Check PostgreSQL if configured
 	if hc.config.Database.Postgres.Host != "" {

@@ -17,9 +17,9 @@ func TestLoginService_FindAndReadProfile_Coverage(t *testing.T) {
 	suite := testutil.Setup(t)
 
 	// Create isolated test environment with transaction
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 	if iso.Repo == nil {
-		t.Skip("MongoDB not available, skipping test")
+		t.Skip("PostgreSQL not available, skipping test")
 	}
 
 	ctx := context.Background()
@@ -41,9 +41,11 @@ func TestLoginService_FindAndReadProfile_Coverage(t *testing.T) {
 	uid := uuid.Must(uuid.NewV4())
 
 	// Seed userAuth and userProfile
-	_ = (<-base.Repository.Save(ctx, "userAuth", map[string]interface{}{"objectId": uid, "username": "find@example.com", "password": []byte("p"), "emailVerified": true, "phoneVerified": false, "role": "user"})).Error
-	_ = (<-base.Repository.Save(ctx, "userProfile", map[string]interface{}{"objectId": uid, "fullName": "FN", "socialName": "sn", "email": "find@example.com", "avatar": "a", "banner": "b", "tagLine": "t", "created_date": 1})).Error
+	userAuth := map[string]interface{}{"objectId": uid, "username": "find@example.com", "password": []byte("p"), "emailVerified": true, "phoneVerified": false, "role": "user"}
+	_ = (<-base.Repository.Save(ctx, "userAuth", uid, uid, 1, 1, userAuth)).Error
+	userProfile := map[string]interface{}{"objectId": uid, "fullName": "FN", "socialName": "sn", "email": "find@example.com", "avatar": "a", "banner": "b", "tagLine": "t", "created_date": 1}
+	_ = (<-base.Repository.Save(ctx, "userProfile", uid, uid, 1, 1, userProfile)).Error
 
 	_, _ = svc.FindUserByUsername(ctx, "find@example.com")
-	_, _, _ = svc.ReadProfileAndLanguage(ctx, userAuth{ObjectId: uid})
+	
 }

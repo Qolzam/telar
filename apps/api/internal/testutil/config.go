@@ -17,8 +17,6 @@ import (
 
 // TestConfig holds secure, environment-aware configuration for tests.
 type TestConfig struct {
-	MongoHost     string
-	MongoDatabase string
 	PGHost        string
 	PGUser        string
 	PGPassword    string
@@ -103,8 +101,6 @@ func LoadTestConfig() (*TestConfig, error) {
 	pgHost, pgUser, pgPassword, pgDatabase, pgSchema := parsePostgresDSN()
 
 	cfg := &TestConfig{
-		MongoHost:     getEnv("mongo_host", "127.0.0.1"),
-		MongoDatabase: getEnv("mongo_database", "telar_social_test"),
 		PGHost:        pgHost,
 		PGUser:        pgUser,
 		PGPassword:    pgPassword,
@@ -137,12 +133,12 @@ func LoadTestConfig() (*TestConfig, error) {
 		PhoneSourceNumber:   getEnv("phone_source_number", "+1234567890"),
 		PhoneAuthToken:      getEnv("phone_auth_token", "test-phone-token"),
 		PhoneAuthId:         getEnv("phone_auth_id", "test-phone-id"),
-		DBType:              getEnv("db_type", "mongo"),
+		DBType:              getEnv("db_type", "postgres"),
 	}
 
 
-	if cfg.MongoHost == "" && cfg.PGHost == "" {
-		return nil, fmt.Errorf("no database hosts configured: set MONGO_URI and/or POSTGRES_DSN")
+	if cfg.PGHost == "" {
+		return nil, fmt.Errorf("no PostgreSQL host configured: set POSTGRES_DSN or pg_host")
 	}
 	return cfg, nil
 }
@@ -154,18 +150,7 @@ func (c *TestConfig) ToServiceConfig(dbType string) *platform.ServiceConfig {
 		DatabaseName: c.getDBName(dbType),
 	}
 
-	if dbType == dbi.DatabaseTypeMongoDB {
-		sc.MongoConfig = &dbi.MongoDBConfig{
-			Host: c.MongoHost,
-			Port: 27017,
-			MaxPoolSize:    200,
-			MinPoolSize:    10,
-			ConnectTimeout: 30,
-			SocketTimeout:  60,
-			MaxIdleTime:    300,
-			ServerSelectionTimeout: 5,
-		}
-	} else if dbType == dbi.DatabaseTypePostgreSQL {
+	if dbType == dbi.DatabaseTypePostgreSQL {
 		sc.PostgreSQLConfig = &dbi.PostgreSQLConfig{
 			Host:               c.PGHost,
 			Port:               5432,
@@ -235,18 +220,7 @@ func (c *TestConfig) ToPlatformConfig(dbType string) *platformconfig.Config {
 		},
 	}
 
-	if dbType == dbi.DatabaseTypeMongoDB {
-		cfg.Database.MongoDB = platformconfig.MongoDBConfig{
-			Host:           c.MongoHost,
-			Port:           27017,
-			Database:       c.MongoDatabase,
-			Username:       "",
-			Password:       "",
-			MaxPoolSize:    200,
-			ConnectTimeout: 30 * time.Second,
-			SocketTimeout:  60 * time.Second,
-		}
-	} else if dbType == dbi.DatabaseTypePostgreSQL {
+	if dbType == dbi.DatabaseTypePostgreSQL {
 		cfg.Database.Postgres = platformconfig.PostgreSQLConfig{
 			Host:             c.PGHost,
 			Port:             5432,
@@ -264,9 +238,6 @@ func (c *TestConfig) ToPlatformConfig(dbType string) *platformconfig.Config {
 }
 
 func (c *TestConfig) getDBName(dbType string) string {
-	if dbType == dbi.DatabaseTypeMongoDB {
-		return c.MongoDatabase
-	}
 	return c.PGDatabase
 }
 
@@ -297,7 +268,7 @@ func getBoolEnv(key string, defVal bool) bool {
 }
 
 // SanitizeTestName cleans a test name to be used safely in DB/schema names.
-// Enforces length limits to prevent MongoDB InvalidNamespace errors (63 char limit).
+// Enforces length limits to respect PostgreSQL identifier rules (63 char limit).
 func SanitizeTestName(name string) string {
 	name = strings.ReplaceAll(name, "/", "_")
 	name = strings.ReplaceAll(name, " ", "_")
@@ -305,7 +276,7 @@ func SanitizeTestName(name string) string {
 	name = strings.ToLower(reg.ReplaceAllString(name, ""))
 
 	// Enforce length limits for database naming compatibility
-	// MongoDB has a 63-character limit, reserve 22 chars for "test_" prefix + "_" + 16-char UUID
+	// PostgreSQL identifiers are limited to 63 characters; reserve 22 chars for "test_" prefix + "_" + 16-char UUID
 	// This leaves 41 characters maximum for the sanitized test name
 	const maxTestNameLength = 41
 	if len(name) > maxTestNameLength {

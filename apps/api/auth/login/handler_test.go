@@ -23,9 +23,9 @@ import (
 func TestLogin_Handler_SSR_OK_Minimal(t *testing.T) {
 	suite := testutil.Setup(t)
 
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 	if iso.Repo == nil {
-		t.Skip("MongoDB not available, skipping test")
+		t.Skip("PostgreSQL not available, skipping test")
 	}
 
 	k := suite.GetTestJWTConfig().PrivateKey
@@ -50,9 +50,9 @@ func TestLogin_Handler_SSR_OK_Minimal(t *testing.T) {
 func TestLogin_Handle_SPA_POST_RedirectBranch_Coverage(t *testing.T) {
 	suite := testutil.Setup(t)
 
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 	if iso.Repo == nil {
-		t.Skip("MongoDB not available, skipping test")
+		t.Skip("PostgreSQL not available, skipping test")
 	}
 
 	ctx := context.Background()
@@ -90,8 +90,10 @@ func TestLogin_Handle_SPA_POST_RedirectBranch_Coverage(t *testing.T) {
 
 	uid := uuid.Must(uuid.NewV4())
 	hash, _ := utils.Hash("Passw0rd!")
-	_ = (<-base.Repository.Save(ctx, "userAuth", map[string]interface{}{"objectId": uid, "username": "u@example.com", "password": hash, "role": "user", "emailVerified": true})).Error
-	_ = (<-base.Repository.Save(ctx, "userProfile", map[string]interface{}{"objectId": uid, "fullName": "User U", "socialName": "useru", "email": "u@example.com", "avatar": "", "banner": "", "tagLine": "", "created_date": 1})).Error
+	userAuth := map[string]interface{}{"objectId": uid, "username": "u@example.com", "password": hash, "role": "user", "emailVerified": true}
+	_ = (<-base.Repository.Save(ctx, "userAuth", uid, uid, 1, 1, userAuth)).Error
+	userProfile := map[string]interface{}{"objectId": uid, "fullName": "User U", "socialName": "useru", "email": "u@example.com", "avatar": "", "banner": "", "tagLine": "", "created_date": 1}
+	_ = (<-base.Repository.Save(ctx, "userProfile", uid, uid, 1, 1, userProfile)).Error
 
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=u@example.com&password=Passw0rd!"))
 	req.Header.Set(types.HeaderContentType, "application/x-www-form-urlencoded")
@@ -101,9 +103,9 @@ func TestLogin_Handle_SPA_POST_RedirectBranch_Coverage(t *testing.T) {
 func TestLogin_Handle_SSR_POST_SetsRedirect(t *testing.T) {
 	suite := testutil.Setup(t)
 
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 	if iso.Repo == nil {
-		t.Skip("MongoDB not available, skipping test")
+		t.Skip("PostgreSQL not available, skipping test")
 	}
 
 	ctx := context.Background()
@@ -141,8 +143,10 @@ func TestLogin_Handle_SSR_POST_SetsRedirect(t *testing.T) {
 
 	uid := uuid.Must(uuid.NewV4())
 	hash, _ := utils.Hash("Passw0rd!")
-	_ = (<-base.Repository.Save(ctx, "userAuth", map[string]interface{}{"objectId": uid, "username": "u@example.com", "password": hash, "role": "user", "emailVerified": true})).Error
-	_ = (<-base.Repository.Save(ctx, "userProfile", map[string]interface{}{"objectId": uid, "fullName": "User U", "socialName": "useru", "email": "u@example.com", "avatar": "", "banner": "", "tagLine": "", "created_date": 1})).Error
+	userAuth := map[string]interface{}{"objectId": uid, "username": "u@example.com", "password": hash, "role": "user", "emailVerified": true}
+	_ = (<-base.Repository.Save(ctx, "userAuth", uid, uid, 1, 1, userAuth)).Error
+	userProfile := map[string]interface{}{"objectId": uid, "fullName": "User U", "socialName": "useru", "email": "u@example.com", "avatar": "", "banner": "", "tagLine": "", "created_date": 1}
+	_ = (<-base.Repository.Save(ctx, "userProfile", uid, uid, 1, 1, userProfile)).Error
 
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=u@example.com&password=Passw0rd!"))
 	req.Header.Set(types.HeaderContentType, "application/x-www-form-urlencoded")
@@ -178,9 +182,9 @@ func TestLogin_Handle_MissingFields(t *testing.T) {
 func TestLogin_Github_Google_Redirects(t *testing.T) {
 	suite := testutil.Setup(t)
 
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 	if iso.Repo == nil {
-		t.Skip("MongoDB not available, skipping test")
+		t.Skip("PostgreSQL not available, skipping test")
 	}
 
 	ctx := context.Background()

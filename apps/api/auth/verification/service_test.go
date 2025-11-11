@@ -37,9 +37,9 @@ func TestVerificationService_All_Coverage(t *testing.T) {
 	}
 
 	suite := testutil.Setup(t)
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 	if iso.Repo == nil {
-		t.Skip("MongoDB not available, skipping test")
+		t.Skip("PostgreSQL not available, skipping test")
 	}
 
 	ctx := context.Background()
@@ -68,9 +68,8 @@ func TestVerificationService_All_Coverage(t *testing.T) {
 	uid := uuid.Must(uuid.NewV4())
 	vid := uuid.Must(uuid.NewV4())
 
-	// Phase 1.4: Test only secure verification method (legacy support removed)
 	// Ensure verification doc exists with proper secure fields
-	_ = (<-base.Repository.Save(ctx, "userVerification", map[string]interface{}{
+	_ = (<-base.Repository.Save(ctx, "userVerification", vid, uid, 1, 1, map[string]interface{}{
 		"objectId":        vid,
 		"userId":          uid,
 		"code":            "000000",

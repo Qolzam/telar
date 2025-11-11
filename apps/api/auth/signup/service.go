@@ -9,7 +9,7 @@ import (
 	"github.com/qolzam/telar/apps/api/auth/errors"
 	"github.com/qolzam/telar/apps/api/auth/models"
 	"github.com/qolzam/telar/apps/api/auth/security"
-	"github.com/qolzam/telar/apps/api/internal/database/interfaces"
+	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
 	platform "github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	platformemail "github.com/qolzam/telar/apps/api/internal/platform/email"
@@ -71,6 +71,33 @@ func NewService(base *platform.BaseService, config *ServiceConfig) *Service {
 	return &Service{base: base, config: config} 
 }
 
+// signupQueryBuilder is a private helper for building signup service queries
+type signupQueryBuilder struct {
+	query *dbi.Query
+}
+
+func newSignupQueryBuilder() *signupQueryBuilder {
+	return &signupQueryBuilder{
+		query: &dbi.Query{
+			Conditions: []dbi.Field{},
+		},
+	}
+}
+
+func (qb *signupQueryBuilder) WhereObjectID(objectID uuid.UUID) *signupQueryBuilder {
+	qb.query.Conditions = append(qb.query.Conditions, dbi.Field{
+		Name:     "object_id", // Indexed column
+		Value:    objectID,
+		Operator: "=",
+		IsJSONB:  false,
+	})
+	return qb
+}
+
+func (qb *signupQueryBuilder) Build() *dbi.Query {
+	return qb.query
+}
+
 // WithEmailSender sets the email sender dependency on the signup service.
 func (s *Service) WithEmailSender(sender platformemail.Sender) *Service {
 	s.emailSender = sender
@@ -78,7 +105,15 @@ func (s *Service) WithEmailSender(sender platformemail.Sender) *Service {
 }
 
 func (s *Service) SaveUserVerification(ctx context.Context, userVerification *models.UserVerification) error {
-	result := <-s.base.Repository.Save(ctx, userVerificationCollectionName, userVerification)
+	result := <-s.base.Repository.Save(
+		ctx,
+		userVerificationCollectionName,
+		userVerification.ObjectId,
+		userVerification.UserId, // ownerUserId = UserId for verification
+		userVerification.CreatedDate,
+		userVerification.LastUpdated,
+		userVerification,
+	)
 	if result.Error != nil {
 		return errors.WrapDatabaseError(fmt.Errorf("failed to save user verification: %w", result.Error))
 	}
@@ -208,9 +243,8 @@ func (s *Service) InitiateEmailVerification(ctx context.Context, input EmailVeri
 
 // ResendVerificationEmail resends verification email with a new code
 func (s *Service) ResendVerificationEmail(ctx context.Context, verificationId uuid.UUID) error {
-	res := <-s.base.Repository.FindOne(ctx, userVerificationCollectionName, struct {
-		ObjectId uuid.UUID `json:"objectId" bson:"objectId"`
-	}{ObjectId: verificationId})
+	query := newSignupQueryBuilder().WhereObjectID(verificationId).Build()
+	res := <-s.base.Repository.FindOne(ctx, userVerificationCollectionName, query)
 	
 	if res.Error() != nil {
 		return errors.WrapUserNotFoundError(fmt.Errorf("verification not found"))
@@ -229,16 +263,13 @@ func (s *Service) ResendVerificationEmail(ctx context.Context, verificationId uu
 	expiresAt := time.Now().Add(15 * time.Minute).Unix()
 	
 	update := map[string]interface{}{
-		"$set": map[string]interface{}{
-			"code":        newCode,
-			"expiresAt":   expiresAt,
-			"lastUpdated": time.Now().Unix(),
-		},
+		"code":        newCode,
+		"expiresAt":   expiresAt,
+		"lastUpdated": time.Now().Unix(),
 	}
 	
-	err := (<-s.base.Repository.Update(ctx, userVerificationCollectionName, struct {
-		ObjectId uuid.UUID `json:"objectId" bson:"objectId"`
-	}{ObjectId: verificationId}, update, &interfaces.UpdateOptions{})).Error
+	query = newSignupQueryBuilder().WhereObjectID(verificationId).Build()
+	err := (<-s.base.Repository.Update(ctx, userVerificationCollectionName, query, update, &dbi.UpdateOptions{})).Error
 	
 	if err != nil {
 		return errors.WrapDatabaseError(fmt.Errorf("failed to update verification: %w", err))
@@ -372,7 +403,20 @@ func (s *Service) InitiatePhoneVerification(ctx context.Context, input PhoneVeri
 
 // UpdateVerification updates a verification record in the database
 func (s *Service) UpdateVerification(ctx context.Context, filter *models.DatabaseFilter, data *models.DatabaseUpdate) error {
-	result := <-s.base.Repository.Update(ctx, userVerificationCollectionName, filter, data, &interfaces.UpdateOptions{})
+	// Convert DatabaseFilter to Query object
+	query := newSignupQueryBuilder()
+	if filter != nil && filter.ObjectId != nil {
+		query.WhereObjectID(*filter.ObjectId)
+	}
+	queryObj := query.Build()
+	
+	// Convert DatabaseUpdate to map[string]interface{}
+	updates := make(map[string]interface{})
+	if data != nil && data.Set != nil {
+		updates = data.Set
+	}
+	
+	result := <-s.base.Repository.Update(ctx, userVerificationCollectionName, queryObj, updates, &dbi.UpdateOptions{})
 	if result.Error != nil {
 		return errors.WrapDatabaseError(fmt.Errorf("failed to update verification: %w", result.Error))
 	}

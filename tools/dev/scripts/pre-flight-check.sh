@@ -30,10 +30,6 @@ readonly POSTGRES_DB="telar_social_test"
 readonly POSTGRES_USER="postgres"
 readonly POSTGRES_PASSWORD="postgres"
 
-readonly MONGO_HOST="localhost"
-readonly MONGO_PORT="27017"
-readonly MONGO_DB="telar_social"
-
 # Service configurations
 readonly API_PORT="8080"
 readonly WEB_PORT="3000"
@@ -124,49 +120,6 @@ check_postgresql() {
     else
         log_warning "psql client not available, skipping detailed PostgreSQL checks"
         log_success "PostgreSQL port is accessible"
-        return 0
-    fi
-}
-
-# Check MongoDB connectivity
-check_mongodb() {
-    log_info "Checking MongoDB connectivity..."
-    
-    # Check if MongoDB container is running
-    if ! docker ps --format "table {{.Names}}" | grep -q "telar-mongo"; then
-        log_error "MongoDB container is not running"
-        return 1
-    fi
-    
-    # Check MongoDB port connectivity
-    if ! nc -z "$MONGO_HOST" "$MONGO_PORT" 2>/dev/null; then
-        log_error "MongoDB port $MONGO_PORT is not accessible"
-        return 1
-    fi
-    
-    # Test MongoDB connection
-    if command -v mongosh >/dev/null 2>&1; then
-        if mongosh --host "$MONGO_HOST:$MONGO_PORT" --eval "db.runCommand('ping')" >/dev/null 2>&1; then
-            log_success "MongoDB connection successful"
-            
-            # Get MongoDB version and status
-            local mongo_version
-            mongo_version=$(mongosh --host "$MONGO_HOST:$MONGO_PORT" --quiet --eval "db.version()" 2>/dev/null | xargs)
-            log_info "MongoDB Version: $mongo_version"
-            
-            # Check database stats
-            local db_stats
-            db_stats=$(mongosh --host "$MONGO_HOST:$MONGO_PORT" --quiet --eval "db.stats().collections" 2>/dev/null | xargs)
-            log_info "Collections Count: $db_stats"
-            
-            return 0
-        else
-            log_error "MongoDB connection failed"
-            return 1
-        fi
-    else
-        log_warning "mongosh client not available, skipping detailed MongoDB checks"
-        log_success "MongoDB port is accessible"
         return 0
     fi
 }
@@ -324,20 +277,14 @@ main() {
     
     # 2. Database Connectivity Checks
     log_section "Database Connectivity Checks"
-    
+
     local postgres_status=0
-    local mongo_status=0
-    
+
     if ! check_postgresql; then
         postgres_status=1
         overall_status=1
     fi
-    
-    if ! check_mongodb; then
-        mongo_status=1
-        overall_status=1
-    fi
-    
+
     # 3. Service Health Checks
     log_section "Service Health Checks"
     
@@ -379,13 +326,7 @@ main() {
     else
         log_error "❌ PostgreSQL: Not Ready"
     fi
-    
-    if [ $mongo_status -eq 0 ]; then
-        log_success "✅ MongoDB: Ready"
-    else
-        log_error "❌ MongoDB: Not Ready"
-    fi
-    
+
     # Service status
     if [ $api_status -eq 0 ]; then
         log_success "✅ API Server: Ready"
@@ -408,8 +349,8 @@ main() {
     echo ""
     log_highlight "🎯 Recommendations:"
     
-    if [ $postgres_status -ne 0 ] || [ $mongo_status -ne 0 ]; then
-        log_warning "• Start databases: make up-dbs-dev"
+    if [ $postgres_status -ne 0 ]; then
+        log_warning "• Start PostgreSQL: make up-dbs-dev"
     fi
     
     if [ $api_status -ne 0 ] && [ $web_status -ne 0 ]; then

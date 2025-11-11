@@ -18,7 +18,7 @@ import (
 	"github.com/qolzam/telar/apps/api/profile/services"
 )
 
-func newProfileApp(t *testing.T, base *platform.BaseService, config *testutil.TestConfig) *fiber.App {
+func newProfileApp(t *testing.T, base *platform.BaseService, config *testutil.TestConfig, hmacSecret string) *fiber.App {
 	app := fiber.New()
 
 	app.Use(func(c *fiber.Ctx) error {
@@ -42,7 +42,10 @@ func newProfileApp(t *testing.T, base *platform.BaseService, config *testutil.Te
 		return c.Next()
 	})
 
-	platformCfg := config.ToPlatformConfig(dbi.DatabaseTypeMongoDB)
+	// Use the provided HMAC secret to ensure it matches the test's signing secret
+	platformCfg := config.ToPlatformConfig(dbi.DatabaseTypePostgreSQL)
+	// Override HMAC secret to match the test's signing secret
+	platformCfg.HMAC.Secret = hmacSecret
 	
 	profileService := services.NewService(base, platformCfg)
 	profileHandler := NewProfileHandler(profileService, platformCfg.JWT, platformCfg.HMAC)
@@ -58,17 +61,17 @@ func newProfileApp(t *testing.T, base *platform.BaseService, config *testutil.Te
 func TestProfile_PublicAndHMACRoutes_OK(t *testing.T) {
 	suite := testutil.Setup(t)
 
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 	if iso.Repo == nil {
-		t.Skip("MongoDB not available, skipping test")
+		t.Skip("PostgreSQL not available, skipping test")
 	}
 
-	mongoSvc, err := platform.NewBaseService(context.Background(), iso.Config)
+	baseSvc, err := platform.NewBaseService(context.Background(), iso.Config)
 	if err != nil {
-		t.Fatalf("failed to build mongodb base service: %v", err)
+		t.Fatalf("failed to build postgresql base service: %v", err)
 	}
 
-	app := newProfileApp(t, mongoSvc, iso.LegacyConfig)
+	app := newProfileApp(t, baseSvc, iso.LegacyConfig, iso.Config.HMAC.Secret)
 
 	httpHelper := testutil.NewHTTPHelper(t, app)
 
@@ -112,8 +115,8 @@ func TestProfile_PublicAndHMACRoutes_OK(t *testing.T) {
 	updPayload := map[string]string{"fullName": "Test User"}
 	respUpd := httpHelper.NewRequest(http.MethodPut, "/profile/", updPayload).
 		WithAuthHeaders(secret, validUUID).Send()
-	require.True(t, respUpd.StatusCode == http.StatusOK || respUpd.StatusCode == http.StatusUnauthorized || respUpd.StatusCode == http.StatusInternalServerError,
-		"PUT /profile/ should return 200, 401, or 500, got %d", respUpd.StatusCode)
+	require.Equal(t, http.StatusOK, respUpd.StatusCode,
+		"PUT /profile/ should return 200, got %d", respUpd.StatusCode)
 
 	respDto := httpHelper.NewRequest(http.MethodGet, fmt.Sprintf("/profile/dto/id/%s", validUUID), nil).
 		WithAuthHeaders(secret, validUUID).Send()
