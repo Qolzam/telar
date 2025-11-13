@@ -1,0 +1,109 @@
+{
+  "tabs": {
+    "general": "General",
+    "notifications": "Notifications",
+    "social": "Social Links",
+    "security": "Security",
+    "language": "Language",
+    "theme": "Theme"
+  },
+  "general": {
+    "title": "General Settings",
+    "description": "Update your personal information",
+    "avatar": {
+      "allowedFormats": "Allowed *.jpeg, *.jpg, *.png, *.gif",
+      "maxSize": "Max size of 3.1 MB"
+    },
+    "fields": {
+      "fullName": "Full Name",
+      "socialName": "Social Name",
+      "tagLine": "Tag Line",
+      "tagLinePlaceholder": "A short description about you",
+      "email": "Email Address",
+      "bio": "Bio",
+      "location": "Location",
+      "company": "Company",
+      "website": "Website",
+      "websitePlaceholder": "https://example.com"
+    }
+  },
+  "theme": {
+    "title": "Theme Preferences",
+    "description": "Customize the appearance of your interface. You can choose a specific theme or let it follow your system settings.",
+    "colorScheme": "Color Scheme",
+    "modes": {
+      "light": {
+        "label": "Light",
+        "description": "Always use light theme regardless of system settings"
+      },
+      "dark": {
+        "label": "Dark",
+        "description": "Always use dark theme regardless of system settings"
+      },
+      "system": {
+        "label": "System",
+        "description": "Follow your system settings (Currently: {{mode}})"
+      }
+    },
+    "active": "Active",
+    "info": {
+      "title": "Theme Information",
+      "currentTheme": "Current theme: {{theme}}",
+      "persistence": "Your theme preference is saved automatically and will be restored when you return to the application."
+    }
+  },
+  "language": {
+    "title": "Language Preferences",
+    "description": "Choose your preferred language for the application interface.",
+    "selectLanguage": "Select Language",
+    "active": "Active",
+    "rtl": "RTL",
+    "descriptions": {
+      "ltr": "{{language}} - Left to right",
+      "rtl": "{{language}} - Right to left"
+    },
+    "info": {
+      "title": "Language Information",
+      "currentLanguage": "Current language: {{language}}",
+      "persistence": "Your language preference is saved automatically and will be applied across all pages."
+    }
+  },
+  "security": {
+    "title": "Security Settings",
+    "changePassword": "Change Password",
+    "fields": {
+      "currentPassword": "Current Password",
+      "newPassword": "New Password",
+      "confirmPassword": "Confirm New Password"
+    },
+    "actions": {
+      "update": "Update Password",
+      "updating": "Updating..."
+    }
+  },
+  "social": {
+    "title": "Social Links",
+    "description": "Add your social media profiles",
+    "fields": {
+      "facebook": "Facebook",
+      "twitter": "Twitter",
+      "instagram": "Instagram",
+      "linkedin": "LinkedIn",
+      "github": "GitHub"
+    }
+  },
+  "notifications": {
+    "title": "Notification Preferences",
+    "description": "Manage how you receive notifications",
+    "email": "Email Notifications",
+    "push": "Push Notifications",
+    "sms": "SMS Notifications"
+  },
+  "messages": {
+    "profileUpdated": "Profile updated successfully",
+    "passwordChanged": "Password changed successfully",
+    "settingsSaved": "Settings saved successfully",
+    "errorLoading": "Failed to load profile",
+    "errorSaving": "Failed to save changes"
+  }
+}

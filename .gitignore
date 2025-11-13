@@ -130,3 +130,4 @@ terraform.tfvars
 /docs/build/
 /*.md.bak
 /docs/notes/
+node_modules

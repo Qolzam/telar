@@ -33,6 +33,53 @@ func NewService(base *platform.BaseService, privateKey string, cfg *platformconf
 	}
 }
 
+// adminQueryBuilder is a private helper for building admin service queries
+type adminQueryBuilder struct {
+	query *dbi.Query
+}
+
+func newAdminQueryBuilder() *adminQueryBuilder {
+	return &adminQueryBuilder{
+		query: &dbi.Query{
+			Conditions: []dbi.Field{},
+		},
+	}
+}
+
+func (qb *adminQueryBuilder) WhereRole(role string) *adminQueryBuilder {
+	qb.query.Conditions = append(qb.query.Conditions, dbi.Field{
+		Name:     "data->>'role'", // JSONB field
+		Value:    role,
+		Operator: "=",
+		IsJSONB:  true,
+	})
+	return qb
+}
+
+func (qb *adminQueryBuilder) WhereUsername(username string) *adminQueryBuilder {
+	qb.query.Conditions = append(qb.query.Conditions, dbi.Field{
+		Name:     "data->>'username'", // JSONB field
+		Value:    username,
+		Operator: "=",
+		IsJSONB:  true,
+	})
+	return qb
+}
+
+func (qb *adminQueryBuilder) WhereObjectID(objectID uuid.UUID) *adminQueryBuilder {
+	qb.query.Conditions = append(qb.query.Conditions, dbi.Field{
+		Name:     "object_id", // Indexed column
+		Value:    objectID,
+		Operator: "=",
+		IsJSONB:  false,
+	})
+	return qb
+}
+
+func (qb *adminQueryBuilder) Build() *dbi.Query {
+	return qb.query
+}
+
 type userAuth struct {
 	ObjectId      uuid.UUID `json:"objectId" bson:"objectId"`
 	Username      string    `json:"username" bson:"username"`
@@ -47,9 +94,8 @@ type userAuth struct {
 // CheckAdmin checks if any admin exists in the system
 // This method is used for system status checks, not for preventing multiple admin creation
 func (s *Service) CheckAdmin(ctx context.Context) (bool, error) {
-	res := <-s.base.Repository.FindOne(ctx, "userAuth", struct {
-		Role string `json:"role" bson:"role"`
-	}{Role: "admin"})
+	query := newAdminQueryBuilder().WhereRole("admin").Build()
+	res := <-s.base.Repository.FindOne(ctx, "userAuth", query)
 	if res.Error() != nil {
 		return false, nil
 	}
@@ -71,9 +117,8 @@ func (s *Service) CreateAdmin(ctx context.Context, fullName, email, password str
 	// --- THE FIX: Use a single transaction for all database operations ---
 	err := s.base.Repository.WithTransaction(ctx, func(txCtx context.Context) error {
 		// 1. Check if admin exists (within transaction)
-		// We can use a more specific filter here for clarity.
-		findFilter := map[string]interface{}{"username": email, "role": "admin"}
-		existingAdminCheck := <-s.base.Repository.FindOne(txCtx, "userAuth", findFilter)
+		query := newAdminQueryBuilder().WhereUsername(email).WhereRole("admin").Build()
+		existingAdminCheck := <-s.base.Repository.FindOne(txCtx, "userAuth", query)
 
 		// Use the robust existence check pattern
 		var dummy models.UserAuth
@@ -106,7 +151,8 @@ func (s *Service) CreateAdmin(ctx context.Context, fullName, email, password str
 			CreatedDate:   now,
 			LastUpdated:   now,
 		}
-		if err := (<-s.base.Repository.Save(txCtx, "userAuth", ua)).Error; err != nil {
+		saveAuthResult := <-s.base.Repository.Save(txCtx, "userAuth", ua.ObjectId, ua.ObjectId, ua.CreatedDate, ua.LastUpdated, ua)
+		if err := saveAuthResult.Error; err != nil {
 			return fmt.Errorf("failed to save user auth: %w", err)
 		}
 
@@ -122,7 +168,8 @@ func (s *Service) CreateAdmin(ctx context.Context, fullName, email, password str
 			CreatedDate: now,
 			LastUpdated: now,
 		}
-		if err := (<-s.base.Repository.Save(txCtx, "userProfile", &up)).Error; err != nil {
+		saveProfileResult := <-s.base.Repository.Save(txCtx, "userProfile", up.ObjectId, up.ObjectId, up.CreatedDate, up.LastUpdated, &up)
+		if err := saveProfileResult.Error; err != nil {
 			return fmt.Errorf("failed to save user profile: %w", err)
 		}
 
@@ -137,8 +184,12 @@ func (s *Service) CreateAdmin(ctx context.Context, fullName, email, password str
 			// Already a typed AuthError, return it directly
 			return "", authErr
 		}
-		// Otherwise, wrap as database error
-		return "", authErrors.WrapDatabaseError(err)
+		// Check if it's the "user already exists" error
+		if err == authErrors.ErrUserAlreadyExists || errors.Is(err, authErrors.ErrUserAlreadyExists) {
+			return "", authErrors.ErrUserAlreadyExists
+		}
+		// Otherwise, wrap as database error but preserve the underlying error message
+		return "", authErrors.NewAuthError(authErrors.CodeDatabaseError, fmt.Sprintf("Database operation failed: %v", err), err)
 	}
 	// --- END OF FIX ---
 
@@ -168,10 +219,8 @@ func (s *Service) CreateAdmin(ctx context.Context, fullName, email, password str
 
 func (s *Service) Login(ctx context.Context, email, password string) (string, error) {
 	// Find admin by username and role
-	res := <-s.base.Repository.FindOne(ctx, "userAuth", struct {
-		Username string `json:"username" bson:"username"`
-		Role     string `json:"role" bson:"role"`
-	}{Username: email, Role: "admin"})
+	query := newAdminQueryBuilder().WhereUsername(email).WhereRole("admin").Build()
+	res := <-s.base.Repository.FindOne(ctx, "userAuth", query)
 	if res.Error() != nil {
 		return "", authErrors.WrapUserNotFoundError(fmt.Errorf("admin not found"))
 	}

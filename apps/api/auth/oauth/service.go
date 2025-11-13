@@ -3,6 +3,7 @@ package oauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/gofrs/uuid"
 	"github.com/qolzam/telar/apps/api/auth/models"
+	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
 	platform "github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"golang.org/x/oauth2"
@@ -40,6 +42,43 @@ func NewService(base *platform.BaseService, config *ServiceConfig) *Service {
 		base:   base,
 		config: config,
 	}
+}
+
+// oauthQueryBuilder is a private helper for building oauth service queries
+type oauthQueryBuilder struct {
+	query *dbi.Query
+}
+
+func newOAuthQueryBuilder() *oauthQueryBuilder {
+	return &oauthQueryBuilder{
+		query: &dbi.Query{
+			Conditions: []dbi.Field{},
+		},
+	}
+}
+
+func (qb *oauthQueryBuilder) WhereUsername(username string) *oauthQueryBuilder {
+	qb.query.Conditions = append(qb.query.Conditions, dbi.Field{
+		Name:     "data->>'username'", // JSONB field
+		Value:    username,
+		Operator: "=",
+		IsJSONB:  true,
+	})
+	return qb
+}
+
+func (qb *oauthQueryBuilder) WhereObjectID(objectID uuid.UUID) *oauthQueryBuilder {
+	qb.query.Conditions = append(qb.query.Conditions, dbi.Field{
+		Name:     "object_id", // Indexed column
+		Value:    objectID,
+		Operator: "=",
+		IsJSONB:  false,
+	})
+	return qb
+}
+
+func (qb *oauthQueryBuilder) Build() *dbi.Query {
+	return qb.query
 }
 
 // ExchangeCodeForToken exchanges authorization code for access token
@@ -104,34 +143,31 @@ func (s *Service) GetUserInfo(ctx context.Context, provider string, token *oauth
 // FindOrCreateUser finds existing user by email or creates new user
 func (s *Service) FindOrCreateUser(ctx context.Context, userInfo *OAuthUserInfo) (*models.UserAuth, *models.UserProfile, error) {
 	// 1. Check if user exists by email
-	userRes := <-s.base.Repository.FindOne(ctx, "userAuth", struct {
-		Username string `json:"username" bson:"username"`
-	}{Username: userInfo.Email})
-	if userRes.Error() == nil {
-		// User exists - return existing user
-		var userAuth models.UserAuth
-		if err := userRes.Decode(&userAuth); err != nil {
-			return nil, nil, fmt.Errorf("failed to decode user auth: %w", err)
+	query := newOAuthQueryBuilder().WhereUsername(userInfo.Email).Build()
+	userRes := <-s.base.Repository.FindOne(ctx, "userAuth", query)
+	var userAuth models.UserAuth
+	if err := userRes.Decode(&userAuth); err != nil {
+		if errors.Is(err, dbi.ErrNoDocuments) {
+			// User doesn't exist - create new user
+			return s.createOAuthUser(ctx, userInfo)
 		}
+		return nil, nil, fmt.Errorf("failed to decode user auth: %w", err)
+	}
+	
+	// User exists - return existing user
+	// Get user profile
+	profileQuery := newOAuthQueryBuilder().WhereObjectID(userAuth.ObjectId).Build()
+	profileRes := <-s.base.Repository.FindOne(ctx, "userProfile", profileQuery)
 
-		// Get user profile
-		profileRes := <-s.base.Repository.FindOne(ctx, "userProfile", struct {
-			ObjectId uuid.UUID `json:"objectId" bson:"objectId"`
-		}{ObjectId: userAuth.ObjectId})
-		if profileRes.Error() != nil {
-			return nil, nil, fmt.Errorf("failed to get user profile: %w", profileRes.Error())
+	var userProfile models.UserProfile
+	if err := profileRes.Decode(&userProfile); err != nil {
+		if errors.Is(err, dbi.ErrNoDocuments) {
+			return nil, nil, fmt.Errorf("user profile not found for user: %s", userAuth.ObjectId)
 		}
-
-		var userProfile models.UserProfile
-		if err := profileRes.Decode(&userProfile); err != nil {
-			return nil, nil, fmt.Errorf("failed to decode user profile: %w", err)
-		}
-
-		return &userAuth, &userProfile, nil
+		return nil, nil, fmt.Errorf("failed to decode user profile: %w", err)
 	}
 
-	// 2. Create new user account
-	return s.createOAuthUser(ctx, userInfo)
+	return &userAuth, &userProfile, nil
 }
 
 // createOAuthUser creates new user account from OAuth information
@@ -165,11 +201,11 @@ func (s *Service) createOAuthUser(ctx context.Context, userInfo *OAuthUserInfo) 
 	}
 
 	// Save both records
-	if err := (<-s.base.Repository.Save(ctx, "userAuth", &userAuth)).Error; err != nil {
+	if err := (<-s.base.Repository.Save(ctx, "userAuth", userAuth.ObjectId, userAuth.ObjectId, userAuth.CreatedDate, userAuth.LastUpdated, &userAuth)).Error; err != nil {
 		return nil, nil, fmt.Errorf("failed to create user auth: %w", err)
 	}
 
-	if err := (<-s.base.Repository.Save(ctx, "userProfile", &userProfile)).Error; err != nil {
+	if err := (<-s.base.Repository.Save(ctx, "userProfile", userProfile.ObjectId, userProfile.ObjectId, userProfile.CreatedDate, userProfile.LastUpdated, &userProfile)).Error; err != nil {
 		return nil, nil, fmt.Errorf("failed to create user profile: %w", err)
 	}
 

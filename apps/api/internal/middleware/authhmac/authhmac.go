@@ -1,6 +1,10 @@
 package authhmac
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
@@ -47,6 +51,7 @@ func New(config Config) fiber.Handler {
 		path := c.Path()
 		query := string(c.Context().URI().QueryString()) // Get raw query string
 		body := c.Body()
+
 
 		// Validate HMAC with canonical signing
 		if err := cfg.Authorizer(method, path, query, body, auth, uid, timestamp); err != nil {

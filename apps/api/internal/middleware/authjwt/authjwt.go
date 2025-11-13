@@ -35,25 +35,31 @@ func New(cfg Config) fiber.Handler {
 	}
 
 	return func(c *fiber.Ctx) error {
-		// ONLY check Authorization header - no cookie fallback
+		var tokenString string
+
+		// 1. Try Authorization header first (for mobile/API clients)
 		authHeader := c.Get(types.HeaderAuthorization)
-		if authHeader == "" || !strings.HasPrefix(authHeader, types.BearerPrefix) {
+		if authHeader != "" && strings.HasPrefix(authHeader, types.BearerPrefix) {
+			parts := strings.Split(authHeader, " ")
+			if len(parts) == 2 {
+				tokenString = parts[1]
+			}
+		}
+
+		// 2. Fall back to session cookie (for web browsers)
+		if tokenString == "" {
+			tokenString = c.Cookies("session")
+		}
+
+		// 3. If no token found in either place, return error
+		if tokenString == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"code":    "UNAUTHORIZED",
-				"message": "Missing or invalid Authorization header",
+				"message": "Missing or invalid JWT",
 			})
 		}
 
-		parts := strings.Split(authHeader, " ")
-		if len(parts) != 2 {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"code":    "UNAUTHORIZED",
-				"message": "Invalid authorization header format",
-			})
-		}
-
-		tokenString := parts[1]
-
+		// 4. Continue with existing JWT validation
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			// CRITICAL: Enforce the expected signing algorithm.
 			if _, ok := token.Method.(*jwt.SigningMethodECDSA); !ok {

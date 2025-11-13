@@ -1,6 +1,11 @@
 
+const getAuthServiceUrl = () => {
+  const url = process.env.AUTH_SERVICE_URL || 'http://localhost:8080';
+  return url.replace('localhost', '127.0.0.1');
+};
+
 export const API_CONFIG = {
-  AUTH_SERVICE_URL: process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:8080',
+  AUTH_SERVICE_URL: getAuthServiceUrl(),
   TIMEOUT: 10000, // 10 seconds
 } as const;
 
@@ -11,6 +16,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public statusCode: number,
+    public code?: string,
     public originalError?: unknown
   ) {
     super(message);
@@ -30,7 +36,7 @@ export async function apiRequest<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const url = `${API_CONFIG.AUTH_SERVICE_URL}${endpoint}`;
-  
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), API_CONFIG.TIMEOUT);
 
@@ -49,15 +55,17 @@ export async function apiRequest<T>(
     if (!response.ok) {
       const errorText = await response.text();
       let errorMessage = 'API request failed';
+      let errorCode: string | undefined;
       
       try {
         const errorJson = JSON.parse(errorText);
         errorMessage = errorJson.message || errorJson.error || errorMessage;
+        errorCode = errorJson.code;
       } catch {
         errorMessage = errorText || errorMessage;
       }
 
-      throw new ApiError(errorMessage, response.status);
+      throw new ApiError(errorMessage, response.status, errorCode);
     }
 
     const contentType = response.headers.get('content-type');
@@ -69,18 +77,19 @@ export async function apiRequest<T>(
     }
   } catch (error) {
     clearTimeout(timeoutId);
-    
+
     if (error instanceof ApiError) {
       throw error;
     }
 
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new ApiError('Request timeout', 408, error);
+      throw new ApiError('Request timeout', 408, 'TIMEOUT', error);
     }
 
     throw new ApiError(
       'Network error',
       500,
+      'NETWORK_ERROR',
       error
     );
   }

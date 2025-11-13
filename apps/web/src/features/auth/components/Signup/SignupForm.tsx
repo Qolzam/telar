@@ -2,174 +2,186 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import * as Yup from 'yup';
-import { useFormik, Form, FormikProvider } from 'formik';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { useTranslation } from 'react-i18next';
+import { useValidationSchema } from '@/lib/i18n/useValidationSchema';
 import {
   TextField,
-  Button,
   Typography,
   Box,
   Divider,
   Stack,
   Alert,
-  CircularProgress,
   useTheme,
+  Button,
 } from '@mui/material';
 import PasswordStrengthBar from 'react-password-strength-bar';
 import { useSignup } from '@/features/auth/client';
 import SocialLoginButtons from '@/features/auth/components/SocialLoginButtons';
+import { mapAuthError } from '@/features/auth/utils/errorMapper';
 
 interface SignupFormProps {
   onSuccess?: (verificationId: string, email: string) => void;
 }
 
 export default function SignupForm({ onSuccess }: SignupFormProps) {
+  const { t } = useTranslation(['auth', 'validation']);
   const theme = useTheme();
   const { signup } = useSignup();
   const [verificationId, setVerificationId] = useState<string | null>(null);
 
-  const RegisterSchema = Yup.object().shape({
-    firstName: Yup.string()
-      .min(2, 'First name is too short')
-      .max(50, 'First name is too long')
-      .required('First name is required'),
-    lastName: Yup.string()
-      .min(2, 'Last name is too short')
-      .max(50, 'Last name is too long')
-      .required('Last name is required'),
-    email: Yup.string()
-      .email('Email must be a valid email address')
-      .required('Email is required'),
-    password: Yup.string()
-      .required('Password is required')
-      .min(8, 'Password must be at least 8 characters'),
+  const validationSchemas = useValidationSchema();
+
+  const signupSchema = z.object({
+    firstName: validationSchemas.nameWithLength(2, 50),
+    lastName: validationSchemas.nameWithLength(2, 50),
+    email: validationSchemas.email,
+    password: validationSchemas.password(8),
   });
 
-  const formik = useFormik({
-    initialValues: {
+  type SignupFormData = z.infer<typeof signupSchema>;
+
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+    setError,
+    clearErrors,
+    watch,
+  } = useForm<SignupFormData>({
+    resolver: zodResolver(signupSchema),
+    defaultValues: {
       firstName: '',
       lastName: '',
       email: '',
       password: '',
     },
-    validationSchema: RegisterSchema,
-    onSubmit: async (values, { setStatus, setSubmitting }) => {
-      try {
-        console.log('[Signup] Starting registration process...', { email: values.email });
-        setStatus(null);
-        
-        const fullName = `${values.firstName} ${values.lastName}`;
-        const result = await signup({ 
-          fullName, 
-          email: values.email, 
-          newPassword: values.password 
-        });
-        
-        console.log('[Signup] Registration successful!');
-        
-        if (result?.verificationId) {
-          setVerificationId(result.verificationId);
-          
-          if (onSuccess) {
-            onSuccess(result.verificationId, values.email);
-          }
-        }
-        
-        setSubmitting(false);
-      } catch (error: unknown) {
-        console.error('[Signup] Registration failed:', error);
-        const errorMessage = error instanceof Error ? error.message : 'Registration failed';
-        setStatus({ error: errorMessage });
-        setSubmitting(false);
-      }
-    },
   });
 
-  const { status, errors, touched, isSubmitting, handleSubmit, getFieldProps, setStatus } = formik;
+  const passwordValue = watch('password');
+
+  const onSubmit = async (data: SignupFormData) => {
+    try {
+      console.log('[Signup] Starting registration process...', { email: data.email });
+      clearErrors('root');
+      
+      const fullName = `${data.firstName} ${data.lastName}`;
+      const result = await signup({ 
+        fullName, 
+        email: data.email, 
+        newPassword: data.password 
+      });
+      
+      console.log('[Signup] Registration successful!');
+      
+      if (result?.verificationId) {
+        setVerificationId(result.verificationId);
+        
+        if (onSuccess) {
+          onSuccess(result.verificationId, data.email);
+        }
+      }
+    } catch (error: unknown) {
+      console.error('[Signup] Registration failed:', error);
+      const errorMessage = mapAuthError(error, 'signup');
+      setError('root', { message: errorMessage });
+    }
+  };
 
   if (verificationId && onSuccess) {
     return null;
   }
 
   return (
-    <FormikProvider value={formik}>
-      <Box component={Form} sx={{ width: '100%' }} autoComplete="off" noValidate onSubmit={handleSubmit}>
-        <Box sx={{ mb: 4, textAlign: 'center' }}>
-          <Typography variant="h4" component="h1" gutterBottom>
-            Create Account
-          </Typography>
-          <Typography variant="body1" color="text.secondary">
-            Join Telar and connect with friends
-          </Typography>
+    <Box 
+      component="form" 
+      sx={{ width: '100%' }} 
+      autoComplete="off" 
+      noValidate 
+      onSubmit={handleSubmit(onSubmit)}
+    >
+      <Box sx={{ mb: 4, textAlign: 'center' }}>
+        <Typography variant="h4" component="h1" gutterBottom>
+          {t('signup.title')}
+        </Typography>
+        <Typography variant="body1" color="text.secondary">
+          {t('signup.subtitle')}
+        </Typography>
+      </Box>
+
+      {errors.root && (
+        <Alert 
+          severity="error" 
+          sx={{ mb: 3 }} 
+          onClose={() => clearErrors('root')}
+        >
+          {errors.root.message}
+        </Alert>
+      )}
+
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }}>
+        <TextField
+          fullWidth
+          label={t('signup.fields.firstName')}
+          {...register('firstName')}
+          error={!!errors.firstName}
+          helperText={errors.firstName?.message}
+          disabled={isSubmitting}
+          variant="outlined"
+          margin="normal"
+          onFocus={() => clearErrors('root')}
+        />
+        <TextField
+          fullWidth
+          label={t('signup.fields.lastName')}
+          {...register('lastName')}
+          error={!!errors.lastName}
+          helperText={errors.lastName?.message}
+          disabled={isSubmitting}
+          variant="outlined"
+          margin="normal"
+          onFocus={() => clearErrors('root')}
+        />
+      </Stack>
+
+      <TextField
+        fullWidth
+        autoComplete="email"
+        type="email"
+        label={t('signup.fields.email')}
+        {...register('email')}
+        error={!!errors.email}
+        helperText={errors.email?.message}
+        disabled={isSubmitting}
+        variant="outlined"
+        margin="normal"
+        onFocus={() => clearErrors('root')}
+      />
+
+      <TextField
+        fullWidth
+        autoComplete="new-password"
+        type="password"
+        label={t('signup.fields.password')}
+        {...register('password')}
+        error={!!errors.password}
+        helperText={errors.password?.message}
+        disabled={isSubmitting}
+        variant="outlined"
+        margin="normal"
+        onFocus={() => clearErrors('root')}
+      />
+
+      {passwordValue && (
+        <Box sx={{ mt: 1, mb: 2 }}>
+          <PasswordStrengthBar 
+            password={passwordValue}
+            minLength={8}
+          />
         </Box>
-
-        {status && status.error && (
-          <Alert severity="error" sx={{ mb: 3 }} onClose={() => setStatus(null)}>
-            {status.error}
-          </Alert>
-        )}
-
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }}>
-          <TextField
-            fullWidth
-            label="First Name"
-            {...getFieldProps('firstName')}
-            error={Boolean(touched.firstName && errors.firstName)}
-            helperText={touched.firstName && errors.firstName}
-            disabled={isSubmitting}
-            variant="outlined"
-            margin="normal"
-            onFocus={() => setStatus(null)}
-          />
-          <TextField
-            fullWidth
-            label="Last Name"
-            {...getFieldProps('lastName')}
-            error={Boolean(touched.lastName && errors.lastName)}
-            helperText={touched.lastName && errors.lastName}
-            disabled={isSubmitting}
-            variant="outlined"
-            margin="normal"
-            onFocus={() => setStatus(null)}
-          />
-        </Stack>
-
-        <TextField
-          fullWidth
-          autoComplete="email"
-          type="email"
-          label="Email Address"
-          {...getFieldProps('email')}
-          error={Boolean(touched.email && errors.email)}
-          helperText={touched.email && errors.email}
-          disabled={isSubmitting}
-          variant="outlined"
-          margin="normal"
-          onFocus={() => setStatus(null)}
-        />
-
-        <TextField
-          fullWidth
-          autoComplete="new-password"
-          type="password"
-          label="Password"
-          {...getFieldProps('password')}
-          error={Boolean(touched.password && errors.password)}
-          helperText={touched.password && errors.password}
-          disabled={isSubmitting}
-          variant="outlined"
-          margin="normal"
-          onFocus={() => setStatus(null)}
-        />
-
-        {formik.values.password && (
-          <Box sx={{ mt: 1, mb: 2 }}>
-            <PasswordStrengthBar 
-              password={formik.values.password}
-              minLength={8}
-            />
-          </Box>
-        )}
+      )}
 
         <Button
           fullWidth
@@ -179,19 +191,12 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
           disabled={isSubmitting}
           sx={{ mt: 2, mb: 3, py: 1.5 }}
         >
-          {isSubmitting ? (
-            <>
-              <CircularProgress size={20} sx={{ mr: 1, color: 'inherit' }} />
-              Creating account...
-            </>
-          ) : (
-            'Sign Up'
-          )}
+          {isSubmitting ? t('signup.actions.submitting') : t('signup.actions.submit')}
         </Button>
 
         <Divider sx={{ my: 3 }}>
           <Typography variant="body2" color="text.secondary">
-            or sign up with
+            {t('signup.divider')}
           </Typography>
         </Divider>
 
@@ -199,7 +204,7 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
 
         <Box sx={{ mt: 4, textAlign: 'center' }}>
           <Typography variant="body2" color="text.secondary">
-            Already have an account?{' '}
+            {t('signup.footer.hasAccount')}{' '}
             <Link 
               href="/login"
               style={{
@@ -208,26 +213,16 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
                 fontWeight: 500,
               }}
             >
-              Sign in
+              {t('signup.footer.signIn')}
             </Link>
           </Typography>
         </Box>
 
         <Box sx={{ mt: 2, textAlign: 'center' }}>
           <Typography variant="caption" color="text.secondary">
-            By signing up, you agree to our{' '}
-            <Link 
-              href="/terms"
-              style={{
-                color: theme.palette.primary.main,
-                textDecoration: 'none',
-              }}
-            >
-              Terms & Conditions
-            </Link>
+            {t('signup.terms')}
           </Typography>
         </Box>
       </Box>
-    </FormikProvider>
   );
 }

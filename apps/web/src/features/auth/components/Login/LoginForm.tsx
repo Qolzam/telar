@@ -3,11 +3,13 @@
 import { useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import * as Yup from 'yup';
-import { useFormik, Form, FormikProvider } from 'formik';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { useTranslation } from 'react-i18next';
+import { useValidationSchema } from '@/lib/i18n/useValidationSchema';
 import {
   TextField,
-  Button,
   Typography,
   Box,
   Divider,
@@ -18,15 +20,18 @@ import {
   Alert,
   CircularProgress,
   useTheme,
+  Button,
 } from '@mui/material';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { useLogin } from '@/features/auth/client';
 import SocialLoginButtons from '@/features/auth/components/SocialLoginButtons';
+import { mapAuthError } from '@/features/auth/utils/errorMapper';
 
 function LoginFormContent() {
+  const { t } = useTranslation(['auth', 'validation']);
   const searchParams = useSearchParams();
   const theme = useTheme();
-  const { login } = useLogin();
+  const { loginAsync } = useLogin();
   const [showPassword, setShowPassword] = useState(false);
   const urlError = searchParams.get('error');
   const urlMessage = searchParams.get('message');
@@ -35,65 +40,71 @@ function LoginFormContent() {
     setShowPassword((prev) => !prev);
   };
 
-  const LoginSchema = Yup.object().shape({
-    email: Yup.string()
-      .email('Email must be a valid email address')
-      .required('Email is required'),
-    password: Yup.string()
-      .required('Password is required'),
+  const validationSchemas = useValidationSchema();
+
+  const loginSchema = z.object({
+    email: validationSchemas.email,
+    password: validationSchemas.password(),
+    rememberMe: z.boolean().optional(),
   });
 
-  const formik = useFormik({
-    initialValues: {
+  type LoginFormData = z.infer<typeof loginSchema>;
+
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+    setError,
+    clearErrors,
+    watch,
+  } = useForm<LoginFormData>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: {
       email: '',
       password: '',
       rememberMe: false,
     },
-    validationSchema: LoginSchema,
-    onSubmit: async (values, { setStatus, setSubmitting, resetForm }) => {
-      try {
-        setStatus(null);
-        
-        await login({ 
-          username: values.email, 
-          password: values.password 
-        });
-        
-        if (values.rememberMe) {
-          localStorage.setItem('rememberMe', 'true');
-        } else {
-          localStorage.removeItem('rememberMe');
-        }
-        
-        if (setSubmitting) {
-          setSubmitting(false);
-        }
-      } catch (error: unknown) {
-        console.error('[Login] Login failed:', error);
-        
-        resetForm();
-        if (setSubmitting) {
-          setSubmitting(false);
-        }
-        const errorMessage = error instanceof Error ? error.message : 'Login failed';
-        setStatus({ error: errorMessage });
-      }
-    },
   });
 
-  const { status, errors, touched, isSubmitting, handleSubmit, getFieldProps, setStatus } = formik;
+  const rememberMeValue = watch('rememberMe');
+
+  const onSubmit = async (data: LoginFormData) => {
+    try {
+      clearErrors('root');
+      
+      await loginAsync({ 
+        username: data.email, 
+        password: data.password 
+      });
+      
+      if (data.rememberMe) {
+        localStorage.setItem('rememberMe', 'true');
+      } else {
+        localStorage.removeItem('rememberMe');
+      }
+    } catch (error: unknown) {
+      console.error('[Login] Login failed:', error);
+      const errorMessage = mapAuthError(error, 'login');
+      setError('root', { message: errorMessage });
+    }
+  };
 
   const enabledOAuthLogin = false; // TODO: Move to config
 
   return (
-    <FormikProvider value={formik}>
-      <Box component={Form} sx={{ width: '100%' }} autoComplete="off" noValidate onSubmit={handleSubmit}>
+    <Box 
+      component="form" 
+      sx={{ width: '100%' }} 
+      autoComplete="off" 
+      noValidate 
+      onSubmit={handleSubmit(onSubmit)}
+    >
         <Box sx={{ mb: 4, textAlign: 'center' }}>
           <Typography variant="h4" component="h1" gutterBottom>
-            Welcome Back
+            {t('login.title')}
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            Sign in to continue to Telar
+            {t('login.subtitle')}
           </Typography>
         </Box>
 
@@ -102,7 +113,7 @@ function LoginFormContent() {
             <SocialLoginButtons disabled={isSubmitting} />
             <Divider sx={{ mb: 3, mt: 3 }}>
               <Typography variant="body2" color="text.secondary">
-                or continue with email
+                {t('login.divider')}
               </Typography>
             </Divider>
           </>
@@ -110,21 +121,25 @@ function LoginFormContent() {
 
         {urlError && (
           <Alert severity="warning" sx={{ mb: 3 }}>
-            {urlError === 'invalid_token' && 'Your session is invalid. Please log in again.'}
-            {urlError === 'expired_token' && 'Your session has expired. Please log in again.'}
-            {urlError === 'verification_failed' && 'Session verification failed. Please log in again.'}
+            {urlError === 'invalid_token' && t('login.errors.invalidToken')}
+            {urlError === 'expired_token' && t('login.errors.expiredToken')}
+            {urlError === 'verification_failed' && t('login.errors.verificationFailed')}
           </Alert>
         )}
         
         {urlMessage === 'password_reset_success' && (
           <Alert severity="success" sx={{ mb: 3 }}>
-            Password reset successfully! You can now log in with your new password.
+            {t('login.messages.passwordResetSuccess')}
           </Alert>
         )}
 
-        {status && status.error && (
-          <Alert severity="error" sx={{ mb: 3 }}>
-            {status.error}
+        {errors.root && (
+          <Alert 
+            severity="error" 
+            sx={{ mb: 3 }}
+            onClose={() => clearErrors('root')}
+          >
+            {errors.root.message}
           </Alert>
         )}
 
@@ -132,35 +147,35 @@ function LoginFormContent() {
           fullWidth
           autoComplete="email"
           type="email"
-          label="Email Address"
-          {...getFieldProps('email')}
-          error={Boolean(touched.email && errors.email)}
-          helperText={touched.email && errors.email}
+          label={t('login.fields.email')}
+          {...register('email')}
+          error={!!errors.email}
+          helperText={errors.email?.message}
           disabled={isSubmitting}
           variant="outlined"
           margin="normal"
-          onFocus={() => setStatus(null)}
+          onFocus={() => clearErrors('root')}
         />
 
         <TextField
           fullWidth
           autoComplete="current-password"
           type={showPassword ? 'text' : 'password'}
-          label="Password"
-          {...getFieldProps('password')}
-          error={Boolean(touched.password && errors.password)}
-          helperText={touched.password && errors.password}
+          label={t('login.fields.password')}
+          {...register('password')}
+          error={!!errors.password}
+          helperText={errors.password?.message}
           disabled={isSubmitting}
           variant="outlined"
           margin="normal"
-          onFocus={() => setStatus(null)}
+          onFocus={() => clearErrors('root')}
           InputProps={{
             endAdornment: (
               <InputAdornment position="end">
                 <IconButton
                   onClick={togglePasswordVisibility}
                   edge="end"
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-label={showPassword ? t('login.actions.hidePassword') : t('login.actions.showPassword')}
                 >
                   {showPassword ? <VisibilityOff /> : <Visibility />}
                 </IconButton>
@@ -173,13 +188,13 @@ function LoginFormContent() {
           <FormControlLabel
             control={
               <Checkbox
-                {...getFieldProps('rememberMe')}
-                checked={formik.values.rememberMe}
+                {...register('rememberMe')}
+                checked={rememberMeValue}
                 color="primary"
                 disabled={isSubmitting}
               />
             }
-            label="Remember me"
+            label={t('login.fields.rememberMe')}
           />
           <Link
             href="/forgot-password"
@@ -189,7 +204,7 @@ function LoginFormContent() {
               textDecoration: 'none',
             }}
           >
-            Forgot password?
+            {t('login.actions.forgotPassword')}
           </Link>
         </Box>
 
@@ -201,19 +216,12 @@ function LoginFormContent() {
           disabled={isSubmitting}
           sx={{ mt: 2, mb: 3, py: 1.5 }}
         >
-          {isSubmitting ? (
-            <>
-              <CircularProgress size={20} sx={{ mr: 1, color: 'inherit' }} />
-              Signing in...
-            </>
-          ) : (
-            'Sign In'
-          )}
+          {isSubmitting ? t('login.actions.submitting') : t('login.actions.submit')}
         </Button>
 
         <Box sx={{ mt: 4, textAlign: 'center' }}>
           <Typography variant="body2" color="text.secondary">
-            Don&apos;t have an account?{' '}
+            {t('login.footer.noAccount')}{' '}
             <Link 
               href="/signup"
               style={{
@@ -222,12 +230,11 @@ function LoginFormContent() {
                 fontWeight: 500,
               }}
             >
-              Sign up
+              {t('login.footer.signUp')}
             </Link>
           </Typography>
         </Box>
       </Box>
-    </FormikProvider>
   );
 }
 

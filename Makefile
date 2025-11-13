@@ -4,20 +4,20 @@
 # Philosophy:
 # 1. Use variables for common settings (parallelism, timeouts, flags) for consistency.
 # 2. The Makefile manages the ENVIRONMENT (Docker containers, build tags).
-# 3. The Go test suite manages the test LOGIC (running against Mongo/Postgres, skipping).
+# 3. The Go test suite manages the test LOGIC (running against PostgreSQL).
 # ====================================================================================
 
 .PHONY: all help \
-        up-dbs-dev up-mongo up-postgres up-both down-both clean-dbs status logs-mongo logs-postgres docker-start \
+        up-dbs-dev up-postgres down-postgres clean-dbs status logs-postgres docker-start \
         test test-all test-posts test-comments test-votes test-userrels test-auth test-profile test-circles test-setting test-admin test-gallery test-notifications test-actions test-storage test-cache \
         test-db-operations test-posts-operations test-database-compatibility bench-db-operations test-all-operations \
         local-test-all \
         ci-fast ci-test ci-full ci-nightly \
         report open-report clean-reports \
         bench bench-env bench-calibrated bench-summary open-profiles \
-        up-both-replica test-transactions \
+        test-transactions \
         lint lint-fix \
-        run-api run-web run-both local-run-both run-profile run-profile-standalone
+        run-api run-web run-both run-profile run-profile-standalone run-posts dev stop-servers restart-servers pre-flight-check logs-api logs-web
 
 # --- Configuration Variables ---
 PARALLEL ?= 8
@@ -43,10 +43,7 @@ lint-fix:
 
 # Development: Start databases WITHOUT modifying .env (preserves your settings)
 up-dbs-dev:
-	@echo "Starting databases for DEVELOPMENT (preserving your .env settings)..."
-	@docker start telar-mongo 2>/dev/null || \
-		(echo "Creating MongoDB container..." && \
-		 docker run -d --name telar-mongo -p 27017:27017 mongo:6)
+	@echo "Starting PostgreSQL for DEVELOPMENT (preserving your .env settings)..."
 	@docker start telar-postgres 2>/dev/null || \
 		(echo "Creating PostgreSQL container..." && \
 		 docker run -d --name telar-postgres \
@@ -58,103 +55,84 @@ up-dbs-dev:
 		(echo "Creating MailHog container..." && \
 		 docker run -d --name telar-mailhog \
 		 -p 1025:1025 -p 8025:8025 mailhog/mailhog:latest)
-	@echo "✅ Databases ready for development (your .env settings preserved)"
+	@echo "✅ PostgreSQL ready for development (your .env settings preserved)"
 
 # Testing: Use test_env.sh (configures .env for consistent test environment)
-up-mongo:
-	@$(TEST_ENV_SCRIPT) up mongo
-
 up-postgres:
 	@$(TEST_ENV_SCRIPT) up postgres
 
-up-both:
-	@$(TEST_ENV_SCRIPT) up both
-
-down-both:
-	@$(TEST_ENV_SCRIPT) down both
+down-postgres:
+	@$(TEST_ENV_SCRIPT) down postgres
 
 clean-dbs:
-	@echo "Recreating fresh database containers..."
-	@$(TEST_ENV_SCRIPT) down both
-	@$(TEST_ENV_SCRIPT) up both
-	@echo "Databases are clean and ready."
+	@echo "Recreating fresh PostgreSQL container and removing all data volumes..."
+	@$(MAKE) down-postgres
+	@echo "Removing any existing PostgreSQL data volumes..."
+	@docker volume ls -q --filter name=telar-postgres | xargs -r docker volume rm || true
+	@docker volume ls -q --filter name=postgres | xargs -r docker volume rm || true
+	@$(MAKE) up-postgres
+	@echo "PostgreSQL is clean and ready with the latest schema."
 
 status:
 	@$(TEST_ENV_SCRIPT) status
-
-logs-mongo:
-	@$(TEST_ENV_SCRIPT) logs mongo
 
 logs-postgres:
 	@$(TEST_ENV_SCRIPT) logs postgres
 
 docker-start:
-	@echo "Ensuring Docker is running..."
-	@if ! docker info >/dev/null 2>&1; then \
-		open -g -a Docker; \
-		echo "Waiting for Docker daemon..."; \
-		SECONDS=0; \
-		until docker info >/dev/null 2>&1; do \
-			sleep 2; \
-			if [ $$SECONDS -gt 120 ]; then echo "Docker did not start within 120s"; exit 1; fi; \
-			printf "."; \
-		done; \
-		echo "\nDocker is ready."; \
-	else \
-		echo "Docker is running."; \
-	fi
+	@./tools/dev/scripts/docker-start.sh
 
 all: test-all
 
-test-posts: up-both
+test-posts: up-postgres
 	@echo "Testing 'posts' microservice..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./posts $(GO_TEST_FLAGS)
 
-test-comments: up-both
+test-comments: up-postgres
 	@echo "Testing 'comments' microservice..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./comments $(GO_TEST_FLAGS)
 
-test-votes: up-both
+test-votes: up-postgres
 	@echo "Testing 'votes' microservice..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./votes $(GO_TEST_FLAGS)
 
-test-userrels: up-both
+test-userrels: up-postgres
 	@echo "Testing 'userrels' microservice..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./userrels $(GO_TEST_FLAGS)
 
-test-auth: up-both
+test-auth: up-postgres
 	@echo "Testing 'auth' microservice..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./auth $(GO_TEST_FLAGS)
 
-test-profile: up-both
+test-profile: up-postgres
 	@echo "Testing 'profile' microservice..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./profile/... $(GO_TEST_FLAGS)
 
-test-circles: up-both
+test-circles: up-postgres
 	@echo "Testing 'circles' microservice..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./circles $(GO_TEST_FLAGS)
 
-test-setting: up-both
+test-setting: up-postgres
 	@echo "Testing 'setting' microservice..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./setting $(GO_TEST_FLAGS)
 
-test-admin: up-both
+test-admin: up-postgres
 	@echo "Testing 'admin' microservice..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./admin $(GO_TEST_FLAGS)
 
-test-gallery: up-both
+test-gallery: up-postgres
 	@echo "Testing 'gallery' microservice..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./gallery $(GO_TEST_FLAGS)
 
-test-notifications: up-both
+test-notifications: up-postgres
 	@echo "Testing 'notifications' microservice..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./notifications $(GO_TEST_FLAGS)
 
-test-actions: up-both
+test-actions: up-postgres
 	@echo "Testing 'actions' microservice..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./actions $(GO_TEST_FLAGS)
 
-test-storage: up-both
+test-storage: up-postgres
 	@echo "Testing 'storage' microservice..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./storage $(GO_TEST_FLAGS)
 
@@ -162,11 +140,11 @@ test-cache:
 	@echo "Testing internal cache..."
 	@cd apps/api && go test ./internal/cache $(GO_TEST_FLAGS)
 
-test-all: up-both
+test-all: up-postgres
 	@echo "Running all tests for all microservices with parallelism $(PARALLEL)..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./... $(GO_TEST_FLAGS)
 
-test-all-race: up-both
+test-all-race: up-postgres
 	@echo "Running all tests with race detector..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./... -count=1 -v -race -timeout=20m -parallel=8
 
@@ -174,9 +152,9 @@ local-test-all: docker-start test-all
 
 # --- CI/CD Targets ---
 
-ci-fast: up-both test-posts test-comments test-votes test-userrels test-admin
+ci-fast: up-postgres test-posts test-comments test-votes test-userrels test-admin
 
-ci-test: up-both test-posts test-comments test-votes test-userrels test-auth test-profile test-circles test-setting test-admin test-gallery test-notifications test-actions test-storage test-cache
+ci-test: up-postgres test-posts test-comments test-votes test-userrels test-auth test-profile test-circles test-setting test-admin test-gallery test-notifications test-actions test-storage test-cache
 
 ci-full: ci-test
 
@@ -184,7 +162,7 @@ ci-nightly: test-all
 
 # --- Reporting & Profiling ---
 
-report: up-both
+report: up-postgres
 	@echo "Generating test and coverage reports..."
 	@mkdir -p $(REPORT_DIR)
 	@cd apps/api && RUN_DB_TESTS=1 go test ./... $(GO_TEST_FLAGS) -coverprofile=coverage.out -json > ../../$(REPORT_DIR)/test.json
@@ -200,8 +178,6 @@ open-report:
 clean-reports:
 	@echo "Cleaning reports directory..."
 	@rm -rf $(REPORT_DIR)
-
-local-run-both: docker-start status run-both
 
 bench: bench-calibrated
 
@@ -224,7 +200,7 @@ $(REPORT_DIR):
 $(PROFILES_DIR): | $(REPORT_DIR)
 	@mkdir -p $(PROFILES_DIR)
 
-bench-calibrated: up-both bench-env $(PROFILES_DIR)
+bench-calibrated: up-postgres bench-env $(PROFILES_DIR)
 	@echo "Running calibrated benchmarks and generating profiles..."
 	@cd apps/api && RUN_DB_TESTS=1 go test -bench=. -benchmem -run=^Benchmark ./... \
 		-cpuprofile=../../$(PROFILES_DIR)/all_cpu.pprof \
@@ -244,39 +220,29 @@ open-profiles:
 
 # --- Transaction Testing ---
 
-up-both-replica:
-	@echo "Starting databases with MongoDB replica set for transaction testing..."
-	@$(TEST_ENV_SCRIPT) down both 2>/dev/null || true
-	@docker run -d --name telar-mongo -p 27017:27017 mongo:6 --replSet rs0
-	@$(TEST_ENV_SCRIPT) up postgres
-	@echo "Waiting for MongoDB to be ready..."
-	@sleep 5
-	@docker exec telar-mongo mongosh --eval "rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'localhost:27017'}]})" || echo "Replica set already initialized"
-	@echo "MongoDB replica set initialized for transaction testing"
-
-test-transactions: up-both-replica
-	@echo "Testing enterprise transaction management..."
+test-transactions: up-postgres
+	@echo "Testing enterprise transaction management with PostgreSQL..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./internal/database/ -v -run TestTransactionSuite $(GO_TEST_FLAGS)
 
 # --- Database Operations Testing ---
 
-test-db-operations: up-both
+test-db-operations: up-postgres
 	@echo "Testing PostgreSQL database operations..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./internal/database/postgresql -v -run TestOperations $(GO_TEST_FLAGS)
 
-test-posts-operations: up-both
+test-posts-operations: up-postgres
 	@echo "Testing posts service operations..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./posts -v -run TestPostsOperations $(GO_TEST_FLAGS)
 
-test-database-compatibility: up-both
-	@echo "Testing database compatibility between MongoDB and PostgreSQL..."
+test-database-compatibility: up-postgres
+	@echo "Testing PostgreSQL database compatibility..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./posts -v -run TestDatabaseCompatibility $(GO_TEST_FLAGS)
 
-bench-db-operations: up-both
+bench-db-operations: up-postgres
 	@echo "Benchmarking database operations..."
 	@cd apps/api && RUN_DB_TESTS=1 go test ./internal/database/postgresql -bench=. -benchmem -run=^Benchmark $(GO_TEST_FLAGS)
 
-test-all-operations: up-both
+test-all-operations: up-postgres
 	@echo "Running all database operations tests..."
 	@$(MAKE) test-db-operations
 	@$(MAKE) test-posts-operations
@@ -289,14 +255,11 @@ help:
 	@echo "Available commands:"
 	@echo ""
 	@echo "Docker & Database Commands:"
-	@echo "  up-dbs-dev        - Start databases for DEVELOPMENT (preserves your .env settings)"
-	@echo "  up-both           - Start databases for TESTING (configures .env for tests)"
-	@echo "  up-mongo          - Start MongoDB only (for testing)"
+	@echo "  up-dbs-dev        - Start PostgreSQL for DEVELOPMENT (preserves your .env settings)"
 	@echo "  up-postgres       - Start PostgreSQL only (for testing)"
-	@echo "  down-both         - Stop all database containers"
-	@echo "  clean-dbs         - Recreate fresh database containers (for testing)"
+	@echo "  down-postgres     - Stop PostgreSQL container"
+	@echo "  clean-dbs         - Recreate fresh PostgreSQL container (for testing)"
 	@echo "  status            - Show status of Docker containers"
-	@echo "  logs-mongo        - Tail logs for the MongoDB container"
 	@echo "  logs-postgres     - Tail logs for the PostgreSQL container"
 	@echo ""
 	@echo "Test Commands:"
@@ -324,27 +287,36 @@ help:
 	@echo "Database Operations Testing:"
 	@echo "  test-db-operations        - Test PostgreSQL database operations."
 	@echo "  test-posts-operations     - Test posts service operations."
-	@echo "  test-database-compatibility - Test compatibility between MongoDB and PostgreSQL."
+	@echo "  test-database-compatibility - Test PostgreSQL database compatibility."
 	@echo "  bench-db-operations       - Benchmark database operations performance."
 	@echo "  test-all-operations       - Run all database operations tests."
 	@echo ""
 	@echo "Transaction Testing:"
-	@echo "  up-both-replica   - Start databases with MongoDB replica set for transactions."
-	@echo "  test-transactions - Run enterprise transaction management tests."
+	@echo "  test-transactions - Run enterprise transaction management tests with PostgreSQL."
 	@echo ""
 	@echo "Development Servers:"
 	@echo "  run-api           - Start the Telar API server on port 8080 (requires databases)."
 	@echo "  run-profile       - Start the Profile microservice on port 8081 (requires databases)."
+	@echo "  run-posts         - Start the Posts microservice on port 8082 (requires databases)."
 	@echo "  run-web           - Start the Next.js web frontend development server."
 	@echo "  run-both          - Start both API and web frontend servers concurrently."
-	@echo "  local-run-both    - ONE-COMMAND LOCAL DEV: Ensure Docker → Check status → Start all services."
+	@echo "  dev       - Start both servers in background (recommended for development)."
+	@echo "  run-api-background - Start API server in background with PID file (for E2E tests)."
+	@echo "  stop-api-background - Stop background API server using PID file."
+	@echo "  test-e2e-posts    - Run Posts E2E tests with automatic server management."
+	@echo "  test-e2e-profile  - Run Profile E2E tests with automatic server management."
+	@echo "  stop-servers      - Stop all running servers."
+	@echo "  restart-servers   - Restart all servers safely (preserves Cursor processes)."
+	@echo "  pre-flight-check  - Check system readiness before server startup."
+	@echo "  logs-api          - Tail API server logs."
+	@echo "  logs-web          - Tail web server logs."
 	@echo ""
 	@echo "Options:"
 	@echo "  PARALLEL=<N>      - Set the number of parallel tests to run (default: 8)."
 	@echo "  TIMEOUT=<duration>  - Set the test timeout (default: 15m)."
 
 # --- Development Servers ---
-# NOTE: These use up-dbs-dev (NOT up-both) to preserve your .env settings
+# NOTE: These use up-dbs-dev (NOT up-postgres) to preserve your .env settings
 
 run-api: up-dbs-dev
 	@echo "Starting Telar API server (using your .env settings)..."
@@ -362,6 +334,10 @@ run-profile-standalone:
 	@echo "Starting Profile microservice standalone on port 8081..."
 	@cd apps/api && go run cmd/services/profile/main.go
 
+run-posts: up-dbs-dev
+	@echo "Starting Posts microservice (using your .env settings)..."
+	@cd apps/api && go run cmd/services/posts/main.go
+
 run-both: up-dbs-dev
 	@echo "Starting both API and web frontend servers..."
 	@echo "API server will be available at: http://localhost:8080"
@@ -371,3 +347,57 @@ run-both: up-dbs-dev
 	(cd apps/api && go run cmd/server/main.go) & \
 	(cd apps/web && pnpm dev) & \
 	wait
+
+# --- Background Process Management ---
+
+dev: up-dbs-dev
+	@./tools/dev/scripts/start-servers-bg.sh
+
+stop-servers:
+	@./tools/dev/scripts/stop-servers.sh
+
+restart-servers:
+	@./tools/dev/scripts/restart-servers.sh
+
+# Target to run the API stack in the background for E2E tests
+run-api-background: up-dbs-dev
+	@echo "Starting API in background..."
+	@ps aux | grep "go run.*cmd/server/main.go\|go run.*cmd/main.go" | grep -v grep | awk '{print $$2}' | xargs kill -9 2>/dev/null || true
+	@sleep 1
+	@cd apps/api && nohup go run cmd/server/main.go > ../../api.log 2>&1 & echo $$! > ../../api.pid
+	@echo "API started with PID `cat api.pid`. Tailing logs..."
+	@sleep 5
+
+# Target to stop the background API
+stop-api-background:
+	@echo "Stopping background API..."
+	@if [ -f api.pid ]; then \
+		kill `cat api.pid` 2>/dev/null && rm api.pid api.log 2>/dev/null && echo "API stopped."; \
+	else \
+		echo "API not running or PID file not found. Cleaning up any stale processes..."; \
+		ps aux | grep "go run.*cmd/server/main.go\|go run.*cmd/main.go" | grep -v grep | awk '{print $$2}' | xargs kill -9 2>/dev/null || true; \
+	fi
+
+# Running E2E tests for posts service
+test-e2e-posts: stop-api-background run-api-background
+	@echo "Running Posts E2E tests..."
+	@./tools/dev/scripts/posts_e2e_test.sh || true
+	@$(MAKE) stop-api-background
+
+# Running E2E tests for  profile service
+test-e2e-profile: stop-api-background run-api-background
+	@echo "Running Profile E2E tests..."
+	@./tools/dev/scripts/profile_e2e_test.sh || true
+	@$(MAKE) stop-api-background
+
+
+pre-flight-check:
+	@./tools/dev/scripts/pre-flight-check.sh
+
+logs-api:
+	@echo "📋 Tailing API server logs (Ctrl+C to exit)..."
+	@tail -f /tmp/telar-logs/api.log 2>/dev/null || echo "No API logs found. Is the server running?"
+
+logs-web:
+	@echo "📋 Tailing Web server logs (Ctrl+C to exit)..."
+	@tail -f /tmp/telar-logs/web.log 2>/dev/null || echo "No Web logs found. Is the server running?"

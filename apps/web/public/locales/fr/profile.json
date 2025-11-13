@@ -1,0 +1,10 @@
+{
+  "tabs": {
+    "home": "Home",
+    "gallery": "Gallery",
+    "followers": "Followers",
+    "following": "Following"
+  },
+  "about": "About",
+  "editProfile": "Edit Profile"
+}

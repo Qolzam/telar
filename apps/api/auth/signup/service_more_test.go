@@ -20,9 +20,9 @@ func TestSignupService_SaveAndUpdateVerification_Coverage(t *testing.T) {
 	}
 
 	suite := testutil.Setup(t)
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 	if iso.Repo == nil {
-		t.Skip("MongoDB not available, skipping test")
+		t.Skip("PostgreSQL not available, skipping test")
 	}
 
 	ctx := context.Background()

@@ -191,6 +191,13 @@ export interface VerifyEmailRequest {
 }
 
 /**
+ * Resend verification email request
+ */
+export interface ResendVerificationRequest {
+  verificationId: string;
+}
+
+/**
  * JWKS key structure for ES256 (ECDSA)
  * @see Go: apps/api/auth/jwks/handler.go
  */
@@ -294,7 +301,7 @@ export interface Post {
   score: number;
   commentCounter: number;
   viewCount: number;
-  votes: { [userId: string]: boolean };
+  votes: Record<string, string>;
   tags: string[];
   postTypeId: PostType;
   permission: UserPermissionType;
@@ -305,8 +312,8 @@ export interface Post {
   deletedDate?: number;
   urlKey?: string;
   version?: string;
-  created_date: number;
-  last_updated: number;
+  createdDate: number;
+  lastUpdated?: number;
 }
 
 // ============================================================================
@@ -330,8 +337,85 @@ export interface FileResult {
  * API error response structure
  */
 export interface ApiErrorResponse {
-  error: string;
-  message: string;
-  statusCode: number;
+  code?: string;
+  error?: string;
+  message?: string;
+  statusCode?: number;
+}
+
+// ============================================================================
+// Profile Request/Response Types
+// ============================================================================
+
+/**
+ * Update profile request payload
+ */
+export interface UpdateProfileRequest {
+  fullName?: string;
+  socialName?: string;
+  avatar?: string;
+  banner?: string;
+  tagLine?: string;
+  birthday?: number;
+  webUrl?: string;
+  companyName?: string;
+  facebookId?: string;
+  instagramId?: string;
+  twitterId?: string;
+}
+
+/**
+ * Profile query filter for searching profiles
+ */
+export interface ProfileQueryFilter {
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * Profiles response with pagination
+ */
+export interface ProfilesResponse {
+  profiles: UserProfileModel[];
+  total: number;
+}
+
+// ============================================================================
+// Posts Request/Response Types (MVP)
+// ============================================================================
+
+/**
+ * Create post request payload (minimal for MVP)
+ */
+export interface CreatePostRequest {
+  postTypeId: number;
+  body: string;
+  permission?: string;
+}
+
+/**
+ * Create post response (backend returns only objectId)
+ */
+export interface CreatePostResponse {
+  objectId: string;
+  message?: string;
+}
+
+/**
+ * Cursor query parameters for pagination
+ */
+export interface CursorQueryParams {
+  limit?: number;
+  cursor?: string;
+}
+
+/**
+ * Posts response with cursor pagination
+ */
+export interface PostsResponse {
+  posts: Post[];
+  nextCursor?: string;
+  hasNext?: boolean;
 }
 

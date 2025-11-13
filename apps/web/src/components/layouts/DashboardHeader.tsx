@@ -16,6 +16,7 @@ import {
   CircularProgress,
 } from '@mui/material';
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useSession, useLogout } from '@/features/auth/client';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -24,6 +25,7 @@ import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import { useRouter } from 'next/navigation';
 
 export default function DashboardHeader() {
+  const { t } = useTranslation('common');
   const { user, isAuthenticated, isLoading } = useSession();
   const { logout, isLoading: isLoggingOut } = useLogout();
   const router = useRouter();
@@ -40,38 +42,34 @@ export default function DashboardHeader() {
   };
 
   const handleProfileClick = () => {
-    handleMenuClose();
-    router.push(`/profile/${user?.id}`);
+    setAnchorEl(null);
+    router.push('/profile');
   };
 
   const handleSettingsClick = () => {
-    handleMenuClose();
+    setAnchorEl(null);
     router.push('/settings');
   };
 
   const handleLogoutClick = () => {
-    handleMenuClose();
+    setAnchorEl(null);
     logout();
   };
 
   return (
-    <AppBar position="static" color="default" elevation={1}>
-      <Toolbar>
-        <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-          Telar
-        </Typography>
-
+    <AppBar position="static" color="default" elevation={0}>
+      <Toolbar sx={{ justifyContent: 'flex-end', gap: 1 }}>
         {isLoading ? (
           <CircularProgress size={24} />
         ) : isAuthenticated && user ? (
           <>
             {/* Notifications */}
-            <IconButton color="inherit" sx={{ mr: 1 }}>
+            <IconButton color="inherit" size="medium">
               <NotificationsIcon />
             </IconButton>
 
             {/* Settings */}
-            <IconButton color="inherit" sx={{ mr: 2 }} onClick={handleSettingsClick}>
+            <IconButton color="inherit" size="medium" onClick={handleSettingsClick}>
               <SettingsIcon />
             </IconButton>
 
@@ -80,16 +78,25 @@ export default function DashboardHeader() {
               sx={{
                 display: 'flex',
                 alignItems: 'center',
+                gap: 1,
                 cursor: 'pointer',
+                px: 1,
+                py: 0.5,
+                borderRadius: 1,
+                '&:hover': {
+                  bgcolor: 'action.hover',
+                },
               }}
               onClick={handleMenuOpen}
             >
               <Avatar
                 alt={user.displayName}
                 src={user.avatar}
-                sx={{ width: 36, height: 36, mr: 1 }}
+                sx={{ width: 32, height: 32 }}
               />
-              <Typography variant="body1">{user.displayName}</Typography>
+              <Typography variant="body2" sx={{ display: { xs: 'none', sm: 'block' } }}>
+                {user.displayName}
+              </Typography>
             </Box>
 
             {/* User Menu */}
@@ -98,20 +105,22 @@ export default function DashboardHeader() {
               open={open}
               onClose={handleMenuClose}
               onClick={handleMenuClose}
+              autoFocus={false}
+              disableAutoFocusItem={true}
               transformOrigin={{ horizontal: 'right', vertical: 'top' }}
               anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
             >
               <MenuItem onClick={handleProfileClick}>
-                <AccountCircleIcon sx={{ mr: 1 }} />
-                Profile
+                <AccountCircleIcon sx={{ mr: 1.5 }} />
+                {t('navigation.profile')}
               </MenuItem>
               <MenuItem onClick={handleSettingsClick}>
-                <SettingsIcon sx={{ mr: 1 }} />
-                Settings
+                <SettingsIcon sx={{ mr: 1.5 }} />
+                {t('navigation.settings')}
               </MenuItem>
               <MenuItem onClick={handleLogoutClick} disabled={isLoggingOut}>
-                <LogoutIcon sx={{ mr: 1 }} />
-                {isLoggingOut ? 'Logging out...' : 'Logout'}
+                <LogoutIcon sx={{ mr: 1.5 }} />
+                {isLoggingOut ? t('states.processing') : t('navigation.logout')}
               </MenuItem>
             </Menu>
           </>

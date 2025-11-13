@@ -11,20 +11,11 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - mongo
       - postgres
       - mailhog
     volumes:
       - ../../apps/api:/app/apps/api
       - ../../packages:/app/packages
-
-  mongo:
-    container_name: telar-mongo
-    image: mongo:6
-    ports:
-      - "27017:27017"
-    volumes:
-      - telar-mongo-data:/data/db
 
   postgres:
     container_name: telar-postgres
@@ -55,9 +46,7 @@ services:
     ports:
       - "8081:8081"
     depends_on:
-      - mongo
       - postgres
 
 volumes:
-  telar-mongo-data:
   telar-postgres-data:

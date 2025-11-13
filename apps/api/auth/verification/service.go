@@ -1,16 +1,17 @@
 package verification
 
 import (
-    "context"
-    "fmt"
+	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
-    "github.com/gofrs/uuid"
-	"github.com/qolzam/telar/apps/api/auth/errors"
+	"github.com/gofrs/uuid"
+	authErrors "github.com/qolzam/telar/apps/api/auth/errors"
 	"github.com/qolzam/telar/apps/api/auth/models"
 	"github.com/qolzam/telar/apps/api/internal/auth/tokens"
-	"github.com/qolzam/telar/apps/api/internal/database/interfaces"
+	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
 	platform "github.com/qolzam/telar/apps/api/internal/platform"
 	"github.com/qolzam/telar/apps/api/internal/types"
 	"github.com/qolzam/telar/apps/api/internal/utils"
@@ -23,6 +24,72 @@ const (
 	userAuthCollectionName         = "userAuth"
 	userProfileCollectionName      = "userProfile"
 )
+
+// verificationQueryBuilder is a helper struct for building verification-specific queries.
+// It knows the schema of the verification tables and provides fluent methods for query construction.
+type verificationQueryBuilder struct {
+	query *dbi.Query
+}
+
+// newVerificationQueryBuilder creates a new verificationQueryBuilder instance.
+func newVerificationQueryBuilder() *verificationQueryBuilder {
+	return &verificationQueryBuilder{
+		query: &dbi.Query{
+			Conditions: []dbi.Field{},
+			OrGroups:   [][]dbi.Field{},
+		},
+	}
+}
+
+// WhereObjectID adds a filter for the object_id (indexed column).
+func (b *verificationQueryBuilder) WhereObjectID(objectID uuid.UUID) *verificationQueryBuilder {
+	b.query.Conditions = append(b.query.Conditions, dbi.Field{
+		Name:     "object_id", // Indexed column - direct access
+		Value:    objectID,
+		Operator: "=",
+		IsJSONB:  false,
+	})
+	return b
+}
+
+// WhereCode adds a filter for the code (JSONB field).
+func (b *verificationQueryBuilder) WhereCode(code string) *verificationQueryBuilder {
+	b.query.Conditions = append(b.query.Conditions, dbi.Field{
+		Name:     "data->>'code'", // JSONB field
+		Value:    code,
+		Operator: "=",
+		IsJSONB:  true,
+	})
+	return b
+}
+
+// WhereUserId adds a filter for the user_id (indexed column).
+func (b *verificationQueryBuilder) WhereUserId(userID uuid.UUID) *verificationQueryBuilder {
+	b.query.Conditions = append(b.query.Conditions, dbi.Field{
+		Name:     "owner_user_id", // Indexed column - owner_user_id maps to userId
+		Value:    userID,
+		Operator: "=",
+		IsJSONB:  false,
+	})
+	return b
+}
+
+// Build returns the constructed Query object.
+func (b *verificationQueryBuilder) Build() *dbi.Query {
+	return b.query
+}
+
+// buildQueryFromFilter converts a DatabaseFilter to a Query object.
+func buildQueryFromFilter(filter *models.DatabaseFilter) *dbi.Query {
+	qb := newVerificationQueryBuilder()
+	if filter.ObjectId != nil {
+		qb.WhereObjectID(*filter.ObjectId)
+	}
+	if filter.UserId != nil {
+		qb.WhereUserId(*filter.UserId)
+	}
+	return qb.Build()
+}
 
 type Service struct {
 	base              *platform.BaseService
@@ -64,12 +131,8 @@ func NewServiceWithKeys(base *platform.BaseService, config *ServiceConfig, priva
 
 func (s *Service) verifyUserByCode(ctx context.Context, userId uuid.UUID, verifyId uuid.UUID, remoteIp string, code string, target string) (bool, error) {
     // Load verification
-	res := <-s.base.Repository.FindOne(ctx, userVerificationCollectionName, struct {
-        ObjectId uuid.UUID `json:"objectId" bson:"objectId"`
-	}{ObjectId: verifyId})
-	if res.Error() != nil {
-		return false, res.Error()
-	}
+	query := newVerificationQueryBuilder().WhereObjectID(verifyId).Build()
+	res := <-s.base.Repository.FindOne(ctx, userVerificationCollectionName, query)
 	var uv struct {
 		ObjectId        uuid.UUID `json:"objectId" bson:"objectId"`
 		Code            string    `json:"code" bson:"code"`
@@ -84,7 +147,10 @@ func (s *Service) verifyUserByCode(ctx context.Context, userId uuid.UUID, verify
 		Used            bool      `json:"used" bson:"used"`
 	}
 	if err := res.Decode(&uv); err != nil {
-		return false, fmt.Errorf("decode userVerification")
+		if errors.Is(err, dbi.ErrNoDocuments) {
+			return false, fmt.Errorf("verification record not found")
+		}
+		return false, fmt.Errorf("decode userVerification: %w", err)
 	}
 	if uv.RemoteIpAddress != remoteIp {
 		return false, fmt.Errorf("verifyUserByCode/differentRemoteAddress")
@@ -98,10 +164,9 @@ func (s *Service) verifyUserByCode(ctx context.Context, userId uuid.UUID, verify
 	}
     if uv.Code != code {
         uv.LastUpdated = utils.UTCNowUnix()
-		update := map[string]interface{}{"$set": map[string]interface{}{"last_updated": uv.LastUpdated, "counter": newCounter}}
-		err := (<-s.base.Repository.Update(ctx, userVerificationCollectionName, struct {
-			ObjectId uuid.UUID `json:"objectId" bson:"objectId"`
-		}{ObjectId: verifyId}, update, &interfaces.UpdateOptions{})).Error
+		update := map[string]interface{}{"last_updated": uv.LastUpdated, "counter": newCounter}
+		updateQuery := newVerificationQueryBuilder().WhereObjectID(verifyId).Build()
+		err := (<-s.base.Repository.UpdateFields(ctx, userVerificationCollectionName, updateQuery, update)).Error
 		if err != nil {
 			return false, fmt.Errorf("createCodeVerification/updateVerificationCode")
 		}
@@ -119,10 +184,9 @@ func (s *Service) verifyUserByCode(ctx context.Context, userId uuid.UUID, verify
 			return false, fmt.Errorf("verifyUserByCode/codeExpired")
 		}
 	}
-	update := map[string]interface{}{"$set": map[string]interface{}{"last_updated": nowMillis, "counter": newCounter, "isVerified": true, "used": true}}
-	err := (<-s.base.Repository.Update(ctx, userVerificationCollectionName, struct {
-		ObjectId uuid.UUID `json:"objectId" bson:"objectId"`
-	}{ObjectId: verifyId}, update, &interfaces.UpdateOptions{})).Error
+	update := map[string]interface{}{"last_updated": nowMillis, "counter": newCounter, "isVerified": true, "used": true}
+	updateQuery := newVerificationQueryBuilder().WhereObjectID(verifyId).Build()
+	err := (<-s.base.Repository.UpdateFields(ctx, userVerificationCollectionName, updateQuery, update)).Error
 	if err != nil {
 		return false, fmt.Errorf("createCodeVerification/updateVerificationCode")
 	}
@@ -141,14 +205,18 @@ type userAuthDoc struct {
 }
 
 func (s *Service) createUserAuth(ctx context.Context, ua userAuthDoc) error {
-	// Use the struct directly instead of map to ensure proper field mapping
-	// Save user authentication record
-	saveResult := <-s.base.Repository.Save(ctx, userAuthCollectionName, ua)
+	// Save user authentication record using new Save signature
+	saveResult := <-s.base.Repository.Save(ctx, userAuthCollectionName, ua.ObjectId, ua.ObjectId, ua.CreatedDate, ua.LastUpdated, ua)
 	return saveResult.Error
 }
 
 func (s *Service) createUserProfile(ctx context.Context, up interface{}) error {
-    return (<-s.base.Repository.Save(ctx, userProfileCollectionName, up)).Error
+	// For user profile, we need to extract objectId, userId, createdDate, lastUpdated from the struct
+	// Since we're passing interface{}, we'll need to handle this differently
+	// For now, generate UUIDs and timestamps
+	objectID := uuid.Must(uuid.NewV4())
+	now := time.Now().Unix()
+	return (<-s.base.Repository.Save(ctx, userProfileCollectionName, objectID, objectID, now, now, up)).Error
 }
 
 // Extract full name from email target
@@ -192,23 +260,24 @@ func (s *Service) VerifyPhoneCode(ctx context.Context, verificationId string, co
 
 // SaveUserVerification saves a user verification record
 func (s *Service) SaveUserVerification(ctx context.Context, userVerification *models.UserVerification) error {
-	result := <-s.base.Repository.Save(ctx, userVerificationCollectionName, userVerification)
+	result := <-s.base.Repository.Save(ctx, userVerificationCollectionName, userVerification.ObjectId, userVerification.UserId, userVerification.CreatedDate, userVerification.LastUpdated, userVerification)
 	if result.Error != nil {
-		return errors.WrapDatabaseError(fmt.Errorf("failed to save user verification: %w", result.Error))
+		return authErrors.WrapDatabaseError(fmt.Errorf("failed to save user verification: %w", result.Error))
 	}
 	return nil
 }
 
 // FindUserVerification finds a user verification record
 func (s *Service) FindUserVerification(ctx context.Context, filter *models.DatabaseFilter) (*models.UserVerification, error) {
-	res := <-s.base.Repository.FindOne(ctx, userVerificationCollectionName, filter)
-	if res.Error() != nil {
-		return nil, errors.WrapUserNotFoundError(fmt.Errorf("user verification not found"))
-	}
-
+	query := buildQueryFromFilter(filter)
+	res := <-s.base.Repository.FindOne(ctx, userVerificationCollectionName, query)
+	
 	var verification models.UserVerification
 	if err := res.Decode(&verification); err != nil {
-		return nil, errors.WrapDatabaseError(fmt.Errorf("failed to decode verification: %w", err))
+		if errors.Is(err, dbi.ErrNoDocuments) {
+			return nil, authErrors.WrapUserNotFoundError(fmt.Errorf("user verification not found"))
+		}
+		return nil, authErrors.WrapDatabaseError(fmt.Errorf("failed to decode verification: %w", err))
 	}
 
 	return &verification, nil
@@ -216,16 +285,20 @@ func (s *Service) FindUserVerification(ctx context.Context, filter *models.Datab
 
 // UpdateUserVerification updates a user verification record
 func (s *Service) UpdateUserVerification(ctx context.Context, filter *models.DatabaseFilter, data *models.DatabaseUpdate) error {
-	result := <-s.base.Repository.Update(ctx, userVerificationCollectionName, filter, data, nil)
+	query := buildQueryFromFilter(filter)
+	// Convert DatabaseUpdate to map[string]interface{}
+	updates := data.Set
+	result := <-s.base.Repository.UpdateFields(ctx, userVerificationCollectionName, query, updates)
 	if result.Error != nil {
-		return errors.WrapDatabaseError(fmt.Errorf("failed to update user verification: %w", result.Error))
+		return authErrors.WrapDatabaseError(fmt.Errorf("failed to update user verification: %w", result.Error))
 	}
 	return nil
 }
 
 // DeleteUserVerification deletes a user verification record
 func (s *Service) DeleteUserVerification(ctx context.Context, filter *models.DatabaseFilter) error {
-	result := <-s.base.Repository.Delete(ctx, userVerificationCollectionName, filter)
+	query := buildQueryFromFilter(filter)
+	result := <-s.base.Repository.Delete(ctx, userVerificationCollectionName, query)
 	if result.Error != nil {
 		return fmt.Errorf("failed to delete user verification: %w", result.Error)
 	}
@@ -240,22 +313,22 @@ func (s *Service) VerifySignup(ctx context.Context, params VerifySignupParams) (
 		ObjectId: &params.VerificationId,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("verification record not found: %w", err)
+		return nil, authErrors.NewUserNotFoundError("verification record not found")
 	}
 
 	// 2. Validate the verification code
 	if verification.Code != params.Code {
-		return nil, fmt.Errorf("invalid verification code")
+		return nil, authErrors.NewValidationError("invalid verification code")
 	}
 
 	// 3. Check if verification has expired
 	if time.Now().Unix() > verification.ExpiresAt {
-		return nil, fmt.Errorf("verification code has expired")
+		return nil, authErrors.NewValidationError("verification code has expired")
 	}
 
 	// 4. Check if verification already used
 	if verification.Used {
-		return nil, fmt.Errorf("verification code already used")
+		return nil, authErrors.NewValidationError("verification code already used")
 	}
 
 	// 5. Verify the user by code (handles verification state update)
@@ -307,8 +380,12 @@ func (s *Service) VerifySignup(ctx context.Context, params VerifySignupParams) (
 		LastUpdated: &createdDate,
 	}
 
+	if s.profileCreator == nil {
+		return nil, authErrors.NewSystemError("profile service not available")
+	}
+
 	if err := s.profileCreator.CreateProfileOnSignup(ctx, profileReq); err != nil {
-		return nil, fmt.Errorf("failed to create user profile: %w", err)
+		return nil, authErrors.NewSystemError(fmt.Sprintf("failed to create user profile: %v", err))
 	}
 
 	// 7. Generate access token for successful verification
@@ -403,16 +480,24 @@ func (s *Service) validateHMACSignature(ctx context.Context, params *VerifySignu
 
 // findUserProfile finds a user profile by user ID
 func (s *Service) findUserProfile(ctx context.Context, userId uuid.UUID) (*userProfileData, error) {
-	res := <-s.base.Repository.FindOne(ctx, userProfileCollectionName, struct {
-		ObjectId uuid.UUID `json:"objectId" bson:"objectId"`
-	}{ObjectId: userId})
-
-	if res.Error() != nil {
-		return nil, fmt.Errorf("user profile not found: %w", res.Error())
+	// Use a simple query builder for user profile
+	query := &dbi.Query{
+		Conditions: []dbi.Field{
+			{
+				Name:     "object_id",
+				Value:    userId,
+				Operator: "=",
+				IsJSONB:  false,
+			},
+		},
 	}
+	res := <-s.base.Repository.FindOne(ctx, userProfileCollectionName, query)
 
 	var profile userProfileData
 	if err := res.Decode(&profile); err != nil {
+		if errors.Is(err, dbi.ErrNoDocuments) {
+			return nil, fmt.Errorf("user profile not found")
+		}
 		return nil, fmt.Errorf("failed to decode user profile: %w", err)
 	}
 

@@ -249,12 +249,23 @@ get_latest_email_for_recipient() {
 
 extract_email_body() {
     local mailhog_response="$1"
-    echo "$mailhog_response" | grep -o '"Body":"[^"]*"' | head -1 | cut -d'"' -f4 | sed 's/\\n/ /g' | sed 's/\\r//g' | sed 's/\\t/ /g'
+    if command -v python3 >/dev/null 2>&1; then
+        echo "$mailhog_response" | python3 -c "import sys, json; data=json.load(sys.stdin); items=data.get('items', []); print(items[0]['Content']['Body'] if items else '')" 2>/dev/null || echo ""
+    else
+        echo "$mailhog_response" | grep -oP '"Body":"[^\"]*(?<!\\)"' | head -1 | sed 's/"Body":"\(.*\)"/\1/' | sed 's/\\n/ /g' | sed 's/\\r//g' | sed 's/\\t/ /g' | sed 's/\\"/"/g'
+    fi
 }
 
 extract_verification_code() {
     local email_body="$1"
-    echo "$email_body" | grep -oE '[0-9]{6}' | head -1
+    local code=$(echo "$email_body" | grep -oE 'code=[0-9]{6}' | grep -oE '[0-9]{6}' | head -1)
+    if [[ -z "$code" ]]; then
+        code=$(echo "$email_body" | grep -oE '(code[:\s]+|verification[:\s]+|Your code is[:\s]+)[0-9]{6}' | grep -oE '[0-9]{6}' | head -1)
+    fi
+    if [[ -z "$code" ]]; then
+        code=$(echo "$email_body" | grep -oE '[0-9]{6}' | head -1)
+    fi
+    echo "$code"
 }
 
 generate_uuid() {
@@ -280,27 +291,19 @@ detect_database_type() {
     
     # Fallback to environment variable if .env not found or empty
     if [[ -z "$DB_TYPE" ]] || [[ "$DB_TYPE" == "unknown" ]]; then
-        DB_TYPE="${DB_TYPE:-mongodb (default)}"
+        DB_TYPE="${DB_TYPE:-postgresql (default)}"
     fi
 }
 
 verify_database_connection() {
     log_info "=== Verifying Database Connection ==="
     
-    # Check which database containers are running
-    local mongo_running=$(docker ps --filter "name=telar-mongo" --format "{{.Names}}" 2>/dev/null || echo "")
     local postgres_running=$(docker ps --filter "name=telar-postgres" --format "{{.Names}}" 2>/dev/null || echo "")
     
     log_info "Database Configuration:"
     log_info "  DB_TYPE (from .env): ${DB_TYPE}"
     echo
     log_info "Database Containers Status:"
-    
-    if [[ -n "$mongo_running" ]]; then
-        log_success "  ✓ MongoDB container running: $mongo_running"
-    else
-        log_info "  ✗ MongoDB container not running"
-    fi
     
     if [[ -n "$postgres_running" ]]; then
         log_success "  ✓ PostgreSQL container running: $postgres_running"
@@ -310,10 +313,7 @@ verify_database_connection() {
     
     echo
     
-    # Verify the DB_TYPE matches expected container
-    if [[ "$DB_TYPE" == "mongodb" ]] && [[ -z "$mongo_running" ]]; then
-        log_warning "⚠️  DB_TYPE is 'mongodb' but MongoDB container is not running!"
-    elif [[ "$DB_TYPE" == "postgresql" ]] && [[ -z "$postgres_running" ]]; then
+    if [[ "$DB_TYPE" == "postgresql" ]] && [[ -z "$postgres_running" ]]; then
         log_warning "⚠️  DB_TYPE is 'postgresql' but PostgreSQL container is not running!"
     fi
 }

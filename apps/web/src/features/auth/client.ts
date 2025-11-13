@@ -19,6 +19,7 @@ import type {
   ResetPasswordRequest,
   ChangePasswordRequest,
   VerifyEmailRequest,
+  ResendVerificationRequest,
   SessionData,
 } from '@telar/sdk';
 
@@ -307,6 +308,31 @@ export function useVerifyEmail() {
   return {
     verify: mutation.mutate,
     verifyAsync: mutation.mutateAsync,
+    isLoading: mutation.isPending,
+    error: mutation.error?.message || null,
+    isError: mutation.isError,
+    isSuccess: mutation.isSuccess,
+    reset: mutation.reset,
+  };
+}
+
+/**
+ * Hook to resend verification email
+ */
+export function useResendVerification() {
+  const mutation = useMutation({
+    mutationFn: (data: ResendVerificationRequest) => sdk.auth.resendVerification(data),
+    onSuccess: () => {
+      console.log('[Resend] ✅ Verification email resent');
+    },
+    onError: (error: Error) => {
+      console.error('[Resend] Failed to resend:', error.message);
+    },
+  });
+
+  return {
+    resend: mutation.mutate,
+    resendAsync: mutation.mutateAsync,
     isLoading: mutation.isPending,
     error: mutation.error?.message || null,
     isError: mutation.isError,

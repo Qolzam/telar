@@ -29,7 +29,14 @@ export default function DashboardLayout({
         <DashboardHeader />
         
         {/* Page content */}
-        <Box component="main" sx={{ flexGrow: 1, p: 3, bgcolor: '#f5f5f5' }}>
+        <Box 
+          component="main" 
+          sx={{ 
+            flexGrow: 1, 
+            p: 3, 
+            bgcolor: 'background.default' 
+          }}
+        >
           {children}
         </Box>
       </Box>

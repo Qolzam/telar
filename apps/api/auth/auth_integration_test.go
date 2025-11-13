@@ -35,7 +35,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
 func newAuthApp(t *testing.T, base *platform.BaseService, cfg *platformconfig.Config) (*fiber.App, string, string) {
 	pubPEM, privPEM := testutil.GenerateECDSAKeyPairPEM(t)
 
@@ -242,7 +241,7 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 	// Arrange: real DB, no mocks
 	suite := testutil.Setup(t)
 	baseConfig := suite.Config()
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, baseConfig)
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, baseConfig)
 	ctx := context.Background()
 	base, err := platform.NewBaseService(ctx, iso.Config)
 	require.NoError(t, err)
@@ -266,14 +265,9 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 		form.Set("verifyType", "email")
 		form.Set("g-recaptcha-response", "ok")
 
-		formData := form.Encode()
-		t.Logf("Sending form data: %s", formData)
-		resp := h.NewRequest(http.MethodPost, "/auth/signup", []byte(formData)).
+		formBytes := []byte(form.Encode())
+		resp := h.NewRequest(http.MethodPost, "/auth/signup", formBytes).
 			WithHeader(types.HeaderContentType, "application/x-www-form-urlencoded").Send()
-		if resp.StatusCode != http.StatusOK {
-			bodyBytes, _ := io.ReadAll(resp.Body)
-			t.Logf("Signup error response: %s", string(bodyBytes))
-		}
 		require.Equal(t, http.StatusOK, resp.StatusCode, fmt.Sprintf("signup failed: %d", resp.StatusCode))
 
 		var signupPayload struct {
@@ -290,9 +284,12 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 		require.NotEqual(t, uuid.Nil, verifyUUID, "VerificationId must be a valid UUID")
 
 		// Verify server-side verification record exists with hashed password
-		res := <-base.Repository.FindOne(ctx, "userVerification", struct {
-			ObjectId uuid.UUID `json:"objectId" bson:"objectId"`
-		}{ObjectId: verifyUUID})
+		queryObj := &dbi.Query{
+			Conditions: []dbi.Field{
+				{Name: "object_id", Value: verifyUUID, Operator: "=", IsJSONB: false},
+			},
+		}
+		res := <-base.Repository.FindOne(ctx, "userVerification", queryObj)
 		require.NoError(t, res.Error())
 		var uv struct {
 			Code           string `json:"code"`
@@ -317,9 +314,12 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp2.StatusCode, fmt.Sprintf("verify failed: %d", resp2.StatusCode))
 
 		// Verify the verification record is marked as used
-		res2 := <-base.Repository.FindOne(ctx, "userVerification", struct {
-			ObjectId uuid.UUID `json:"objectId" bson:"objectId"`
-		}{ObjectId: verifyUUID})
+		queryObj2 := &dbi.Query{
+			Conditions: []dbi.Field{
+				{Name: "object_id", Value: verifyUUID, Operator: "=", IsJSONB: false},
+			},
+		}
+		res2 := <-base.Repository.FindOne(ctx, "userVerification", queryObj2)
 		require.NoError(t, res2.Error())
 		var uv2 struct {
 			Used bool `json:"used"`
@@ -346,10 +346,6 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 
 		resp3 := h.NewRequest(http.MethodPost, "/auth/login", []byte(lf.Encode())).
 			WithHeader(types.HeaderContentType, "application/x-www-form-urlencoded").Send()
-		if resp3.StatusCode != http.StatusOK {
-			bodyBytes, _ := io.ReadAll(resp3.Body)
-			t.Logf("Login error response: %s", string(bodyBytes))
-		}
 		require.Equal(t, http.StatusOK, resp3.StatusCode, fmt.Sprintf("login failed: %d", resp3.StatusCode))
 
 		var loginPayload struct {
@@ -401,7 +397,7 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 		signature := createHMACSignature(method, path, query, body, uid, timestamp, hmacSecret)
 
 		// Test HMAC-protected admin endpoint
-		resp := h.NewRequest(http.MethodGet, path, "").
+		_ = h.NewRequest(http.MethodGet, path, "").
 			WithHeader(types.HeaderHMACAuthenticate, signature).
 			WithHeader(types.HeaderTimestamp, timestamp).
 			WithHeader(types.HeaderUID, uid).
@@ -409,7 +405,6 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 
 		// Note: This will likely fail as we haven't implemented the strengthened HMAC middleware yet
 		// This test documents the expected behavior for Phase 2.5 of the refactoring guide
-		t.Logf("HMAC test response status: %d (expected to fail until HMAC middleware is strengthened)", resp.StatusCode)
 	})
 
 	t.Run("Phase4_SecurityValidations", func(t *testing.T) {
@@ -460,10 +455,6 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 
 		resp := h.NewRequest(http.MethodPost, "/auth/signup", []byte(form.Encode())).
 			WithHeader(types.HeaderContentType, "application/x-www-form-urlencoded").Send()
-		if resp.StatusCode != http.StatusOK {
-			bodyBytes, _ := io.ReadAll(resp.Body)
-			t.Logf("Recaptcha test error response: %s", string(bodyBytes))
-		}
 		require.Equal(t, http.StatusOK, resp.StatusCode, "Recaptcha should be handled via DI")
 	})
 
@@ -484,41 +475,45 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 		require.NoError(t, err)
 
 		userAuth := struct {
-			ObjectId uuid.UUID `json:"objectId" bson:"objectId"`
-			Username string    `json:"username" bson:"username"`
-			Password []byte    `json:"password" bson:"password"`
+			ObjectId    uuid.UUID `json:"objectId" bson:"objectId"`
+			Username    string    `json:"username" bson:"username"`
+			Password    []byte    `json:"password" bson:"password"`
+			CreatedDate int64     `json:"createdDate" bson:"createdDate"`
+			LastUpdated int64     `json:"lastUpdated" bson:"lastUpdated"`
 		}{
-			ObjectId: userUUID,
-			Username: email,
-			Password: hashedPassword,
+			ObjectId:    userUUID,
+			Username:    email,
+			Password:    hashedPassword,
+			CreatedDate: time.Now().Unix(),
+			LastUpdated: time.Now().Unix(),
 		}
 
-		err = (<-base.Repository.Save(ctx, "userAuth", &userAuth)).Error
+		err = (<-base.Repository.Save(ctx, "userAuth", userAuth.ObjectId, userAuth.ObjectId, userAuth.CreatedDate, userAuth.LastUpdated, &userAuth)).Error
 		require.NoError(t, err)
-		t.Logf("Created user with email: %s, UUID: %s", email, userUUID.String())
 
 		// Test user lookup
-		userRes := <-base.Repository.FindOne(ctx, "userAuth", struct {
-			Username string `json:"username" bson:"username"`
-		}{Username: email})
+		queryObj := &dbi.Query{
+			Conditions: []dbi.Field{
+				{Name: "data->>'username'", Value: email, Operator: "=", IsJSONB: true},
+			},
+		}
+		userRes := <-base.Repository.FindOne(ctx, "userAuth", queryObj)
 		require.NoError(t, userRes.Error())
 		var ua struct {
 			ObjectId uuid.UUID `json:"objectId" bson:"objectId"`
 			Username string    `json:"username" bson:"username"`
 		}
 		require.NoError(t, userRes.Decode(&ua))
-		t.Logf("Found user: %+v", ua)
 
 		// Use the secure password reset flow instead of deprecated JWT tokens
 		passwordService := passwordUC.NewService(base, &passwordUC.ServiceConfig{
-			JWTConfig:  platformconfig.JWTConfig{PublicKey: pubPEM, PrivateKey: privPEM},
-			HMACConfig: platformconfig.HMACConfig{Secret: iso.Config.HMAC.Secret},
+			JWTConfig:   platformconfig.JWTConfig{PublicKey: pubPEM, PrivateKey: privPEM},
+			HMACConfig:  platformconfig.HMACConfig{Secret: iso.Config.HMAC.Secret},
 			EmailConfig: platformconfig.EmailConfig{},
-			AppConfig:  platformconfig.AppConfig{},
+			AppConfig:   platformconfig.AppConfig{},
 		})
 		resetData, err := passwordService.PrepareSecureResetVerification(ctx, email, "127.0.0.1")
 		require.NoError(t, err)
-		t.Logf("Generated secure reset token (length: %d)", len(resetData.PlaintextToken))
 
 		// Verify the secure token has proper entropy
 		require.GreaterOrEqual(t, len(resetData.PlaintextToken), 40, "Secure token should have sufficient entropy")
@@ -534,13 +529,8 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 		resp := h.NewRequest(http.MethodPost, "/auth/password/reset/"+resetToken, []byte(form.Encode())).
 			WithHeader(types.HeaderContentType, "application/x-www-form-urlencoded").Send()
 
-		// Debug: print response body if not 200
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			t.Logf("Password reset failed with status %d: %s", resp.StatusCode, string(body))
-		}
 		require.Equal(t, http.StatusOK, resp.StatusCode)
-		
+
 		// Verify the response contains success message
 		body, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
@@ -566,18 +556,21 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 		require.NoError(t, err)
 
 		userAuth := struct {
-			ObjectId uuid.UUID `json:"objectId" bson:"objectId"`
-			Username string    `json:"username" bson:"username"`
-			Password []byte    `json:"password" bson:"password"`
+			ObjectId    uuid.UUID `json:"objectId" bson:"objectId"`
+			Username    string    `json:"username" bson:"username"`
+			Password    []byte    `json:"password" bson:"password"`
+			CreatedDate int64     `json:"createdDate" bson:"createdDate"`
+			LastUpdated int64     `json:"lastUpdated" bson:"lastUpdated"`
 		}{
-			ObjectId: userUUID,
-			Username: "user@example.com",
-			Password: hashedPassword,
+			ObjectId:    userUUID,
+			Username:    "user@example.com",
+			Password:    hashedPassword,
+			CreatedDate: time.Now().Unix(),
+			LastUpdated: time.Now().Unix(),
 		}
 
-		err = (<-base.Repository.Save(ctx, "userAuth", &userAuth)).Error
+		err = (<-base.Repository.Save(ctx, "userAuth", userAuth.ObjectId, userAuth.ObjectId, userAuth.CreatedDate, userAuth.LastUpdated, &userAuth)).Error
 		require.NoError(t, err)
-		t.Logf("Created user for forget test: %s", "user@example.com")
 
 		form := url.Values{}
 		form.Set("email", "user@example.com")
@@ -585,11 +578,6 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 		resp := h.NewRequest(http.MethodPost, "/auth/password/forget", []byte(form.Encode())).
 			WithHeader(types.HeaderContentType, "application/x-www-form-urlencoded").Send()
 
-		// Debug: print response body if not 200
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			t.Logf("Password forget failed with status %d: %s", resp.StatusCode, string(body))
-		}
 		// Expect 500 error because email sending fails in test environment (no SMTP server)
 		require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 	})
@@ -608,14 +596,18 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 			Username      string    `json:"username" bson:"username"`
 			Password      []byte    `json:"password" bson:"password"`
 			EmailVerified bool      `json:"emailVerified" bson:"emailVerified"`
+			CreatedDate   int64     `json:"createdDate" bson:"createdDate"`
+			LastUpdated   int64     `json:"lastUpdated" bson:"lastUpdated"`
 		}{
 			ObjectId:      userUUID,
 			Username:      testEmail, // Use a unique email for this test
 			Password:      hashedPassword,
 			EmailVerified: true,
+			CreatedDate:   time.Now().Unix(),
+			LastUpdated:   time.Now().Unix(),
 		}
 
-		err = (<-base.Repository.Save(ctx, "userAuth", &userAuth)).Error
+		err = (<-base.Repository.Save(ctx, "userAuth", userAuth.ObjectId, userAuth.ObjectId, userAuth.CreatedDate, userAuth.LastUpdated, &userAuth)).Error
 		require.NoError(t, err)
 
 		// Create user profile as well
@@ -628,6 +620,7 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 			Banner      string    `json:"banner" bson:"banner"`
 			TagLine     string    `json:"tagLine" bson:"tagLine"`
 			CreatedDate int64     `json:"createdDate" bson:"createdDate"`
+			LastUpdated int64     `json:"lastUpdated" bson:"lastUpdated"`
 		}{
 			ObjectId:    userUUID,
 			FullName:    "John Doe",
@@ -637,11 +630,11 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 			Banner:      "https://picsum.photos/id/1/900/300/?blur",
 			TagLine:     "",
 			CreatedDate: time.Now().Unix(),
+			LastUpdated: time.Now().Unix(),
 		}
 
-		err = (<-base.Repository.Save(ctx, "userProfile", &userProfile)).Error
+		err = (<-base.Repository.Save(ctx, "userProfile", userProfile.ObjectId, userProfile.ObjectId, userProfile.CreatedDate, userProfile.LastUpdated, &userProfile)).Error
 		require.NoError(t, err)
-		t.Logf("Created user and profile for password change test: %s", testEmail)
 
 		// Get JWT token from login
 		loginForm := url.Values{}
@@ -651,12 +644,6 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 
 		loginResp := h.NewRequest(http.MethodPost, "/auth/login", []byte(loginForm.Encode())).
 			WithHeader(types.HeaderContentType, "application/x-www-form-urlencoded").Send()
-
-		// Debug: print response body if not 200
-		if loginResp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(loginResp.Body)
-			t.Logf("Login failed with status %d: %s", loginResp.StatusCode, string(body))
-		}
 		require.Equal(t, http.StatusOK, loginResp.StatusCode)
 
 		var loginPayload struct {
@@ -674,11 +661,6 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 			WithHeader(types.HeaderContentType, "application/x-www-form-urlencoded").
 			WithHeader(types.HeaderAuthorization, types.BearerPrefix+loginPayload.AccessToken).Send()
 
-		// Debug: print response body if not 200
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			t.Logf("Password change failed with status %d: %s", resp.StatusCode, string(body))
-		}
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 	})
 
@@ -701,14 +683,11 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 		uid := uuid.Must(uuid.NewV4()).String()
 		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 
-		// Use canonical HMAC signing format
-		body := `""`
-		signature := testutil.SignHMAC("POST", "/auth/admin/check", "", []byte(body), uid, timestamp, hmacSecret)
-		t.Logf("Generated canonical HMAC signature: %s", signature)
-		t.Logf("HMAC secret: %s", hmacSecret)
-		t.Logf("Body being hashed: %q", body)
+		// Use canonical HMAC signing format - empty body for this endpoint
+		body := []byte("")
+		signature := testutil.SignHMAC("POST", "/auth/admin/check", "", body, uid, timestamp, hmacSecret)
 
-		resp := h.NewRequest(http.MethodPost, "/auth/admin/check", "").
+		resp := h.NewRequest(http.MethodPost, "/auth/admin/check", body).
 			WithHeader(types.HeaderHMACAuthenticate, signature).
 			WithHeader(types.HeaderTimestamp, timestamp).
 			WithHeader(types.HeaderUID, uid).Send()
@@ -747,11 +726,6 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 			WithHeader(types.HeaderTimestamp, timestamp).
 			WithHeader(types.HeaderUID, uid).Send()
 
-		// Debug: print response body if not 201
-		if resp.StatusCode != http.StatusCreated {
-			body, _ := io.ReadAll(resp.Body)
-			t.Logf("Admin signup failed with status %d: %s", resp.StatusCode, string(body))
-		}
 		require.Equal(t, http.StatusCreated, resp.StatusCode)
 	})
 
@@ -777,17 +751,20 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 			Password      []byte    `json:"password" bson:"password"`
 			Role          string    `json:"role" bson:"role"`
 			EmailVerified bool      `json:"emailVerified" bson:"emailVerified"`
+			CreatedDate   int64     `json:"createdDate" bson:"createdDate"`
+			LastUpdated   int64     `json:"lastUpdated" bson:"lastUpdated"`
 		}{
 			ObjectId:      userUUID,
 			Username:      adminUsername,
 			Password:      hashedPassword,
 			Role:          "admin",
 			EmailVerified: true,
+			CreatedDate:   time.Now().Unix(),
+			LastUpdated:   time.Now().Unix(),
 		}
 
-		err = (<-base.Repository.Save(ctx, "userAuth", &userAuth)).Error
+		err = (<-base.Repository.Save(ctx, "userAuth", userAuth.ObjectId, userAuth.ObjectId, userAuth.CreatedDate, userAuth.LastUpdated, &userAuth)).Error
 		require.NoError(t, err)
-		t.Logf("Created admin user for login: %s", adminUsername)
 
 		// Create admin login payload
 		loginData := map[string]interface{}{
@@ -805,11 +782,6 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 			WithHeader(types.HeaderTimestamp, timestamp).
 			WithHeader(types.HeaderUID, uid).Send()
 
-		// Debug: print response body if not 200
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			t.Logf("Admin login failed with status %d: %s", resp.StatusCode, string(body))
-		}
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 	})
 
@@ -847,7 +819,7 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 		// Test GET /auth/oauth2/authorized with invalid parameters
 		// This should return 400 Bad Request due to missing/invalid OAuth parameters
 		resp := h.NewRequest(http.MethodGet, "/auth/oauth2/authorized?r=http://localhost/&state=abc", "").Send()
-		
+
 		// The secure OAuth implementation correctly rejects invalid requests
 		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
@@ -856,12 +828,12 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 		require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
 		require.Contains(t, response, "code")
 		require.Contains(t, response, "message")
-		
+
 		// Test with missing code parameter
 		resp2 := h.NewRequest(http.MethodGet, "/auth/oauth2/authorized?state=test", "").Send()
 		require.Equal(t, http.StatusBadRequest, resp2.StatusCode)
-		
-		// Test with missing state parameter  
+
+		// Test with missing state parameter
 		resp3 := h.NewRequest(http.MethodGet, "/auth/oauth2/authorized?code=test", "").Send()
 		require.Equal(t, http.StatusBadRequest, resp3.StatusCode)
 	})
@@ -871,7 +843,7 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 func TestAuth_RefactoringValidation(t *testing.T) {
 	suite := testutil.Setup(t)
 	baseConfig := suite.Config()
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, baseConfig)
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, baseConfig)
 	ctx := context.Background()
 	base, err := platform.NewBaseService(ctx, iso.Config)
 	require.NoError(t, err)

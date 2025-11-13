@@ -1,17 +1,19 @@
 'use client';
 
-import { ThemeProvider } from '@mui/material/styles';
-import CssBaseline from '@mui/material/CssBaseline';
-import theme from '@/lib/theme/theme';
+import { AppThemeProvider } from '@/lib/theme/theme-provider';
 import EmotionCacheProvider from './EmotionCache';
 
-export default function ThemeRegistry({ children }: { children: React.ReactNode }) {
+export type ThemeRegistryProps = {
+  children: React.ReactNode;
+  direction?: 'ltr' | 'rtl';
+};
+
+export default function ThemeRegistry({ children, direction = 'ltr' }: ThemeRegistryProps) {
   return (
-    <EmotionCacheProvider>
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
+    <EmotionCacheProvider direction={direction}>
+      <AppThemeProvider direction={direction}>
         {children}
-      </ThemeProvider>
+      </AppThemeProvider>
     </EmotionCacheProvider>
   );
 }

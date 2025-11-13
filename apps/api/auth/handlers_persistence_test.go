@@ -176,7 +176,7 @@ func TestAuth_Admin_Check_SetsOK(t *testing.T) {
 	baseConfig := suite.Config()
 
 	// 3. Create isolated test environment using the base config
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, baseConfig)
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, baseConfig)
 
 	// 4. Create base service for the test using the platform config
 	ctx := context.Background()
@@ -212,19 +212,11 @@ func TestAuth_Admin_Signup_Persistence(t *testing.T) {
 
 	// 3. Create a SINGLE isolated test environment. This creates a unique, temporary
 	//    database and returns a repository connected to it. THIS IS OUR SOURCE OF TRUTH.
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, &localConfig)
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, &localConfig)
 
 	// 4. Create the application dependencies by INJECTING the ISOLATED repository.
 	serviceCfg := &platform.ServiceConfig{
-		DatabaseType:     dbi.DatabaseTypeMongoDB,
-		ConnectionString: iso.Config.Database.MongoDB.URI,
-		DatabaseName:     iso.Config.Database.MongoDB.Database,
-		MongoConfig: &dbi.MongoDBConfig{
-			Host:     iso.Config.Database.MongoDB.Host,
-			Port:     iso.Config.Database.MongoDB.Port,
-			Username: iso.Config.Database.MongoDB.Username,
-			Password: iso.Config.Database.MongoDB.Password,
-		},
+		DatabaseType:     dbi.DatabaseTypePostgreSQL,
 		EnableTransactions: true,
 		MaxRetries:         3,
 	}
@@ -247,13 +239,18 @@ func TestAuth_Admin_Signup_Persistence(t *testing.T) {
 	require.Equal(t, http.StatusCreated, resp.StatusCode, "Admin signup failed")
 
 	// 6. VERIFICATION: Use the SAME isolated repository to verify the result.
-	t.Logf("Admin signup successful! Verifying persistence in isolated database: %s", iso.Config.Database.MongoDB.URI)
+	t.Logf("Admin signup successful! Verifying persistence in isolated database")
 	ctx := context.Background()
 	actualUsername := strings.ReplaceAll(email, "+", " ")
 
 	// Use `require.Eventually` for robustness. The verification is now checking the correct database.
 	require.Eventually(t, func() bool {
-		countResult := <-iso.Repo.Count(ctx, "userAuth", map[string]interface{}{"username": actualUsername})
+		queryObj := &dbi.Query{
+			Conditions: []dbi.Field{
+				{Name: "data->>'username'", Value: actualUsername, Operator: "=", IsJSONB: true},
+			},
+		}
+		countResult := <-iso.Repo.Count(ctx, "userAuth", queryObj)
 		if countResult.Error != nil {
 			t.Logf("Verification query failed: %v", countResult.Error)
 			return false

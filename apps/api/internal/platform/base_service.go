@@ -25,7 +25,6 @@ type ServiceConfig struct {
 	DatabaseType       string
 	ConnectionString   string
 	DatabaseName       string
-	MongoConfig        *interfaces.MongoDBConfig
 	PostgreSQLConfig   *interfaces.PostgreSQLConfig
 	EnableTransactions bool
 	MaxRetries         int
@@ -68,8 +67,6 @@ func NewBaseService(ctx context.Context, cfg *platformconfig.Config) (*BaseServi
 // getDatabaseNameFromConfig extracts database name from platform config
 func getDatabaseNameFromConfig(cfg *platformconfig.Config) string {
 	switch cfg.Database.Type {
-	case interfaces.DatabaseTypeMongoDB:
-		return cfg.Database.MongoDB.Database
 	case interfaces.DatabaseTypePostgreSQL:
 		return cfg.Database.Postgres.Database
 	default:
@@ -92,7 +89,7 @@ func CreateServiceConfigFromEnv() (*ServiceConfig, error) {
 	// For now, return a default configuration
 
 	config := &ServiceConfig{
-		DatabaseType:       interfaces.DatabaseTypeMongoDB, // Default
+		DatabaseType:       interfaces.DatabaseTypePostgreSQL,
 		DatabaseName:       "telar_social",
 		EnableTransactions: false,
 		MaxRetries:         3,
@@ -175,14 +172,6 @@ func NewServiceBuilder() *ServiceBuilder {
 	}
 }
 
-// WithMongoDB configures the service to use MongoDB
-func (b *ServiceBuilder) WithMongoDB(config *interfaces.MongoDBConfig, databaseName string) *ServiceBuilder {
-	b.config.DatabaseType = interfaces.DatabaseTypeMongoDB
-	b.config.MongoConfig = config
-	b.config.DatabaseName = databaseName
-	return b
-}
-
 // WithPostgreSQL configures the service to use PostgreSQL
 func (b *ServiceBuilder) WithPostgreSQL(config *interfaces.PostgreSQLConfig, databaseName string) *ServiceBuilder {
 	b.config.DatabaseType = interfaces.DatabaseTypePostgreSQL
@@ -210,7 +199,6 @@ func (b *ServiceBuilder) Build(ctx context.Context) (*BaseService, error) {
 		DatabaseType:     b.config.DatabaseType,
 		ConnectionString: b.config.ConnectionString,
 		DatabaseName:     b.config.DatabaseName,
-		MongoConfig:      b.config.MongoConfig,
 		PostgresConfig:   b.config.PostgreSQLConfig,
 	}
 

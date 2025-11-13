@@ -44,9 +44,9 @@ func TestAdminHandler_Login_Success_Coverage(t *testing.T) {
 
 	// Create isolated test environment with transaction using Config-First pattern
 	baseConfig := suite.Config()
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, baseConfig)
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, baseConfig)
 	if iso.Repo == nil {
-		t.Skip("MongoDB not available, skipping")
+		t.Skip("PostgreSQL not available, skipping")
 	}
 
 	ctx := context.Background()
@@ -82,7 +82,25 @@ func TestAdminHandler_Login_Success_Coverage(t *testing.T) {
 		"last_updated":  1,
 	}
 
-	res := <-base.Repository.Save(ctx, "userAuth", userAuth)
+	objectID := userAuth["objectId"].(uuid.UUID)
+	ownerID := objectID // Use objectID as owner for test data
+	// Handle both int and int64 for created_date/last_updated
+	var createdDate, lastUpdated int64
+	if cd, ok := userAuth["created_date"].(int64); ok {
+		createdDate = cd
+	} else if cd, ok := userAuth["created_date"].(int); ok {
+		createdDate = int64(cd)
+	} else {
+		createdDate = 1
+	}
+	if lu, ok := userAuth["last_updated"].(int64); ok {
+		lastUpdated = lu
+	} else if lu, ok := userAuth["last_updated"].(int); ok {
+		lastUpdated = int64(lu)
+	} else {
+		lastUpdated = 1
+	}
+	res := <-base.Repository.Save(ctx, "userAuth", objectID, ownerID, createdDate, lastUpdated, userAuth)
 	require.NoError(t, res.Error)
 
 	req := httptest.NewRequest(http.MethodPost, "/auth/admin/login",
@@ -103,9 +121,9 @@ func TestAdminHandler_Login_Error_WrongPassword(t *testing.T) {
 	suite := testutil.Setup(t)
 
 	// Create isolated test environment with transaction
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 	if iso.Repo == nil {
-		t.Skip("MongoDB not available, skipping")
+		t.Skip("PostgreSQL not available, skipping")
 	}
 
 	ctx := context.Background()
@@ -141,7 +159,25 @@ func TestAdminHandler_Login_Error_WrongPassword(t *testing.T) {
 		"last_updated":  1,
 	}
 
-	res := <-base.Repository.Save(ctx, "userAuth", userAuth)
+	objectID := userAuth["objectId"].(uuid.UUID)
+	ownerID := objectID // Use objectID as owner for test data
+	// Handle both int and int64 for created_date/last_updated
+	var createdDate, lastUpdated int64
+	if cd, ok := userAuth["created_date"].(int64); ok {
+		createdDate = cd
+	} else if cd, ok := userAuth["created_date"].(int); ok {
+		createdDate = int64(cd)
+	} else {
+		createdDate = 1
+	}
+	if lu, ok := userAuth["last_updated"].(int64); ok {
+		lastUpdated = lu
+	} else if lu, ok := userAuth["last_updated"].(int); ok {
+		lastUpdated = int64(lu)
+	} else {
+		lastUpdated = 1
+	}
+	res := <-base.Repository.Save(ctx, "userAuth", objectID, ownerID, createdDate, lastUpdated, userAuth)
 	require.NoError(t, res.Error)
 
 	req := httptest.NewRequest(http.MethodPost, "/auth/admin/login",
@@ -159,9 +195,9 @@ func TestAdminHandler_Check_OK(t *testing.T) {
 	suite := testutil.Setup(t)
 
 	// Create isolated test environment with transaction
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 	if iso.Repo == nil {
-		t.Skip("MongoDB not available, skipping")
+		t.Skip("PostgreSQL not available, skipping")
 	}
 
 	ctx := context.Background()
@@ -190,9 +226,9 @@ func TestAdminHandler_Signup_Status(t *testing.T) {
 	suite := testutil.Setup(t)
 
 	// Create isolated test environment with transaction
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 	if iso.Repo == nil {
-		t.Skip("MongoDB not available, skipping")
+		t.Skip("PostgreSQL not available, skipping")
 	}
 
 	ctx := context.Background()
@@ -200,14 +236,18 @@ func TestAdminHandler_Signup_Status(t *testing.T) {
 	t.Logf("TRACE req=test-admin-signup step=config payloadSecret=%s", iso.Config.HMAC.Secret)
 
 	serviceConfig := &platform.ServiceConfig{
-		DatabaseType:       "mongodb",
+		DatabaseType:       dbi.DatabaseTypePostgreSQL,
 		DatabaseName:       "test_db",
 		EnableTransactions: false,
 	}
 	baseService := platform.NewBaseServiceWithRepo(iso.Repo, serviceConfig)
 
-	findFilter := map[string]interface{}{"role": "admin"}
-	existingAdminCheck := <-baseService.Repository.FindOne(ctx, "userAuth", findFilter)
+	queryObj := &dbi.Query{
+		Conditions: []dbi.Field{
+			{Name: "data->>'role'", Value: "admin", Operator: "=", IsJSONB: true},
+		},
+	}
+	existingAdminCheck := <-baseService.Repository.FindOne(ctx, "userAuth", queryObj)
 	var dummy struct{}
 	if existingAdminCheck.Decode(&dummy) == nil {
 		t.Logf("WARNING: Found existing admin in isolated database")
@@ -215,8 +255,13 @@ func TestAdminHandler_Signup_Status(t *testing.T) {
 		t.Logf("CONFIRMED: No existing admin found in isolated database")
 	}
 
-	specificEmailFilter := map[string]interface{}{"username": "admin-sign@example.com", "role": "admin"}
-	specificAdminCheck := <-baseService.Repository.FindOne(ctx, "userAuth", specificEmailFilter)
+	queryObj2 := &dbi.Query{
+		Conditions: []dbi.Field{
+			{Name: "data->>'username'", Value: "admin-sign@example.com", Operator: "=", IsJSONB: true},
+			{Name: "data->>'role'", Value: "admin", Operator: "=", IsJSONB: true},
+		},
+	}
+	specificAdminCheck := <-baseService.Repository.FindOne(ctx, "userAuth", queryObj2)
 	var dummy2 struct{}
 	if specificAdminCheck.Decode(&dummy2) == nil {
 		t.Logf("WARNING: Found existing admin with our specific email in isolated database")
@@ -249,8 +294,13 @@ func TestAdminHandler_Signup_Status(t *testing.T) {
 	if resp.StatusCode == 500 {
 		t.Logf("DEBUG: Attempting manual admin creation to isolate error...")
 
-		afterHttpFilter := map[string]interface{}{"username": "admin-sign@example.com", "role": "admin"}
-		afterHttpCheck := <-baseService.Repository.FindOne(ctx, "userAuth", afterHttpFilter)
+		queryObj3 := &dbi.Query{
+			Conditions: []dbi.Field{
+				{Name: "data->>'username'", Value: "admin-sign@example.com", Operator: "=", IsJSONB: true},
+				{Name: "data->>'role'", Value: "admin", Operator: "=", IsJSONB: true},
+			},
+		}
+		afterHttpCheck := <-baseService.Repository.FindOne(ctx, "userAuth", queryObj3)
 		var dummy3 struct{}
 		if afterHttpCheck.Decode(&dummy3) == nil {
 			t.Logf("DEBUG: FOUND admin after HTTP call despite 500 error - this suggests transaction commit issue")
@@ -275,9 +325,9 @@ func TestAdminHandler_Signup_Status(t *testing.T) {
 func TestAdminHandler_Check_And_Signup_InternalError(t *testing.T) {
 	suite := testutil.Setup(t)
 
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 	if iso.Repo == nil {
-		t.Skip("MongoDB not available, skipping")
+		t.Skip("PostgreSQL not available, skipping")
 	}
 
 	ctx := context.Background()

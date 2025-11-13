@@ -91,7 +91,7 @@ const AuthLayout: React.FC<AuthLayoutProps> = ({
   );
 
   return (
-    <Box sx={{ minHeight: '100vh', display: 'flex' }}>
+    <Box sx={{ minHeight: '100vh', display: 'flex', backgroundColor: 'var(--mui-palette-background-default)' }}>
       <Box sx={{ display: 'flex', width: '100%', minHeight: '100vh' }}>
         {/* Left Panel - Branding/Illustration */}
         {!isMobile && (
@@ -175,7 +175,7 @@ const AuthLayout: React.FC<AuthLayoutProps> = ({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: theme.palette.background.default,
+            backgroundColor: 'var(--mui-palette-background-default)',
             p: { xs: 3, sm: 4, md: 5 },
           }}
         >

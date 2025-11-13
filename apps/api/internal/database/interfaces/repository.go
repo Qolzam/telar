@@ -12,27 +12,40 @@ import (
 	uuid "github.com/gofrs/uuid"
 )
 
+// SaveItem represents a single item to be saved with its indexed columns explicitly provided
+type SaveItem struct {
+	ObjectID    uuid.UUID
+	OwnerUserID uuid.UUID
+	CreatedDate int64
+	LastUpdated int64
+	Data        interface{}
+}
+
 // Repository defines the interface for database operations
 type Repository interface {
 	// Basic CRUD operations
-	Save(ctx context.Context, collectionName string, data interface{}) <-chan RepositoryResult
-	SaveMany(ctx context.Context, collectionName string, data []interface{}) <-chan RepositoryResult
-	Find(ctx context.Context, collectionName string, filter interface{}, opts *FindOptions) <-chan QueryResult
-	FindOne(ctx context.Context, collectionName string, filter interface{}) <-chan SingleResult
-	Update(ctx context.Context, collectionName string, filter interface{}, data interface{}, opts *UpdateOptions) <-chan RepositoryResult
-	UpdateMany(ctx context.Context, collectionName string, filter interface{}, data interface{}, opts *UpdateOptions) <-chan RepositoryResult
-	Delete(ctx context.Context, collectionName string, filter interface{}) <-chan RepositoryResult
-	DeleteMany(ctx context.Context, collectionName string, filters []interface{}) <-chan RepositoryResult // Bulk delete for multiple individual filters
+	// Save requires indexed columns to be passed explicitly (service layer owns schema knowledge)
+	Save(ctx context.Context, collectionName string, objectID uuid.UUID, ownerUserID uuid.UUID, createdDate, lastUpdated int64, data interface{}) <-chan RepositoryResult
+	// SaveMany requires indexed columns to be passed explicitly for each item
+	SaveMany(ctx context.Context, collectionName string, items []SaveItem) <-chan RepositoryResult
+	// Find, FindOne, Count, and related methods now ONLY accept Query objects.
+	// This enforces the architectural mandate: schema knowledge lives in the service layer.
+	Find(ctx context.Context, collectionName string, query *Query, opts *FindOptions) <-chan QueryResult
+	FindOne(ctx context.Context, collectionName string, query *Query) <-chan SingleResult
+	Update(ctx context.Context, collectionName string, query *Query, data interface{}, opts *UpdateOptions) <-chan RepositoryResult
+	UpdateMany(ctx context.Context, collectionName string, query *Query, data interface{}, opts *UpdateOptions) <-chan RepositoryResult
+	Delete(ctx context.Context, collectionName string, query *Query) <-chan RepositoryResult
+	DeleteMany(ctx context.Context, collectionName string, queries []*Query) <-chan RepositoryResult // Bulk delete for multiple queries
 	
 	// Index operations
 	CreateIndex(ctx context.Context, collectionName string, indexes map[string]interface{}) <-chan error
 	
 	// Aggregation operations
-	Count(ctx context.Context, collectionName string, filter interface{}) <-chan CountResult
+	Count(ctx context.Context, collectionName string, query *Query) <-chan CountResult
 	
 	// Cursor-based pagination operations
-	FindWithCursor(ctx context.Context, collectionName string, filter interface{}, opts *CursorFindOptions) <-chan QueryResult
-	CountWithFilter(ctx context.Context, collectionName string, filter interface{}) <-chan CountResult
+	FindWithCursor(ctx context.Context, collectionName string, query *Query, opts *CursorFindOptions) <-chan QueryResult
+	CountWithFilter(ctx context.Context, collectionName string, query *Query) <-chan CountResult
 	
 	// Transaction support with enterprise features
 	Begin(ctx context.Context) (Transaction, error) // New method for proper transactional isolation
@@ -45,9 +58,10 @@ type Repository interface {
 	Close() error
 	
 	// Clean abstraction methods for common operations
-	UpdateFields(ctx context.Context, collectionName string, filter interface{}, updates map[string]interface{}) <-chan RepositoryResult
-	IncrementFields(ctx context.Context, collectionName string, filter interface{}, increments map[string]interface{}) <-chan RepositoryResult
-	UpdateAndIncrement(ctx context.Context, collectionName string, filter interface{}, updates map[string]interface{}, increments map[string]interface{}) <-chan RepositoryResult
+	// UpdateFields now requires Query object (service layer owns schema knowledge)
+	UpdateFields(ctx context.Context, collectionName string, query *Query, updates map[string]interface{}) <-chan RepositoryResult
+	IncrementFields(ctx context.Context, collectionName string, query *Query, increments map[string]interface{}) <-chan RepositoryResult
+	UpdateAndIncrement(ctx context.Context, collectionName string, query *Query, updates map[string]interface{}, increments map[string]interface{}) <-chan RepositoryResult
 	
 	// Atomic operations with ownership validation (for performance optimization)
 	UpdateWithOwnership(ctx context.Context, collectionName string, entityID interface{}, ownerID interface{}, updates map[string]interface{}) <-chan RepositoryResult
@@ -70,6 +84,7 @@ type CursorFindOptions struct {
 	Select        map[string]int
 	SortField     string
 	SortDirection string // "asc" or "desc"
+	SortFieldType string // Optional: PostgreSQL type for casting (e.g., "numeric", "text", "bigint"). If empty, defaults to "numeric" for non-indexed fields.
 	CursorValue   interface{}
 	CursorID      string
 	IsAfter       bool // true for after cursor, false for before cursor
@@ -248,7 +263,6 @@ type CursorPaginationResult struct {
 
 // Database configuration constants
 const (
-	DatabaseTypeMongoDB    = "mongodb"
 	DatabaseTypePostgreSQL = "postgresql"
 )
 

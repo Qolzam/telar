@@ -18,7 +18,7 @@ export const SDK_CONFIG = {
    */
   GO_API_BASE_URL: typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_API_URL 
     ? process.env.NEXT_PUBLIC_API_URL 
-    : 'http://127.0.0.1:8080',
+    : 'http://localhost:8080',
 
   /**
    * Default request timeout in milliseconds
@@ -46,6 +46,20 @@ export const ENDPOINTS = {
     RESET_PASSWORD: '/api/auth/reset-password',
     CHANGE_PASSWORD: '/api/auth/change-password',
     VERIFY_EMAIL: '/api/auth/verify',
+    RESEND_VERIFICATION: '/api/auth/signup/resend',
+  },
+
+  /**
+   * Profile endpoints (direct Go API calls)
+   * These call the Go API directly via NEXT_PUBLIC_API_URL env var
+   */
+  PROFILE: {
+    MY: '/profile/my',
+    BY_ID: (userId: string) => `/profile/id/${userId}`,
+    BY_SOCIAL_NAME: (socialName: string) => `/profile/social/${socialName}`,
+    UPDATE: '/profile',
+    BY_IDS: '/profile/ids',
+    QUERY: '/profile',
   },
 
   /**
@@ -55,14 +69,6 @@ export const ENDPOINTS = {
   //   GET_FEED: '/posts',
   //   CREATE: '/posts',
   //   LIKE: (postId: string) => `/posts/${postId}/like`,
-  // },
-
-  /**
-   * Future: Profile endpoints (will call Go API directly)
-   */
-  // PROFILE: {
-  //   GET: (userId: string) => `/profile/${userId}`,
-  //   UPDATE: '/profile',
   // },
 } as const;
 

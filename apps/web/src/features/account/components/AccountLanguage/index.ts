@@ -1,0 +1,1 @@
+export { AccountLanguage } from './AccountLanguage';

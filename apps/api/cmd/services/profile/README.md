@@ -29,13 +29,13 @@ Profile microservice for the Telar social network platform. Manages user profile
 ## Setup
 
 ### Prerequisites
-- MongoDB or PostgreSQL database
+- PostgreSQL database
 - Environment variables configured (see `.env`)
 
 ### Running Locally
 ```bash
-# Start databases
-make up-both
+# Start PostgreSQL
+make up-postgres
 
 # Run profile service
 make run-profile
@@ -50,8 +50,7 @@ docker-compose up profile
 ## Environment Variables
 
 The service uses the same environment configuration as other Telar microservices:
-- `DB_TYPE` - Database type (mongodb or postgres)
-- `MONGO_HOST` - MongoDB connection string
+- `DB_TYPE` - Database type (`postgresql`)
 - `POSTGRES_HOST` - PostgreSQL connection string
 - `JWT_PUBLIC_KEY` - JWT public key for token verification
 - `HMAC_SECRET` - HMAC secret for service-to-service auth
@@ -90,7 +89,7 @@ The profile service follows clean architecture principles:
 ## Dependencies
 
 - **Fiber v2**: Web framework
-- **MongoDB/PostgreSQL**: Database (dual support)
+- **PostgreSQL**: Primary database backend
 - **Platform**: Shared platform services and utilities
 
 

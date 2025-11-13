@@ -33,7 +33,7 @@ The service is configured via environment variables. These are loaded from the c
 - **OAuth Integration**: Support for GitHub and Google OAuth
 - **Rate Limiting**: Configurable rate limiting for all endpoints
 - **Security Features**: Input validation, SQL injection protection, XSS prevention
-- **Database Support**: PostgreSQL and MongoDB support
+- **Database Support**: PostgreSQL
 - **Monitoring**: Health checks, metrics, and structured logging
 
 ## API Endpoints

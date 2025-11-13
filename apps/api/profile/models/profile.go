@@ -39,11 +39,16 @@ type UpdateLastSeenRequest struct {
 }
 
 type UpdateProfileRequest struct {
-	FullName   *string `json:"fullName,omitempty"`
-	Avatar     *string `json:"avatar,omitempty"`
-	Banner     *string `json:"banner,omitempty"`
-	TagLine    *string `json:"tagLine,omitempty"`
-	SocialName *string `json:"socialName,omitempty"`
+	FullName    *string `json:"fullName,omitempty"`
+	Avatar      *string `json:"avatar,omitempty"`
+	Banner      *string `json:"banner,omitempty"`
+	TagLine     *string `json:"tagLine,omitempty"`
+	SocialName  *string `json:"socialName,omitempty"`
+	WebUrl      *string `json:"webUrl,omitempty"`
+	CompanyName *string `json:"companyName,omitempty"`
+	FacebookId  *string `json:"facebookId,omitempty"`
+	InstagramId *string `json:"instagramId,omitempty"`
+	TwitterId   *string `json:"twitterId,omitempty"`
 }
 
 type CreateProfileRequest struct {

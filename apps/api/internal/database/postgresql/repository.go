@@ -11,12 +11,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
-	"sort"
-	"strconv"
-
+	uuid "github.com/gofrs/uuid"
+	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 	"github.com/qolzam/telar/apps/api/internal/database/interfaces"
 	"github.com/qolzam/telar/apps/api/internal/database/observability"
@@ -26,7 +27,7 @@ import (
 
 // PostgreSQLRepository implements the Repository interface for PostgreSQL
 type PostgreSQLRepository struct {
-	db     *sql.DB
+	db     *sqlx.DB
 	dbName string
 	schema string
 }
@@ -58,10 +59,9 @@ func NewPostgreSQLRepository(ctx context.Context, config *interfaces.PostgreSQLC
 	// Build connection string
 	connStr := buildConnectionString(config, databaseName)
 
-	// Open database connection
-	db, err := sql.Open("postgres", connStr)
+	db, err := sqlx.ConnectContext(ctx, "postgres", connStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open PostgreSQL connection: %w", err)
+		return nil, fmt.Errorf("failed to connect to PostgreSQL with sqlx: %w", err)
 	}
 
 	// Configure connection pool
@@ -174,6 +174,8 @@ func (r *PostgreSQLRepository) ensureTable(ctx context.Context, collectionName s
 
 	if exists {
 		// Table already exists, our job is done.
+		// Note: For test environments with outdated schemas, developers should run `make clean-dbs`
+		// to reset their database to a clean state. This ensures the latest schema is created.
 		return nil
 	}
 
@@ -182,6 +184,7 @@ func (r *PostgreSQLRepository) ensureTable(ctx context.Context, collectionName s
 	CREATE TABLE %s (
 		id BIGSERIAL PRIMARY KEY,
 		object_id VARCHAR(255) UNIQUE NOT NULL,
+		owner_user_id UUID,
 		data JSONB NOT NULL,
 		created_date BIGINT,
 		last_updated BIGINT,
@@ -235,8 +238,8 @@ func (r *PostgreSQLRepository) getTableName(collectionName string) string {
 	return fmt.Sprintf("%s.%s", r.schema, collectionName)
 }
 
-// Save stores a single document
-func (r *PostgreSQLRepository) Save(ctx context.Context, collectionName string, data interface{}) <-chan interfaces.RepositoryResult {
+// Save stores a single document with indexed columns explicitly provided
+func (r *PostgreSQLRepository) Save(ctx context.Context, collectionName string, objectID uuid.UUID, ownerUserID uuid.UUID, createdDate, lastUpdated int64, data interface{}) <-chan interfaces.RepositoryResult {
 	result := make(chan interfaces.RepositoryResult)
 
 	go func() {
@@ -254,17 +257,15 @@ func (r *PostgreSQLRepository) Save(ctx context.Context, collectionName string, 
 			return
 		}
 
-		// Extract common fields if they exist
-		objectID, createdDate, lastUpdated := r.extractCommonFields(data)
-
+		
 		tableName := r.getTableName(collectionName)
 		query := fmt.Sprintf(`
-			INSERT INTO %s (object_id, data, created_date, last_updated) 
-			VALUES ($1, $2, $3, $4) 
+			INSERT INTO %s (object_id, owner_user_id, data, created_date, last_updated) 
+			VALUES ($1, $2, $3, $4, $5) 
 			RETURNING id`, tableName)
 
 		var id int64
-		err = r.db.QueryRowContext(ctx, query, objectID, jsonData, createdDate, lastUpdated).Scan(&id)
+		err = r.db.QueryRowContext(ctx, query, objectID, ownerUserID, jsonData, createdDate, lastUpdated).Scan(&id)
 		if err != nil {
 			if pgErr, ok := err.(*pq.Error); ok && pgErr.Code == "23505" { // Unique violation
 				result <- interfaces.RepositoryResult{Error: interfaces.ErrDuplicateKey}
@@ -282,7 +283,7 @@ func (r *PostgreSQLRepository) Save(ctx context.Context, collectionName string, 
 }
 
 // SaveMany stores multiple documents
-func (r *PostgreSQLRepository) SaveMany(ctx context.Context, collectionName string, data []interface{}) <-chan interfaces.RepositoryResult {
+func (r *PostgreSQLRepository) SaveMany(ctx context.Context, collectionName string, items []interfaces.SaveItem) <-chan interfaces.RepositoryResult {
 	result := make(chan interfaces.RepositoryResult)
 
 	go func() {
@@ -293,7 +294,7 @@ func (r *PostgreSQLRepository) SaveMany(ctx context.Context, collectionName stri
 			return
 		}
 
-		if len(data) == 0 {
+		if len(items) == 0 {
 			result <- interfaces.RepositoryResult{Result: []int64{}}
 			return
 		}
@@ -301,24 +302,23 @@ func (r *PostgreSQLRepository) SaveMany(ctx context.Context, collectionName stri
 		tableName := r.getTableName(collectionName)
 
 		// Build bulk insert query
-		valueStrings := make([]string, 0, len(data))
-		valueArgs := make([]interface{}, 0, len(data)*4)
+		valueStrings := make([]string, 0, len(items))
+		valueArgs := make([]interface{}, 0, len(items)*5)
 
-		for i, item := range data {
-			jsonData, err := json.Marshal(item)
+		for i, item := range items {
+			jsonData, err := json.Marshal(item.Data)
 			if err != nil {
 				result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to marshal data at index %d: %w", i, err)}
 				return
 			}
 
-			objectID, createdDate, lastUpdated := r.extractCommonFields(item)
-
-			valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d, $%d)", i*4+1, i*4+2, i*4+3, i*4+4))
-			valueArgs = append(valueArgs, objectID, jsonData, createdDate, lastUpdated)
+			
+			valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d)", i*5+1, i*5+2, i*5+3, i*5+4, i*5+5))
+			valueArgs = append(valueArgs, item.ObjectID, item.OwnerUserID, jsonData, item.CreatedDate, item.LastUpdated)
 		}
 
 		query := fmt.Sprintf(`
-			INSERT INTO %s (object_id, data, created_date, last_updated) 
+			INSERT INTO %s (object_id, owner_user_id, data, created_date, last_updated) 
 			VALUES %s 
 			RETURNING id`, tableName, strings.Join(valueStrings, ","))
 
@@ -347,7 +347,7 @@ func (r *PostgreSQLRepository) SaveMany(ctx context.Context, collectionName stri
 }
 
 // Find retrieves multiple documents
-func (r *PostgreSQLRepository) Find(ctx context.Context, collectionName string, filter interface{}, opts *interfaces.FindOptions) <-chan interfaces.QueryResult {
+func (r *PostgreSQLRepository) Find(ctx context.Context, collectionName string, query *interfaces.Query, opts *interfaces.FindOptions) <-chan interfaces.QueryResult {
 	result := make(chan interfaces.QueryResult)
 
 	go func() {
@@ -360,41 +360,74 @@ func (r *PostgreSQLRepository) Find(ctx context.Context, collectionName string, 
 
 		tableName := r.getTableName(collectionName)
 
-		// Build query
-		query := fmt.Sprintf("SELECT data FROM %s", tableName)
-		whereClause, args, err := r.buildWhereClause(filter)
+		// Build the WHERE clause using the hybrid approach (named + positional params)
+		whereClause, namedArgs, positionalArgs, err := r.buildWhereClause(query)
 		if err != nil {
 			result <- &PostgreSQLQueryResult{err: err}
 			return
 		}
 
-		if whereClause != "" {
-			query += " WHERE " + whereClause
+		// Build the full SQL query
+		fullQuery := fmt.Sprintf("SELECT data FROM %s", tableName)
+		if whereClause != "" && whereClause != "TRUE" {
+			fullQuery += " WHERE " + whereClause
 		}
 
 		// Add sorting
 		if opts != nil && opts.Sort != nil {
 			orderBy := r.buildOrderByClause(opts.Sort)
 			if orderBy != "" {
-				query += " ORDER BY " + orderBy
+				fullQuery += " ORDER BY " + orderBy
 			}
 		}
 
 		// Add limit and offset
 		if opts != nil {
 			if opts.Limit != nil {
-				query += fmt.Sprintf(" LIMIT %d", *opts.Limit)
+				fullQuery += fmt.Sprintf(" LIMIT %d", *opts.Limit)
 			}
 			if opts.Skip != nil {
-				query += fmt.Sprintf(" OFFSET %d", *opts.Skip)
+				fullQuery += fmt.Sprintf(" OFFSET %d", *opts.Skip)
 			}
 		}
 
-		// Log the actual SQL query being executed (for debugging)
-		// log.Info("PostgreSQL Find query: %s", query)
-		// log.Info("PostgreSQL Find args: %v", args)
-		
-		rows, err := r.db.QueryContext(ctx, query, args...)
+		// Use sqlx to bind named parameters
+		// IMPORTANT: sqlx.BindNamed() matches :paramName patterns, which can incorrectly match ::type casts.
+		// We need to temporarily escape ::type casts before sqlx.BindNamed(), then unescape them after.
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "__CAST__")
+
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(namedArgs) > 0 {
+			// Use BindNamed to convert named parameters to positional
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = r.db.BindNamed(tempEscapedQuery, namedArgs)
+			if err2 != nil {
+				result <- &PostgreSQLQueryResult{err: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			// No named parameters - just rebind the query as-is
+			reboundQuery = r.db.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
+		}
+
+		// Replace temporary array placeholders with correct positional numbers
+		finalQuery := reboundQuery
+		for i := range positionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+
+		// Restore ::type casts after sqlx processing
+		finalQuery = strings.ReplaceAll(finalQuery, "__CAST__", "::")
+
+		// Combine argument slices: named args first, then positional args (arrays)
+		allArgs := append(namedArgsSlice, positionalArgs...)
+
+		// Execute the query with the combined arguments
+		rows, err := r.db.QueryContext(ctx, finalQuery, allArgs...)
 		if err != nil {
 			log.Error("PostgreSQL Find error: %s", err.Error())
 			result <- &PostgreSQLQueryResult{err: err}
@@ -408,7 +441,7 @@ func (r *PostgreSQLRepository) Find(ctx context.Context, collectionName string, 
 }
 
 // FindOne retrieves a single document
-func (r *PostgreSQLRepository) FindOne(ctx context.Context, collectionName string, filter interface{}) <-chan interfaces.SingleResult {
+func (r *PostgreSQLRepository) FindOne(ctx context.Context, collectionName string, query *interfaces.Query) <-chan interfaces.SingleResult {
 	result := make(chan interfaces.SingleResult)
 
 	go func() {
@@ -421,27 +454,63 @@ func (r *PostgreSQLRepository) FindOne(ctx context.Context, collectionName strin
 
 		tableName := r.getTableName(collectionName)
 
-		whereClause, args, err := r.buildWhereClause(filter)
+		// Build the WHERE clause using the hybrid approach (named + positional params)
+		whereClause, namedArgs, positionalArgs, err := r.buildWhereClause(query)
 		if err != nil {
 			result <- &PostgreSQLSingleResult{err: err}
 			return
 		}
 
-		query := fmt.Sprintf("SELECT data FROM %s", tableName)
-		if whereClause != "" {
-			query += " WHERE " + whereClause
+		// Build the full SQL query
+		fullQuery := fmt.Sprintf("SELECT data FROM %s", tableName)
+		if whereClause != "" && whereClause != "TRUE" {
+			fullQuery += " WHERE " + whereClause
 		}
-		query += " LIMIT 1"
+		fullQuery += " LIMIT 1"
 
-		row := r.db.QueryRowContext(ctx, query, args...)
+		// Use sqlx to bind named parameters
+		// Escape :: casts with a sequence that won't be confused with parameter names
+		// Use #CAST# (with #) to avoid sqlx treating it as part of parameter name
+		// sqlx matches :[a-zA-Z0-9_]+ for parameter names, so # breaks the pattern
+		// Don't use __ prefix to avoid sqlx matching :param__ as parameter name
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(namedArgs) > 0 {
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = r.db.BindNamed(tempEscapedQuery, namedArgs)
+			if err2 != nil {
+				result <- &PostgreSQLSingleResult{err: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			reboundQuery = r.db.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
+		}
+
+		// Replace temporary array placeholders with correct positional numbers
+		finalQuery := reboundQuery
+		for i := range positionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+
+		// Restore ::type casts
+		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+
+		// Combine argument slices
+		allArgs := append(namedArgsSlice, positionalArgs...)
+
+		row := r.db.QueryRowContext(ctx, finalQuery, allArgs...)
 		result <- &PostgreSQLSingleResult{row: row, columns: []string{"data"}}
 	}()
 
 	return result
 }
 
-// Update updates documents matching the filter
-func (r *PostgreSQLRepository) Update(ctx context.Context, collectionName string, filter interface{}, data interface{}, opts *interfaces.UpdateOptions) <-chan interfaces.RepositoryResult {
+// Update updates documents matching the query
+func (r *PostgreSQLRepository) Update(ctx context.Context, collectionName string, query *interfaces.Query, data interface{}, opts *interfaces.UpdateOptions) <-chan interfaces.RepositoryResult {
 	result := make(chan interfaces.RepositoryResult)
 
 	go func() {
@@ -452,8 +521,81 @@ func (r *PostgreSQLRepository) Update(ctx context.Context, collectionName string
 			return
 		}
 
+		// Handle upsert operation: INSERT ... ON CONFLICT ... DO UPDATE
 		if opts != nil && opts.Upsert != nil && *opts.Upsert {
-			result <- r.upsertOperation(ctx, collectionName, filter, data)
+			// Extract objectId from query for upsert
+			var objectID uuid.UUID
+			var ownerUserID uuid.UUID
+			var createdDate, lastUpdated int64
+
+			// Find object_id in query conditions
+			for _, field := range query.Conditions {
+				if field.Name == "object_id" && !field.IsJSONB {
+					if id, ok := field.Value.(uuid.UUID); ok {
+						objectID = id
+					}
+				}
+			}
+
+			if objectID == uuid.Nil {
+				result <- interfaces.RepositoryResult{Error: fmt.Errorf("upsert requires object_id in query conditions")}
+				return
+			}
+
+			// Extract indexed fields from data map if available
+			if dataMap, ok := data.(map[string]interface{}); ok {
+				if oid, ok := dataMap["objectId"].(uuid.UUID); ok && oid != uuid.Nil {
+					objectID = oid
+				}
+				if ownerID, ok := dataMap["ownerUserID"].(uuid.UUID); ok {
+					ownerUserID = ownerID
+				} else if objectID != uuid.Nil {
+					ownerUserID = objectID // Default to objectID as owner
+				}
+				if cd, ok := dataMap["createdDate"].(int64); ok {
+					createdDate = cd
+				} else {
+					createdDate = time.Now().Unix()
+				}
+				if lu, ok := dataMap["lastUpdated"].(int64); ok {
+					lastUpdated = lu
+				} else {
+					lastUpdated = time.Now().Unix()
+				}
+			} else {
+				// Default values if not in data map
+				ownerUserID = objectID
+				createdDate = time.Now().Unix()
+				lastUpdated = time.Now().Unix()
+			}
+
+			// Convert data to JSONB
+			jsonData, err := json.Marshal(data)
+			if err != nil {
+				result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to marshal data: %w", err)}
+				return
+			}
+
+			tableName := r.getTableName(collectionName)
+
+			// Build INSERT ... ON CONFLICT ... DO UPDATE query
+			upsertQuery := fmt.Sprintf(`
+				INSERT INTO %s (object_id, owner_user_id, data, created_date, last_updated)
+				VALUES ($1, $2, $3::jsonb, $4, $5)
+				ON CONFLICT (object_id) 
+				DO UPDATE SET 
+					data = $3::jsonb,
+					last_updated = $5
+				RETURNING id`, tableName)
+
+			var id int64
+			err = r.db.QueryRowContext(ctx, upsertQuery, objectID, ownerUserID, jsonData, createdDate, lastUpdated).Scan(&id)
+			if err != nil {
+				result <- interfaces.RepositoryResult{Error: fmt.Errorf("upsert failed: %w", err)}
+				return
+			}
+
+			result <- interfaces.RepositoryResult{Result: "OK"}
 			return
 		}
 
@@ -464,20 +606,66 @@ func (r *PostgreSQLRepository) Update(ctx context.Context, collectionName string
 			return
 		}
 
-		// Build WHERE clause with offset after UPDATE parameters
-		whereClause, args, err := r.buildWhereClauseWithOffset(filter, len(updateArgs)+1)
+		// Build WHERE clause using the hybrid approach
+		whereClause, namedArgs, positionalArgs, err := r.buildWhereClause(query)
 		if err != nil {
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
 
-		// Combine all arguments
-		allArgs := append(updateArgs, args...)
-
 		tableName := r.getTableName(collectionName)
-		query := fmt.Sprintf("UPDATE %s SET %s WHERE %s", tableName, updateClause, whereClause)
 
-		_, err = r.db.ExecContext(ctx, query, allArgs...)
+		// Build the full UPDATE query
+		fullQuery := fmt.Sprintf("UPDATE %s SET %s", tableName, updateClause)
+		if whereClause != "" && whereClause != "TRUE" {
+			fullQuery += " WHERE " + whereClause
+		}
+
+		// Combine all argument maps for sqlx (named params from WHERE clause + SET clause)
+		allNamedArgs := make(map[string]interface{})
+		for k, v := range updateArgs {
+			allNamedArgs[k] = v
+		}
+		for k, v := range namedArgs {
+			allNamedArgs[k] = v
+		}
+
+		// Use sqlx to bind named parameters
+		// Escape :: casts with a sequence that won't be confused with parameter names
+		// Use #CAST# (with #) to avoid sqlx treating it as part of parameter name
+		// sqlx matches :[a-zA-Z0-9_]+ for parameter names, so # breaks the pattern
+		// Don't use __ prefix to avoid sqlx matching :param__ as parameter name
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(allNamedArgs) > 0 {
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = r.db.BindNamed(tempEscapedQuery, allNamedArgs)
+			if err2 != nil {
+				result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			reboundQuery = r.db.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
+		}
+
+		// Replace temporary array placeholders with correct positional numbers
+		finalQuery := reboundQuery
+		for i := range positionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+
+		// Restore ::type casts
+		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+
+		// Combine argument slices
+		allArgs := append(namedArgsSlice, positionalArgs...)
+
+		// Execute the query with the combined arguments
+		_, err = r.db.ExecContext(ctx, finalQuery, allArgs...)
 		if err != nil {
 			log.Error("PostgreSQL Update error: %s", err.Error())
 			result <- interfaces.RepositoryResult{Error: err}
@@ -493,7 +681,7 @@ func (r *PostgreSQLRepository) Update(ctx context.Context, collectionName string
 // upsertOperation implements UPSERT using PostgreSQL's INSERT ... ON CONFLICT
 func (r *PostgreSQLRepository) upsertOperation(ctx context.Context, collectionName string, filter interface{}, data interface{}) interfaces.RepositoryResult {
 	tableName := r.getTableName(collectionName)
-	
+
 	filterMap, ok := filter.(map[string]interface{})
 	if !ok {
 		jsonData, err := json.Marshal(filter)
@@ -505,12 +693,12 @@ func (r *PostgreSQLRepository) upsertOperation(ctx context.Context, collectionNa
 			return interfaces.RepositoryResult{Error: fmt.Errorf("upsert: failed to unmarshal filter: %w", err)}
 		}
 	}
-	
+
 	objectId, ok := filterMap["objectId"]
 	if !ok {
 		return interfaces.RepositoryResult{Error: fmt.Errorf("upsert: objectId not found in filter")}
 	}
-	
+
 	// Extract data from $set operator or use data directly
 	dataMap := make(map[string]interface{})
 	if m, ok := data.(map[string]interface{}); ok {
@@ -524,18 +712,18 @@ func (r *PostgreSQLRepository) upsertOperation(ctx context.Context, collectionNa
 	} else {
 		return interfaces.RepositoryResult{Error: fmt.Errorf("upsert: data must be a map")}
 	}
-	
+
 	// Ensure objectId is in the data
 	dataMap["objectId"] = objectId
-	
+
 	// Marshal to JSON
 	jsonData, err := json.Marshal(dataMap)
 	if err != nil {
 		return interfaces.RepositoryResult{Error: fmt.Errorf("upsert: failed to marshal data: %w", err)}
 	}
-	
+
 	now := time.Now().Unix()
-	
+
 	// PostgreSQL UPSERT using INSERT ... ON CONFLICT
 	query := fmt.Sprintf(`
 		INSERT INTO %s (object_id, data, created_date, last_updated)
@@ -543,25 +731,25 @@ func (r *PostgreSQLRepository) upsertOperation(ctx context.Context, collectionNa
 		ON CONFLICT (object_id) DO UPDATE
 		SET data = $2::jsonb, last_updated = $4
 	`, tableName)
-	
+
 	_, err = r.db.ExecContext(ctx, query, objectId, string(jsonData), now, now)
 	if err != nil {
 		log.Error("PostgreSQL Upsert error: %s", err.Error())
 		return interfaces.RepositoryResult{Error: err}
 	}
-	
+
 	log.Info("PostgreSQL: Upsert operation completed for objectId: %v", objectId)
 	return interfaces.RepositoryResult{Result: "OK"}
 }
 
-// UpdateMany updates multiple documents
-func (r *PostgreSQLRepository) UpdateMany(ctx context.Context, collectionName string, filter interface{}, data interface{}, opts *interfaces.UpdateOptions) <-chan interfaces.RepositoryResult {
+// UpdateMany updates multiple documents matching the query
+func (r *PostgreSQLRepository) UpdateMany(ctx context.Context, collectionName string, query *interfaces.Query, data interface{}, opts *interfaces.UpdateOptions) <-chan interfaces.RepositoryResult {
 	// For PostgreSQL, UpdateMany is the same as Update since we don't have document-level operations
-	return r.Update(ctx, collectionName, filter, data, opts)
+	return r.Update(ctx, collectionName, query, data, opts)
 }
 
-// Delete deletes documents matching the filter
-func (r *PostgreSQLRepository) Delete(ctx context.Context, collectionName string, filter interface{}) <-chan interfaces.RepositoryResult {
+// Delete deletes documents matching the query
+func (r *PostgreSQLRepository) Delete(ctx context.Context, collectionName string, query *interfaces.Query) <-chan interfaces.RepositoryResult {
 	result := make(chan interfaces.RepositoryResult)
 
 	go func() {
@@ -572,20 +760,70 @@ func (r *PostgreSQLRepository) Delete(ctx context.Context, collectionName string
 			return
 		}
 
-		// Build WHERE clause
-		whereClause, args, err := r.buildWhereClause(filter)
+		tableName := r.getTableName(collectionName)
+
+		// Build WHERE clause using the hybrid approach
+		whereClause, namedArgs, positionalArgs, err := r.buildWhereClause(query)
 		if err != nil {
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
 
-		tableName := r.getTableName(collectionName)
-		query := fmt.Sprintf("DELETE FROM %s WHERE %s", tableName, whereClause)
+		// Build the full DELETE query
+		fullQuery := fmt.Sprintf("DELETE FROM %s", tableName)
+		if whereClause != "" && whereClause != "TRUE" {
+			fullQuery += " WHERE " + whereClause
+		}
 
-		_, err = r.db.ExecContext(ctx, query, args...)
+		// Use sqlx to bind named parameters
+		// Escape :: casts with a sequence that won't be confused with parameter names
+		// Use #CAST# (with #) to avoid sqlx treating it as part of parameter name
+		// sqlx matches :[a-zA-Z0-9_]+ for parameter names, so # breaks the pattern
+		// Don't use __ prefix to avoid sqlx matching :param__ as parameter name
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(namedArgs) > 0 {
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = r.db.BindNamed(tempEscapedQuery, namedArgs)
+			if err2 != nil {
+				result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			reboundQuery = r.db.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
+		}
+
+		// Replace temporary array placeholders with correct positional numbers
+		finalQuery := reboundQuery
+		for i := range positionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+
+		// Restore ::type casts
+		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+
+		// Combine argument slices
+		allArgs := append(namedArgsSlice, positionalArgs...)
+
+		execResult, err := r.db.ExecContext(ctx, finalQuery, allArgs...)
 		if err != nil {
 			log.Error("PostgreSQL Delete error: %s", err.Error())
 			result <- interfaces.RepositoryResult{Error: err}
+			return
+		}
+
+		rowsAffected, err := execResult.RowsAffected()
+		if err != nil {
+			result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to get rows affected: %w", err)}
+			return
+		}
+
+		if rowsAffected == 0 {
+			result <- interfaces.RepositoryResult{Error: interfaces.ErrNoDocuments}
 			return
 		}
 
@@ -595,8 +833,8 @@ func (r *PostgreSQLRepository) Delete(ctx context.Context, collectionName string
 	return result
 }
 
-// DeleteMany performs bulk delete operations for multiple individual filters
-func (r *PostgreSQLRepository) DeleteMany(ctx context.Context, collectionName string, filters []interface{}) <-chan interfaces.RepositoryResult {
+// DeleteMany performs bulk delete operations for multiple queries
+func (r *PostgreSQLRepository) DeleteMany(ctx context.Context, collectionName string, queries []*interfaces.Query) <-chan interfaces.RepositoryResult {
 	result := make(chan interfaces.RepositoryResult)
 
 	go func() {
@@ -618,16 +856,51 @@ func (r *PostgreSQLRepository) DeleteMany(ctx context.Context, collectionName st
 		tableName := r.getTableName(collectionName)
 		var totalDeleted int64
 
-		for _, filter := range filters {
-			// Build WHERE clause for each filter
-			whereClause, args, err := r.buildWhereClause(filter)
+		for _, query := range queries {
+			// Build WHERE clause using the hybrid approach
+			whereClause, namedArgs, positionalArgs, err := r.buildWhereClause(query)
 			if err != nil {
 				result <- interfaces.RepositoryResult{Error: err}
 				return
 			}
 
-			query := fmt.Sprintf("DELETE FROM %s WHERE %s", tableName, whereClause)
-			res, err := tx.ExecContext(ctx, query, args...)
+			// Build the full DELETE query
+			fullQuery := fmt.Sprintf("DELETE FROM %s", tableName)
+			if whereClause != "" && whereClause != "TRUE" {
+				fullQuery += " WHERE " + whereClause
+			}
+
+			// Use sqlx to bind named parameters
+			tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "__CAST__")
+			var reboundQuery string
+			var namedArgsSlice []interface{}
+			if len(namedArgs) > 0 {
+				var err2 error
+				reboundQuery, namedArgsSlice, err2 = r.db.BindNamed(tempEscapedQuery, namedArgs)
+				if err2 != nil {
+					result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to bind named query: %w", err2)}
+					return
+				}
+			} else {
+				reboundQuery = r.db.Rebind(tempEscapedQuery)
+				namedArgsSlice = []interface{}{}
+			}
+
+			// Replace temporary array placeholders
+			finalQuery := reboundQuery
+			for i := range positionalArgs {
+				tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+				finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+				finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+			}
+
+			// Restore ::type casts
+			finalQuery = strings.ReplaceAll(finalQuery, "__CAST__", "::")
+
+			// Combine argument slices
+			allArgs := append(namedArgsSlice, positionalArgs...)
+
+			res, err := tx.ExecContext(ctx, finalQuery, allArgs...)
 			if err != nil {
 				result <- interfaces.RepositoryResult{Error: err}
 				return
@@ -661,7 +934,7 @@ func (r *PostgreSQLRepository) Aggregate(ctx context.Context, collectionName str
 		defer close(result)
 
 		// This is a simplified implementation
-		// In a real implementation, you'd need to translate MongoDB aggregation pipeline to SQL
+		// In a real implementation, you'd need to translate any legacy aggregation pipeline representation to SQL
 		result <- &PostgreSQLQueryResult{err: interfaces.ErrUnsupportedOperation}
 	}()
 
@@ -669,7 +942,7 @@ func (r *PostgreSQLRepository) Aggregate(ctx context.Context, collectionName str
 }
 
 // Count counts documents matching filter
-func (r *PostgreSQLRepository) Count(ctx context.Context, collectionName string, filter interface{}) <-chan interfaces.CountResult {
+func (r *PostgreSQLRepository) Count(ctx context.Context, collectionName string, query *interfaces.Query) <-chan interfaces.CountResult {
 	result := make(chan interfaces.CountResult)
 
 	go func() {
@@ -680,21 +953,57 @@ func (r *PostgreSQLRepository) Count(ctx context.Context, collectionName string,
 			return
 		}
 
-		// Build WHERE clause
-		whereClause, args, err := r.buildWhereClause(filter)
+		tableName := r.getTableName(collectionName)
+
+		// Build WHERE clause using the hybrid approach
+		whereClause, namedArgs, positionalArgs, err := r.buildWhereClause(query)
 		if err != nil {
 			result <- interfaces.CountResult{Error: err}
 			return
 		}
 
-		tableName := r.getTableName(collectionName)
-		query := fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)
-		if whereClause != "" {
-			query += " WHERE " + whereClause
+		// Build the full SQL query
+		fullQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)
+		if whereClause != "" && whereClause != "TRUE" {
+			fullQuery += " WHERE " + whereClause
 		}
 
+		// Use sqlx to bind named parameters
+		// Escape :: casts with a sequence that won't be confused with parameter names
+		// Use #CAST# (with #) to avoid sqlx treating it as part of parameter name
+		// sqlx matches :[a-zA-Z0-9_]+ for parameter names, so # breaks the pattern
+		// Don't use __ prefix to avoid sqlx matching :param__ as parameter name
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(namedArgs) > 0 {
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = r.db.BindNamed(tempEscapedQuery, namedArgs)
+			if err2 != nil {
+				result <- interfaces.CountResult{Error: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			reboundQuery = r.db.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
+		}
+
+		// Replace temporary array placeholders with correct positional numbers
+		finalQuery := reboundQuery
+		for i := range positionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+
+		// Restore ::type casts
+		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+
+		// Combine argument slices
+		allArgs := append(namedArgsSlice, positionalArgs...)
+
 		var count int64
-		err = r.db.QueryRowContext(ctx, query, args...).Scan(&count)
+		err = r.db.QueryRowContext(ctx, finalQuery, allArgs...).Scan(&count)
 		if err != nil {
 			log.Error("PostgreSQL Count error: %s", err.Error())
 			result <- interfaces.CountResult{Error: err}
@@ -722,18 +1031,77 @@ func (r *PostgreSQLRepository) Distinct(ctx context.Context, collectionName stri
 		tableName := r.getTableName(collectionName)
 
 		// Use JSONB operators to extract distinct values
-		query := fmt.Sprintf("SELECT DISTINCT data->>'%s' FROM %s", field, tableName)
-		whereClause, args, err := r.buildWhereClause(filter)
+		baseQuery := fmt.Sprintf("SELECT DISTINCT data->>'%s' FROM %s", field, tableName)
+
+		// Convert filter to Query object if it's not already
+		var queryObj *interfaces.Query
+		if q, ok := filter.(*interfaces.Query); ok {
+			queryObj = q
+		} else {
+			// Legacy support: create a simple Query from filter map
+			// This is a temporary bridge - service layer should use Query objects
+			if filterMap, ok := filter.(map[string]interface{}); ok {
+				queryObj = &interfaces.Query{
+					Conditions: []interfaces.Field{},
+				}
+				for k, v := range filterMap {
+					queryObj.Conditions = append(queryObj.Conditions, interfaces.Field{
+						Name:     k,
+						Value:    v,
+						Operator: "=",
+					})
+				}
+			} else {
+				queryObj = nil
+			}
+		}
+
+		whereClause, namedArgs, positionalArgs, err := r.buildWhereClause(queryObj)
 		if err != nil {
 			result <- interfaces.DistinctResult{Error: err}
 			return
 		}
 
-		if whereClause != "" {
-			query += " WHERE " + whereClause
+		fullQuery := baseQuery
+		if whereClause != "" && whereClause != "TRUE" {
+			fullQuery += " WHERE " + whereClause
 		}
 
-		rows, err := r.db.QueryContext(ctx, query, args...)
+		// Use sqlx to bind named parameters
+		// Escape :: casts with a sequence that won't be confused with parameter names
+		// Use #CAST# (with #) to avoid sqlx treating it as part of parameter name
+		// sqlx matches :[a-zA-Z0-9_]+ for parameter names, so # breaks the pattern
+		// Don't use __ prefix to avoid sqlx matching :param__ as parameter name
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(namedArgs) > 0 {
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = r.db.BindNamed(tempEscapedQuery, namedArgs)
+			if err2 != nil {
+				result <- interfaces.DistinctResult{Error: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			reboundQuery = r.db.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
+		}
+
+		// Replace temporary array placeholders
+		finalQuery := reboundQuery
+		for i := range positionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+
+		// Restore ::type casts
+		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+
+		// Combine argument slices
+		allArgs := append(namedArgsSlice, positionalArgs...)
+
+		rows, err := r.db.QueryContext(ctx, finalQuery, allArgs...)
 		if err != nil {
 			log.Error("PostgreSQL Distinct error: %s", err.Error())
 			result <- interfaces.DistinctResult{Error: err}
@@ -779,7 +1147,7 @@ func (r *PostgreSQLRepository) CreateIndex(ctx context.Context, collectionName s
 	go func() {
 		defer close(result)
 
-		// PostgreSQL doesn't support dynamic index creation like MongoDB
+		// PostgreSQL expects indexes to be defined ahead of time; runtime creation is not supported here
 		// This is a no-op for PostgreSQL as indexes are created during table creation
 		result <- nil
 	}()
@@ -909,8 +1277,8 @@ func (r *PostgreSQLRepository) BeginWithConfig(ctx context.Context, config *inte
 		ReadOnly:  finalConfig.ReadOnly,
 	}
 
-	// Begin transaction with options
-	tx, err := r.db.BeginTx(timeoutCtx, opts)
+	// Begin transaction with options using sqlx
+	tx, err := r.db.BeginTxx(timeoutCtx, opts)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
@@ -970,336 +1338,121 @@ func (r *PostgreSQLRepository) Close() error {
 	return r.db.Close()
 }
 
-// Helper methods
 
-// mapFieldToColumn maps camelCase application field names to snake_case database column names
-func (r *PostgreSQLRepository) mapFieldToColumn(fieldName string) string {
-	switch fieldName {
-	case "objectId":
-		return "object_id"
-	case "createdDate":
-		return "created_date"
-	case "lastUpdated":
-		return "last_updated"
-	default:
-		return fieldName
-	}
-}
-
-// extractCommonFields extracts common fields from data using reflection
-func (r *PostgreSQLRepository) extractCommonFields(data interface{}) (interface{}, interface{}, interface{}) {
-	var objectID, createdDate, lastUpdated interface{}
-
-	// Use reflection to extract common fields
-	val := reflect.ValueOf(data)
-	if val.Kind() == reflect.Ptr {
-		val = val.Elem()
+// buildWhereClause is the single source of truth for building WHERE clauses.
+// It uses a HYBRID approach: named parameters for scalars, and temporary placeholders
+// for arrays to work around sqlx limitations with slice values.
+// Returns: (WHERE clause, named args map, positional args slice, error)
+func (r *PostgreSQLRepository) buildWhereClause(query *interfaces.Query) (string, map[string]interface{}, []interface{}, error) {
+	if query == nil || (len(query.Conditions) == 0 && len(query.OrGroups) == 0) {
+		return "TRUE", nil, nil, nil
 	}
 
-	if val.Kind() == reflect.Struct {
-		// Map camelCase application fields to snake_case database columns
-		if field := val.FieldByName("ObjectId"); field.IsValid() {
-			rawValue := field.Interface()
-			// Convert UUID types to string for PostgreSQL compatibility
-			if uuidVal, ok := rawValue.(fmt.Stringer); ok {
-				objectID = uuidVal.String()
-			} else {
-				objectID = rawValue
-			}
+	conditions := []string{}
+	namedArgs := make(map[string]interface{})
+	positionalArgs := []interface{}{}
+	paramCounter := 0
+
+	nextNamedParam := func() string {
+		p := fmt.Sprintf("p%d", paramCounter)
+		paramCounter++
+		return p
+	}
+
+	processField := func(field interfaces.Field) string {
+		columnExpr := field.Name
+		if field.JSONBCast != "" {
+			columnExpr = fmt.Sprintf("(%s)%s", field.Name, field.JSONBCast)
 		}
-		if field := val.FieldByName("CreatedDate"); field.IsValid() {
-			createdDate = field.Interface()
-		}
-		if field := val.FieldByName("LastUpdated"); field.IsValid() {
-			lastUpdated = field.Interface()
-		}
-	} else if val.Kind() == reflect.Map {
-		// Handle map[string]interface{} which is common in tests
-		if mapData, ok := data.(map[string]interface{}); ok {
-			if value, exists := mapData["objectId"]; exists {
-				// Convert UUID types to string for PostgreSQL compatibility
-				if uuidVal, ok := value.(fmt.Stringer); ok {
-					objectID = uuidVal.String()
-				} else {
-					objectID = value
-				}
-			}
-			if value, exists := mapData["created"]; exists {
-				createdDate = value
-			}
-			if value, exists := mapData["last_updated"]; exists {
-				lastUpdated = value
-			}
-		}
-	}
 
-	return objectID, createdDate, lastUpdated
-}
+		// --- THE HYBRID LOGIC ---
+		// Check if the value is a slice that needs special array handling.
+		val := reflect.ValueOf(field.Value)
+		if val.Kind() == reflect.Slice && val.Len() > 0 {
+			// This is an array. Use a TEMPORARY placeholder that we'll replace later.
+			arrayIndex := len(positionalArgs)
+			placeholder := fmt.Sprintf("__ARRAY_PARAM_%d__", arrayIndex)
+			positionalArgs = append(positionalArgs, pq.Array(field.Value))
 
-// getMapKeys returns the keys of a map for debugging
-func getMapKeys(m map[string]interface{}) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
-// buildWhereClause builds a WHERE clause from filter
-func (r *PostgreSQLRepository) buildWhereClause(filter interface{}) (string, []interface{}, error) {
-	return r.buildWhereClauseWithOffset(filter, 1)
-}
-
-// buildWhereClauseWithOffset builds a WHERE clause using a starting placeholder index
-func (r *PostgreSQLRepository) buildWhereClauseWithOffset(filter interface{}, startIndex int) (string, []interface{}, error) {
-	if filter == nil {
-		return "", nil, nil
-	}
-
-	// Convert filter to map[string]interface{} if it's not already
-	// This allows supporting both map filters (Profile service) and struct filters (Auth service)
-	var filterMap map[string]interface{}
-	
-	switch f := filter.(type) {
-	case map[string]interface{}:
-		// Already a map - use directly (zero overhead)
-		filterMap = f
-	default:
-		// Convert struct (or other type) to map via JSON marshaling
-		// This handles structs with json/bson tags commonly used in MongoDB-compatible code
-		jsonData, err := json.Marshal(filter)
-		if err != nil {
-			return "", nil, fmt.Errorf("failed to marshal filter to JSON: %w", err)
-		}
-		
-		filterMap = make(map[string]interface{})
-		if err := json.Unmarshal(jsonData, &filterMap); err != nil {
-			return "", nil, fmt.Errorf("failed to unmarshal filter to map: %w", err)
-		}
-		
-		// Log for debugging (helps track struct filter usage)
-		log.Info("PostgreSQL: Converted struct filter to map for WHERE clause")
-	}
-
-	// Support Mongo-like filters including $or and comparison operators for known fields
-	conditions := make([]string, 0)
-	args := make([]interface{}, 0)
-	argIndex := startIndex
-
-	// Helper to append a condition and its args
-	appendCond := func(cond string, vals ...interface{}) {
-		conditions = append(conditions, cond)
-		args = append(args, vals...)
-		argIndex += len(vals)
-	}
-
-		// First handle $or if present
-		if orVal, hasOr := filterMap["$or"]; hasOr {
-			var orConds []string
-			var orItems []interface{}
-			
-			// Handle both []interface{} and []map[string]interface{}
-			switch list := orVal.(type) {
-			case []interface{}:
-				orItems = list
-			case []map[string]interface{}:
-				// Convert []map[string]interface{} to []interface{}
-				orItems = make([]interface{}, len(list))
-				for i, item := range list {
-					orItems[i] = item
-				}
+			// Translate abstract array operators to PostgreSQL syntax.
+			switch field.Operator {
+			case "CONTAINS_ANY":
+				// PostgreSQL JSONB array containment operator: column ?| array
+				return fmt.Sprintf("%s ?| %s", columnExpr, placeholder)
 			default:
-				return "", nil, fmt.Errorf("unsupported $or type: %T", orVal)
+				// For other array operators (e.g., @> for contains all)
+				return fmt.Sprintf("%s = ANY(%s)", columnExpr, placeholder)
 			}
-			
-			orConds = make([]string, 0, len(orItems))
-			for _, item := range orItems {
-				if sub, ok2 := item.(map[string]interface{}); ok2 {
-					clause, subArgs, err := r.buildWhereClauseWithOffset(sub, argIndex)
-					if err != nil {
-						return "", nil, err
-					}
-					if clause != "" {
-						orConds = append(orConds, "("+clause+")")
-						args = append(args, subArgs...)
-						argIndex += len(subArgs)
-					}
+		} else {
+			// This is a scalar. Use a NAMED placeholder for sqlx.
+			if field.Operator == "CURSOR_PAGINATION" {
+				valMap, ok := field.Value.(map[string]interface{})
+				if !ok {
+					return fmt.Sprintf("/* invalid CURSOR_PAGINATION value for %s */ TRUE", field.Name)
 				}
+
+				sortValue := valMap["sortValue"]
+				tieBreaker := valMap["tieBreaker"]
+
+				primaryOp, _ := valMap["primaryOp"].(string)
+				if primaryOp == "" {
+					primaryOp = "<"
+				}
+
+				tieOp, _ := valMap["tieOp"].(string)
+				if tieOp == "" {
+					tieOp = primaryOp
+				}
+
+				sortParam := nextNamedParam()
+				namedArgs[sortParam] = sortValue
+				tieParam := nextNamedParam()
+				namedArgs[tieParam] = tieBreaker
+
+				return fmt.Sprintf("(%s %s :%s OR (%s = :%s AND object_id %s :%s))",
+					columnExpr, primaryOp, sortParam,
+					columnExpr, sortParam, tieOp, tieParam)
 			}
-			
-			if len(orConds) > 0 {
-				conditions = append(conditions, "("+strings.Join(orConds, " OR ")+")")
+
+			paramName := nextNamedParam()
+			namedArgs[paramName] = field.Value
+
+			// Translate abstract operators to PostgreSQL syntax.
+			switch field.Operator {
+			case "REGEX_I":
+				// PostgreSQL case-insensitive regex: column ~* pattern
+				return fmt.Sprintf("%s ~* :%s", columnExpr, paramName)
+			default: // Standard operators (=, <, >, <=, >=, !=, etc.)
+				return fmt.Sprintf("%s %s :%s", columnExpr, field.Operator, paramName)
 			}
 		}
+	}
 
-		// Process objectId (supports equality and { $gt/$lt/$gte/$lte })
-		if value, hasObjectId := filterMap["objectId"]; hasObjectId {
-			if opMap, ok2 := value.(map[string]interface{}); ok2 {
-				for op, v := range opMap {
-					column := "object_id"
-					switch op {
-					case "$gt":
-						appendCond(fmt.Sprintf("%s > $%d", column, argIndex), fmt.Sprint(v))
-					case "$lt":
-						appendCond(fmt.Sprintf("%s < $%d", column, argIndex), fmt.Sprint(v))
-					case "$gte":
-						appendCond(fmt.Sprintf("%s >= $%d", column, argIndex), fmt.Sprint(v))
-					case "$lte":
-						appendCond(fmt.Sprintf("%s <= $%d", column, argIndex), fmt.Sprint(v))
-					case "$ne":
-						appendCond(fmt.Sprintf("%s <> $%d", column, argIndex), fmt.Sprint(v))
-					}
-				}
-			} else {
-				appendCond(fmt.Sprintf("object_id = $%d", argIndex), fmt.Sprint(value))
-			}
+	// Process AND conditions
+	for _, field := range query.Conditions {
+		conditions = append(conditions, processField(field))
+	}
+
+	// Process OR groups
+	for _, orGroup := range query.OrGroups {
+		orConditions := []string{}
+		for _, field := range orGroup {
+			orConditions = append(orConditions, processField(field))
 		}
-
-		// Process remaining fields
-		for key, value := range filterMap {
-			if key == "$or" || key == "objectId" {
-				continue
-			}
-
-			// Special handling for deleted boolean
-			if key == "deleted" {
-				if boolVal, ok := value.(bool); ok {
-					appendCond(fmt.Sprintf("(data->>'%s')::boolean = $%d", key, argIndex), boolVal)
-				} else {
-					appendCond(fmt.Sprintf("data->>'%s' = $%d", key, argIndex), value)
-				}
-				continue
-			}
-
-
-			// Comparison and advanced operators support for known fields and JSONB values
-			if opMap, ok2 := value.(map[string]interface{}); ok2 {
-				for op, v := range opMap {
-					var column string
-					switch key {
-					case "createdDate":
-						column = "created_date"
-					case "lastUpdated":
-						column = "last_updated"
-					case "score", "viewCount", "commentCounter":
-						column = fmt.Sprintf("(data->>'%s')::bigint", key)
-					default:
-						column = fmt.Sprintf("(data->>'%s')", key)
-					}
-
-					// Handle $regex with optional $options (e.g., case-insensitive)
-					if op == "$regex" {
-						pattern := fmt.Sprint(v)
-						operator := "~" // case-sensitive by default
-						if opt, okOpt := opMap["$options"].(string); okOpt && strings.Contains(opt, "i") {
-							operator = "~*"
-						}
-						appendCond(fmt.Sprintf("(data->>'%s') %s $%d", key, operator, argIndex), pattern)
-						continue
-					}
-
-					// Handle $in for JSONB array fields (expects array of strings)
-					if op == "$in" {
-						switch vals := v.(type) {
-						case []string:
-							appendCond(fmt.Sprintf("data->'%s' ?| $%d", key, argIndex), pq.Array(vals))
-						case []interface{}:
-							strValues := make([]string, 0, len(vals))
-							for _, item := range vals {
-								strValues = append(strValues, fmt.Sprint(item))
-							}
-							appendCond(fmt.Sprintf("data->'%s' ?| $%d", key, argIndex), pq.Array(strValues))
-						default:
-							return "", nil, fmt.Errorf("invalid type for $in operator on field '%s', expected a slice", key)
-						}
-						continue
-					}
-
-					// Handle $all for JSONB array fields (expects array of strings)
-					if op == "$all" {
-						switch vals := v.(type) {
-						case []string:
-							// Convert to JSONB array for PostgreSQL
-							jsonArray, err := json.Marshal(vals)
-							if err != nil {
-								return "", nil, fmt.Errorf("failed to marshal $all values: %w", err)
-							}
-							appendCond(fmt.Sprintf("data->'%s' @> $%d", key, argIndex), string(jsonArray))
-						case []interface{}:
-							strValues := make([]string, 0, len(vals))
-							for _, item := range vals {
-								strValues = append(strValues, fmt.Sprint(item))
-							}
-							// Convert to JSONB array for PostgreSQL
-							jsonArray, err := json.Marshal(strValues)
-							if err != nil {
-								return "", nil, fmt.Errorf("failed to marshal $all values: %w", err)
-							}
-							appendCond(fmt.Sprintf("data->'%s' @> $%d", key, argIndex), string(jsonArray))
-						default:
-							return "", nil, fmt.Errorf("invalid type for $all operator on field '%s', expected a slice", key)
-						}
-						continue
-					}
-
-					param := fmt.Sprint(v)
-					switch op {
-					case "$gt":
-						appendCond(fmt.Sprintf("%s > $%d", column, argIndex), param)
-					case "$lt":
-						appendCond(fmt.Sprintf("%s < $%d", column, argIndex), param)
-					case "$gte":
-						appendCond(fmt.Sprintf("%s >= $%d", column, argIndex), param)
-					case "$lte":
-						appendCond(fmt.Sprintf("%s <= $%d", column, argIndex), param)
-					case "$ne":
-						appendCond(fmt.Sprintf("%s <> $%d", column, argIndex), param)
-					}
-				}
-				continue
-			}
-
-			// Handle __in suffix for array-based IN queries (PostgreSQL-specific convention)
-			if strings.HasSuffix(key, "__in") {
-				realKey := strings.TrimSuffix(key, "__in")
-				// This is our convention for an IN clause
-				if values, ok := value.([]string); ok {
-					appendCond(fmt.Sprintf("(data->>'%s') = ANY($%d)", realKey, argIndex), pq.Array(values))
-				}
-				continue
-			}
-
-			// Handle nested fields with dot notation (e.g., "leftUser.userId")
-			if strings.Contains(key, ".") {
-				// Convert dot notation to JSONB path (e.g., "leftUser.userId" -> "leftUser"->>'userId')
-				segments := strings.Split(key, ".")
-				if len(segments) == 2 {
-					// Simple case: "leftUser.userId" -> data->'leftUser'->>'userId'
-					appendCond(fmt.Sprintf("data->'%s'->>'%s' = $%d", segments[0], segments[1], argIndex), value)
-				} else {
-					// Complex case: "a.b.c" -> data->'a'->'b'->>'c'
-					path := fmt.Sprintf("data->'%s'", segments[0])
-					for i := 1; i < len(segments)-1; i++ {
-						path = fmt.Sprintf("%s->'%s'", path, segments[i])
-					}
-					path = fmt.Sprintf("%s->>'%s'", path, segments[len(segments)-1])
-					appendCond(fmt.Sprintf("%s = $%d", path, argIndex), value)
-				}
-			} else {
-				// Equality fallback for non-nested fields
-				appendCond(fmt.Sprintf("data->>'%s' = $%d", key, argIndex), value)
-			}
+		if len(orConditions) > 0 {
+			conditions = append(conditions, fmt.Sprintf("(%s)", strings.Join(orConditions, " OR ")))
 		}
+	}
 
-		if len(conditions) > 0 {
-			return strings.Join(conditions, " AND "), args, nil
-		}
+	if len(conditions) == 0 {
+		return "TRUE", nil, nil, nil
+	}
 
-	return "", nil, nil
+	return strings.Join(conditions, " AND "), namedArgs, positionalArgs, nil
 }
 
-// buildUpdateClause builds an UPDATE clause from data
-func (r *PostgreSQLRepository) buildUpdateClause(data interface{}) (string, []interface{}, error) {
+
+func (r *PostgreSQLRepository) buildUpdateClause(data interface{}) (string, map[string]interface{}, error) {
 	// Handle plain field updates (cleaner syntax)
 	if fieldMap, ok := data.(map[string]interface{}); ok {
 		// Check if this is a plain field update (no $set, $inc, etc.)
@@ -1317,7 +1470,7 @@ func (r *PostgreSQLRepository) buildUpdateClause(data interface{}) (string, []in
 		}
 	}
 
-	// Handle MongoDB-style operators for backward compatibility
+	// Handle legacy NoSQL-style operators for backward compatibility
 	if m, ok := data.(map[string]interface{}); ok {
 		// Handle $set operations
 		if setVal, hasSet := m["$set"]; hasSet {
@@ -1350,17 +1503,20 @@ func (r *PostgreSQLRepository) buildUpdateClause(data interface{}) (string, []in
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to marshal update data: %w", err)
 	}
-	clause := "data = $1, last_updated = $2"
-	args := []interface{}{jsonData, time.Now().Unix()}
+	clause := "data = :upd0, last_updated = :upd1"
+	args := map[string]interface{}{
+		"upd0": jsonData,
+		"upd1": time.Now().Unix(),
+	}
 	return clause, args, nil
 }
 
 // buildSetOperation builds a SET operation for plain field updates
-func (r *PostgreSQLRepository) buildSetOperation(setMap map[string]interface{}) (string, []interface{}, error) {
-	// Build: data = jsonb_set(jsonb_set(data, '{k1}', $1::jsonb, true), '{k2}', $2::jsonb, true) ... , last_updated = $N
+func (r *PostgreSQLRepository) buildSetOperation(setMap map[string]interface{}) (string, map[string]interface{}, error) {
+	// Build: data = jsonb_set(jsonb_set(data, '{k1}', :set0::jsonb, true), '{k2}', :set1::jsonb, true) ... , last_updated = :setN
 	clause := "data = "
-	args := make([]interface{}, 0, len(setMap)+1)
-	idx := 1
+	args := make(map[string]interface{})
+	idx := 0
 	nested := "data"
 
 	// Chain jsonb_set for each field
@@ -1371,28 +1527,30 @@ func (r *PostgreSQLRepository) buildSetOperation(setMap map[string]interface{}) 
 			segments[i] = strings.TrimSpace(segments[i])
 		}
 		path := "'{" + strings.Join(segments, ",") + "}'"
-		nested = fmt.Sprintf("jsonb_set(%s, %s, $%d::jsonb, true)", nested, path, idx)
+		paramName := fmt.Sprintf("set%d", idx)
+		nested = fmt.Sprintf("jsonb_set(%s, %s, :%s::jsonb, true)", nested, path, paramName)
 
 		// Marshal value to JSON so we can bind as jsonb
 		jsonVal, err := json.Marshal(v)
 		if err != nil {
 			return "", nil, err
 		}
-		args = append(args, string(jsonVal))
+		args[paramName] = string(jsonVal)
 		idx++
 	}
 
-	clause += nested + ", last_updated = $" + fmt.Sprint(idx)
-	args = append(args, time.Now().Unix())
+	lastUpdatedParam := fmt.Sprintf("set%d", idx)
+	clause += nested + ", last_updated = :" + lastUpdatedParam
+	args[lastUpdatedParam] = time.Now().Unix()
 	return clause, args, nil
 }
 
 // buildIncrementOperation builds an INCREMENT operation
-func (r *PostgreSQLRepository) buildIncrementOperation(incMap map[string]interface{}) (string, []interface{}, error) {
-	// Build: data = jsonb_set(jsonb_set(data, '{k1}', to_jsonb(COALESCE((data->>'k1')::numeric, 0) + $1), true), ... , last_updated = $N
+func (r *PostgreSQLRepository) buildIncrementOperation(incMap map[string]interface{}) (string, map[string]interface{}, error) {
+	// Build: data = jsonb_set(jsonb_set(data, '{k1}', to_jsonb(COALESCE((data->>'k1')::numeric, 0) + :inc0), true), ... , last_updated = :incN
 	clause := "data = "
-	args := make([]interface{}, 0, len(incMap)+1)
-	idx := 1
+	args := make(map[string]interface{})
+	idx := 0
 	nested := "data"
 
 	// Chain jsonb_set for each increment field
@@ -1424,6 +1582,7 @@ func (r *PostgreSQLRepository) buildIncrementOperation(incMap map[string]interfa
 			return "", nil, fmt.Errorf("unsupported type for increment: %T", v)
 		}
 
+		paramName := fmt.Sprintf("inc%d", idx)
 		// Build increment expression: Handle both numeric and string representations
 		// Use CASE to safely convert from JSON to numeric, defaulting to 0 if conversion fails
 		incrementExpr := fmt.Sprintf(`to_jsonb(
@@ -1433,25 +1592,26 @@ func (r *PostgreSQLRepository) buildIncrementOperation(incMap map[string]interfa
                     WHEN jsonb_typeof(%s->'%s') = 'string' AND (%s->>'%s') ~ '^-?[0-9]+\.?[0-9]*$' THEN (%s->>'%s')::numeric
                     ELSE 0
                 END, 0
-            ) + $%d
-        )`, nested, k, nested, k, nested, k, nested, k, nested, k, idx)
+            ) + :%s
+        )`, nested, k, nested, k, nested, k, nested, k, nested, k, paramName)
 		nested = fmt.Sprintf("jsonb_set(%s, %s, %s, true)", nested, path, incrementExpr)
 
-		args = append(args, numericValue)
+		args[paramName] = numericValue
 		idx++
 	}
 
-	clause += nested + ", last_updated = $" + fmt.Sprint(idx)
-	args = append(args, time.Now().Unix())
+	lastUpdatedParam := fmt.Sprintf("inc%d", idx)
+	clause += nested + ", last_updated = :" + lastUpdatedParam
+	args[lastUpdatedParam] = time.Now().Unix()
 	return clause, args, nil
 }
 
 // buildMixedOperation builds a mixed SET + INCREMENT operation
-func (r *PostgreSQLRepository) buildMixedOperation(setMap, incMap map[string]interface{}) (string, []interface{}, error) {
+func (r *PostgreSQLRepository) buildMixedOperation(setMap, incMap map[string]interface{}) (string, map[string]interface{}, error) {
 	// Combine both operations
 	clause := "data = "
-	args := make([]interface{}, 0, len(setMap)+len(incMap)+1)
-	idx := 1
+	args := make(map[string]interface{})
+	idx := 0
 	nested := "data"
 
 	// Process $set operations first
@@ -1461,12 +1621,13 @@ func (r *PostgreSQLRepository) buildMixedOperation(setMap, incMap map[string]int
 			segments[i] = strings.TrimSpace(segments[i])
 		}
 		path := "'{" + strings.Join(segments, ",") + "}'"
-		nested = fmt.Sprintf("jsonb_set(%s, %s, $%d::jsonb, true)", nested, path, idx)
+		paramName := fmt.Sprintf("mixset%d", idx)
+		nested = fmt.Sprintf("jsonb_set(%s, %s, :%s::jsonb, true)", nested, path, paramName)
 		jsonVal, err := json.Marshal(v)
 		if err != nil {
 			return "", nil, err
 		}
-		args = append(args, string(jsonVal))
+		args[paramName] = string(jsonVal)
 		idx++
 	}
 
@@ -1498,42 +1659,44 @@ func (r *PostgreSQLRepository) buildMixedOperation(setMap, incMap map[string]int
 			return "", nil, fmt.Errorf("unsupported type for increment: %T", v)
 		}
 
-		incrementExpr := fmt.Sprintf("to_jsonb(COALESCE((%s->>'%s')::numeric, 0) + $%d)", nested, k, idx)
+		paramName := fmt.Sprintf("mixinc%d", idx)
+		incrementExpr := fmt.Sprintf("to_jsonb(COALESCE((%s->>'%s')::numeric, 0) + :%s)", nested, k, paramName)
 		nested = fmt.Sprintf("jsonb_set(%s, %s, %s, true)", nested, path, incrementExpr)
 
-		args = append(args, numericValue)
+		args[paramName] = numericValue
 		idx++
 	}
 
-	clause += nested + ", last_updated = $" + fmt.Sprint(idx)
-	args = append(args, time.Now().Unix())
+	lastUpdatedParam := fmt.Sprintf("mix%d", idx)
+	clause += nested + ", last_updated = :" + lastUpdatedParam
+	args[lastUpdatedParam] = time.Now().Unix()
 	return clause, args, nil
 }
 
 // buildOrderByClause builds an ORDER BY clause from sort options
-func (r *PostgreSQLRepository) buildOrderByClause(sort map[string]int) string {
-	if len(sort) == 0 {
+// Service layer must provide correct snake_case column names (e.g., "created_date", "object_id")
+// or JSONB paths (e.g., "data->>'score'") - repository has no schema knowledge
+func (r *PostgreSQLRepository) buildOrderByClause(sortFields map[string]int) string {
+	if len(sortFields) == 0 {
 		return ""
 	}
 
+	keys := make([]string, 0, len(sortFields))
+	for columnExpr := range sortFields {
+		keys = append(keys, columnExpr)
+	}
+	sort.Strings(keys)
+
 	var clauses []string
-	for field, direction := range sort {
+	for _, columnExpr := range keys {
+		direction := sortFields[columnExpr]
+		// columnExpr is now assumed to be a valid SQL expression (column name or JSONB path)
+		// Service layer owns schema knowledge and provides correct expressions
 		order := "ASC"
 		if direction == -1 {
 			order = "DESC"
 		}
-
-		// Map known fields to real columns and cast types where necessary
-		switch field {
-		case "objectId":
-			clauses = append(clauses, fmt.Sprintf("object_id %s", order))
-		case "createdDate":
-			clauses = append(clauses, fmt.Sprintf("created_date %s", order))
-		case "lastUpdated":
-			clauses = append(clauses, fmt.Sprintf("last_updated %s", order))
-		default:
-			clauses = append(clauses, fmt.Sprintf("(data->>'%s') %s", field, order))
-		}
+		clauses = append(clauses, fmt.Sprintf("%s %s", columnExpr, order))
 	}
 
 	return strings.Join(clauses, ", ")
@@ -1615,7 +1778,7 @@ func (t *PostgreSQLTransactionContext) Context() context.Context {
 }
 
 // UpdateFields updates specific fields using clean syntax (no $set, $inc operators)
-func (r *PostgreSQLRepository) UpdateFields(ctx context.Context, collectionName string, filter interface{}, updates map[string]interface{}) <-chan interfaces.RepositoryResult {
+func (r *PostgreSQLRepository) UpdateFields(ctx context.Context, collectionName string, query *interfaces.Query, updates map[string]interface{}) <-chan interfaces.RepositoryResult {
 	result := make(chan interfaces.RepositoryResult)
 
 	go func() {
@@ -1626,33 +1789,85 @@ func (r *PostgreSQLRepository) UpdateFields(ctx context.Context, collectionName 
 			return
 		}
 
-		// Build SET clause for plain field updates
+		// Build SET clause for plain field updates (returns named parameters)
 		setClause, setArgs, err := r.buildSetOperation(updates)
 		if err != nil {
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
 
-		// Build WHERE clause with offset after SET parameters
-		whereClause, args, err := r.buildWhereClauseWithOffset(filter, len(setArgs)+1)
+		// Build WHERE clause using the hybrid approach
+		whereClause, whereNamedArgs, wherePositionalArgs, err := r.buildWhereClause(query)
 		if err != nil {
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
 
-		// Combine all arguments
-		allArgs := append(setArgs, args...)
+		// Combine all named argument maps for sqlx
+		allNamedArgs := make(map[string]interface{})
+		for k, v := range setArgs {
+			allNamedArgs[k] = v
+		}
+		for k, v := range whereNamedArgs {
+			allNamedArgs[k] = v
+		}
 
 		tableName := r.getTableName(collectionName)
-		query := fmt.Sprintf(`
+		fullQuery := fmt.Sprintf(`
 			UPDATE %s 
 			SET %s
 			WHERE %s`, tableName, setClause, whereClause)
 
-		_, err = r.db.ExecContext(ctx, query, allArgs...)
+		// Use sqlx to bind named parameters
+		// Escape :: casts with a sequence that won't be confused with parameter names
+		// Use #CAST# (with #) to avoid sqlx treating it as part of parameter name
+		// sqlx matches :[a-zA-Z0-9_]+ for parameter names, so # breaks the pattern
+		// Don't use __ prefix to avoid sqlx matching :param__ as parameter name
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(allNamedArgs) > 0 {
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = r.db.BindNamed(tempEscapedQuery, allNamedArgs)
+			if err2 != nil {
+				result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			reboundQuery = r.db.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
+		}
+
+		// Replace temporary array placeholders
+		finalQuery := reboundQuery
+		for i := range wherePositionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+
+		// Restore ::type casts
+		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+
+		// Combine argument slices
+		allArgs := append(namedArgsSlice, wherePositionalArgs...)
+
+		// Execute the query with the combined arguments
+		execResult, err := r.db.ExecContext(ctx, finalQuery, allArgs...)
 		if err != nil {
 			log.Error("PostgreSQL UpdateFields error: %s", err.Error())
 			result <- interfaces.RepositoryResult{Error: err}
+			return
+		}
+
+		rowsAffected, err := execResult.RowsAffected()
+		if err != nil {
+			result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to get rows affected: %w", err)}
+			return
+		}
+
+		if rowsAffected == 0 {
+			result <- interfaces.RepositoryResult{Error: interfaces.ErrNoDocuments}
 			return
 		}
 
@@ -1663,7 +1878,7 @@ func (r *PostgreSQLRepository) UpdateFields(ctx context.Context, collectionName 
 }
 
 // IncrementFields increments numeric fields using clean syntax (no $inc operators)
-func (r *PostgreSQLRepository) IncrementFields(ctx context.Context, collectionName string, filter interface{}, increments map[string]interface{}) <-chan interfaces.RepositoryResult {
+func (r *PostgreSQLRepository) IncrementFields(ctx context.Context, collectionName string, query *interfaces.Query, increments map[string]interface{}) <-chan interfaces.RepositoryResult {
 	result := make(chan interfaces.RepositoryResult)
 
 	go func() {
@@ -1674,33 +1889,85 @@ func (r *PostgreSQLRepository) IncrementFields(ctx context.Context, collectionNa
 			return
 		}
 
-		// Build increment clause first
+		// Build increment clause (returns named parameters)
 		incClause, incArgs, err := r.buildIncrementOperation(increments)
 		if err != nil {
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
 
-		// Build WHERE clause with correct parameter offset
-		whereClause, args, err := r.buildWhereClauseWithOffset(filter, len(incArgs)+1)
+		// Build WHERE clause using the hybrid approach
+		whereClause, whereNamedArgs, wherePositionalArgs, err := r.buildWhereClause(query)
 		if err != nil {
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
 
-		// Combine all arguments
-		allArgs := append(incArgs, args...)
+		// Combine all named argument maps for sqlx
+		allNamedArgs := make(map[string]interface{})
+		for k, v := range incArgs {
+			allNamedArgs[k] = v
+		}
+		for k, v := range whereNamedArgs {
+			allNamedArgs[k] = v
+		}
 
 		tableName := r.getTableName(collectionName)
-		query := fmt.Sprintf(`
+		fullQuery := fmt.Sprintf(`
             UPDATE %s 
             SET %s
             WHERE %s`, tableName, incClause, whereClause)
 
-		_, err = r.db.ExecContext(ctx, query, allArgs...)
+		// Use sqlx to bind named parameters
+		// Escape :: casts with a sequence that won't be confused with parameter names
+		// Use #CAST# (with #) to avoid sqlx treating it as part of parameter name
+		// sqlx matches :[a-zA-Z0-9_]+ for parameter names, so # breaks the pattern
+		// Don't use __ prefix to avoid sqlx matching :param__ as parameter name
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(allNamedArgs) > 0 {
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = r.db.BindNamed(tempEscapedQuery, allNamedArgs)
+			if err2 != nil {
+				result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			reboundQuery = r.db.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
+		}
+
+		// Replace temporary array placeholders
+		finalQuery := reboundQuery
+		for i := range wherePositionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+
+		// Restore ::type casts
+		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+
+		// Combine argument slices
+		allArgs := append(namedArgsSlice, wherePositionalArgs...)
+
+		// Execute the query with the combined arguments
+		execResult, err := r.db.ExecContext(ctx, finalQuery, allArgs...)
 		if err != nil {
 			log.Error("PostgreSQL IncrementFields error: %s", err.Error())
 			result <- interfaces.RepositoryResult{Error: err}
+			return
+		}
+
+		rowsAffected, err := execResult.RowsAffected()
+		if err != nil {
+			result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to get rows affected: %w", err)}
+			return
+		}
+
+		if rowsAffected == 0 {
+			result <- interfaces.RepositoryResult{Error: interfaces.ErrNoDocuments}
 			return
 		}
 
@@ -1711,7 +1978,7 @@ func (r *PostgreSQLRepository) IncrementFields(ctx context.Context, collectionNa
 }
 
 // UpdateAndIncrement performs both update and increment operations
-func (r *PostgreSQLRepository) UpdateAndIncrement(ctx context.Context, collectionName string, filter interface{}, updates map[string]interface{}, increments map[string]interface{}) <-chan interfaces.RepositoryResult {
+func (r *PostgreSQLRepository) UpdateAndIncrement(ctx context.Context, collectionName string, query *interfaces.Query, updates map[string]interface{}, increments map[string]interface{}) <-chan interfaces.RepositoryResult {
 	result := make(chan interfaces.RepositoryResult)
 
 	go func() {
@@ -1722,33 +1989,71 @@ func (r *PostgreSQLRepository) UpdateAndIncrement(ctx context.Context, collectio
 			return
 		}
 
-		// Build WHERE clause
-		whereClause, args, err := r.buildWhereClauseWithOffset(filter, 1)
+		// Build WHERE clause using the hybrid approach
+		whereClause, whereNamedArgs, wherePositionalArgs, err := r.buildWhereClause(query)
 		if err != nil {
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
 
-		// Build mixed operation clause
+		// Build mixed operation clause (returns named parameters)
 		mixedClause, mixedArgs, err := r.buildMixedOperation(updates, increments)
 		if err != nil {
 			result <- interfaces.RepositoryResult{Error: err}
 			return
 		}
 
-		// Combine all arguments
-		allArgs := append(mixedArgs, args...)
+		// Combine all named argument maps for sqlx
+		allNamedArgs := make(map[string]interface{})
+		for k, v := range mixedArgs {
+			allNamedArgs[k] = v
+		}
+		for k, v := range whereNamedArgs {
+			allNamedArgs[k] = v
+		}
 
 		tableName := r.getTableName(collectionName)
-		query := fmt.Sprintf(`
+		fullQuery := fmt.Sprintf(`
 			UPDATE %s 
-			SET %s, last_updated = $%d
-			WHERE %s`, tableName, mixedClause, len(allArgs)+1, whereClause)
+			SET %s
+			WHERE %s`, tableName, mixedClause, whereClause)
 
-		// Add last_updated timestamp
-		allArgs = append(allArgs, time.Now().Unix())
+		// Use sqlx to bind named parameters
+		// Escape :: casts with a sequence that won't be confused with parameter names
+		// Use #CAST# (with #) to avoid sqlx treating it as part of parameter name
+		// sqlx matches :[a-zA-Z0-9_]+ for parameter names, so # breaks the pattern
+		// Don't use __ prefix to avoid sqlx matching :param__ as parameter name
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(allNamedArgs) > 0 {
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = r.db.BindNamed(tempEscapedQuery, allNamedArgs)
+			if err2 != nil {
+				result <- interfaces.RepositoryResult{Error: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			reboundQuery = r.db.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
+		}
 
-		_, err = r.db.ExecContext(ctx, query, allArgs...)
+		// Replace temporary array placeholders
+		finalQuery := reboundQuery
+		for i := range wherePositionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+
+		// Restore ::type casts
+		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+
+		// Combine argument slices
+		allArgs := append(namedArgsSlice, wherePositionalArgs...)
+
+		// Execute the query with the combined arguments
+		_, err = r.db.ExecContext(ctx, finalQuery, allArgs...)
 		if err != nil {
 			log.Error("PostgreSQL UpdateAndIncrement error: %s", err.Error())
 			result <- interfaces.RepositoryResult{Error: err}
@@ -1960,7 +2265,7 @@ func (r *PostgreSQLRepository) IncrementWithOwnership(ctx context.Context, colle
 }
 
 // FindWithCursor retrieves documents with cursor-based pagination
-func (r *PostgreSQLRepository) FindWithCursor(ctx context.Context, collectionName string, filter interface{}, opts *interfaces.CursorFindOptions) <-chan interfaces.QueryResult {
+func (r *PostgreSQLRepository) FindWithCursor(ctx context.Context, collectionName string, query *interfaces.Query, opts *interfaces.CursorFindOptions) <-chan interfaces.QueryResult {
 	result := make(chan interfaces.QueryResult)
 
 	go func() {
@@ -1973,53 +2278,106 @@ func (r *PostgreSQLRepository) FindWithCursor(ctx context.Context, collectionNam
 
 		tableName := r.getTableName(collectionName)
 
-		// Build query
-		query := fmt.Sprintf("SELECT data FROM %s", tableName)
-		whereClause, args, err := r.buildWhereClause(filter)
+		// Build WHERE clause using the hybrid approach
+		whereClause, namedArgs, positionalArgs, err := r.buildWhereClause(query)
 		if err != nil {
 			result <- &PostgreSQLQueryResult{err: err}
 			return
 		}
 
-		if whereClause != "" {
-			query += " WHERE " + whereClause
-		}
-
-		// Add cursor-based sorting
+		// Determine sort field and direction for cursor conditions
+		var sortField string
+		var sortDirection string
+		var primary string
 		if opts != nil {
-			sortField := opts.SortField
+			sortField = opts.SortField
 			if sortField == "" {
-				sortField = "createdDate" // Default sort field
+				sortField = "created_date" // Default sort field (snake_case)
 			}
 
-			sortDirection := "DESC" // Default desc
+			sortDirection = "DESC" // Default desc
 			if opts.SortDirection == "asc" {
 				sortDirection = "ASC"
 			}
 
-			// Build primary sort expression
-			var primary string
-			switch sortField {
-			case "createdDate":
-				primary = "created_date"
-			case "lastUpdated":
-				primary = "last_updated"
-			default:
-				// Use JSONB path with appropriate cast for other fields
-				primary = fmt.Sprintf("(data->>'%s')::%s", sortField, r.getPostgreSQLType(sortField))
+			// Use snake_case column names directly (service layer should provide correct field names)
+			// For indexed columns, use them directly; for others, use JSONB access
+			if sortField == "object_id" || sortField == "created_date" || sortField == "last_updated" {
+				primary = sortField
+			} else {
+				// Use JSONB path with type casting
+				// Service layer can provide explicit type via SortFieldType, otherwise use safe default
+				castType := opts.SortFieldType
+				if castType == "" {
+					// Default to numeric for most numeric sorts (works for integers, floats, timestamps)
+					castType = "numeric"
+				}
+				primary = fmt.Sprintf("(data->>'%s')::%s", sortField, castType)
 			}
+		} else {
+			sortField = "created_date"
+			sortDirection = "DESC"
+			primary = "created_date"
+		}
 
+		// NOTE: Cursor conditions are already in the Query object from the service layer
+		// (via WhereCursorCondition). We do not add them here to avoid duplication.
+		// The service layer is responsible for adding cursor pagination filters to the Query.
+
+		// Build the full SELECT query
+		fullQuery := fmt.Sprintf("SELECT data FROM %s", tableName)
+
+		if whereClause != "" && whereClause != "TRUE" {
+			fullQuery += " WHERE " + whereClause
+		}
+
+		// Add cursor-based sorting
+		if opts != nil {
 			// For compound sorting, always include object_id as tiebreaker (indexed)
 			orderBy := fmt.Sprintf("%s %s, object_id %s", primary, sortDirection, sortDirection)
-			query += " ORDER BY " + orderBy
+			fullQuery += " ORDER BY " + orderBy
 		}
 
 		// Add limit
 		if opts != nil && opts.Limit != nil {
-			query += fmt.Sprintf(" LIMIT %d", *opts.Limit)
+			fullQuery += fmt.Sprintf(" LIMIT %d", *opts.Limit)
 		}
 
-		rows, err := r.db.QueryContext(ctx, query, args...)
+		// Use sqlx to bind named parameters
+		// Escape :: casts with a sequence that won't be confused with parameter names
+		// Use #CAST# (with #) to avoid sqlx treating it as part of parameter name
+		// sqlx matches :[a-zA-Z0-9_]+ for parameter names, so # breaks the pattern
+		// Don't use __ prefix to avoid sqlx matching :param__ as parameter name
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(namedArgs) > 0 {
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = r.db.BindNamed(tempEscapedQuery, namedArgs)
+			if err2 != nil {
+				result <- &PostgreSQLQueryResult{err: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			reboundQuery = r.db.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
+		}
+
+		// Replace temporary array placeholders
+		finalQuery := reboundQuery
+		for i := range positionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+
+		// Restore ::type casts
+		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+
+		// Combine argument slices
+		allArgs := append(namedArgsSlice, positionalArgs...)
+
+		rows, err := r.db.QueryContext(ctx, finalQuery, allArgs...)
 		if err != nil {
 			log.Error("PostgreSQL FindWithCursor error: %s", err.Error())
 			result <- &PostgreSQLQueryResult{err: err}
@@ -2032,8 +2390,8 @@ func (r *PostgreSQLRepository) FindWithCursor(ctx context.Context, collectionNam
 	return result
 }
 
-// CountWithFilter counts documents matching the filter
-func (r *PostgreSQLRepository) CountWithFilter(ctx context.Context, collectionName string, filter interface{}) <-chan interfaces.CountResult {
+// CountWithFilter counts documents matching the query
+func (r *PostgreSQLRepository) CountWithFilter(ctx context.Context, collectionName string, query *interfaces.Query) <-chan interfaces.CountResult {
 	result := make(chan interfaces.CountResult)
 
 	go func() {
@@ -2046,20 +2404,55 @@ func (r *PostgreSQLRepository) CountWithFilter(ctx context.Context, collectionNa
 
 		tableName := r.getTableName(collectionName)
 
-		// Build count query
-		query := fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)
-		whereClause, args, err := r.buildWhereClause(filter)
+		// Build WHERE clause using the hybrid approach
+		whereClause, namedArgs, positionalArgs, err := r.buildWhereClause(query)
 		if err != nil {
 			result <- interfaces.CountResult{Count: 0, Error: err}
 			return
 		}
 
-		if whereClause != "" {
-			query += " WHERE " + whereClause
+		// Build the full COUNT query
+		fullQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)
+		if whereClause != "" && whereClause != "TRUE" {
+			fullQuery += " WHERE " + whereClause
 		}
 
+		// Use sqlx to bind named parameters
+		// Escape :: casts with a sequence that won't be confused with parameter names
+		// Use #CAST# (with #) to avoid sqlx treating it as part of parameter name
+		// sqlx matches :[a-zA-Z0-9_]+ for parameter names, so # breaks the pattern
+		// Don't use __ prefix to avoid sqlx matching :param__ as parameter name
+		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+		var reboundQuery string
+		var namedArgsSlice []interface{}
+		if len(namedArgs) > 0 {
+			var err2 error
+			reboundQuery, namedArgsSlice, err2 = r.db.BindNamed(tempEscapedQuery, namedArgs)
+			if err2 != nil {
+				result <- interfaces.CountResult{Error: fmt.Errorf("failed to bind named query: %w", err2)}
+				return
+			}
+		} else {
+			reboundQuery = r.db.Rebind(tempEscapedQuery)
+			namedArgsSlice = []interface{}{}
+		}
+
+		// Replace temporary array placeholders with correct positional numbers
+		finalQuery := reboundQuery
+		for i := range positionalArgs {
+			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+		}
+
+		// Restore ::type casts
+		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+
+		// Combine argument slices
+		allArgs := append(namedArgsSlice, positionalArgs...)
+
 		var count int64
-		err = r.db.QueryRowContext(ctx, query, args...).Scan(&count)
+		err = r.db.QueryRowContext(ctx, finalQuery, allArgs...).Scan(&count)
 		if err != nil {
 			log.Error("PostgreSQL CountWithFilter error: %s", err.Error())
 			result <- interfaces.CountResult{Count: 0, Error: err}
@@ -2072,19 +2465,9 @@ func (r *PostgreSQLRepository) CountWithFilter(ctx context.Context, collectionNa
 	return result
 }
 
-// getPostgreSQLType returns the appropriate PostgreSQL cast type for sorting
-func (r *PostgreSQLRepository) getPostgreSQLType(fieldName string) string {
-	switch fieldName {
-	case "createdDate", "lastUpdated", "deletedDate", "score", "viewCount", "commentCounter":
-		return "bigint"
-	case "objectId", "ownerUserId", "postTypeId":
-		return "text"
-	default:
-		return "text"
-	}
-}
+
 
 // DB returns the underlying *sql.DB connection for direct access
 func (r *PostgreSQLRepository) DB() *sql.DB {
-	return r.db
+	return r.db.DB // Return underlying *sql.DB from *sqlx.DB
 }

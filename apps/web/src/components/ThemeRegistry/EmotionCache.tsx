@@ -4,14 +4,24 @@ import { CacheProvider } from '@emotion/react';
 import createCache from '@emotion/cache';
 import { useServerInsertedHTML } from 'next/navigation';
 import { useState } from 'react';
+import rtlPlugin from 'stylis-plugin-rtl';
+import { prefixer } from 'stylis';
 
 export type EmotionCacheProviderProps = {
   children: React.ReactNode;
+  direction?: 'ltr' | 'rtl';
 };
 
-export default function EmotionCacheProvider({ children }: EmotionCacheProviderProps) {
+export default function EmotionCacheProvider({ children, direction = 'ltr' }: EmotionCacheProviderProps) {
   const [{ cache, flush }] = useState(() => {
-    const cache = createCache({ key: 'mui' });
+    const isRTL = direction === 'rtl';
+    const cache = createCache({ 
+      key: 'mui',
+      prepend: true,
+      ...(isRTL && {
+        stylisPlugins: [prefixer, rtlPlugin],
+      }),
+    });
     cache.compat = true;
     const prevInsert = cache.insert;
     let inserted: string[] = [];

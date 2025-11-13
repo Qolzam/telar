@@ -42,31 +42,36 @@ func (ts *TransactionTestSuite) testMissingCoverageOperations(t *testing.T, repo
 	ctx := context.Background()
 	collectionName := fmt.Sprintf("test_coverage_%s_%d", dbType, time.Now().UnixNano())
 
-	// Test Find operation (0% coverage on MongoDB)
+	// Test Find operation coverage gap
 	t.Run("Find_Operation", func(t *testing.T) {
 		// Create test data first
+		ownerID := uuid.Must(uuid.NewV4())
 		testData := TestData{
 			ObjectId:    uuid.Must(uuid.NewV4()),
 			Name:        fmt.Sprintf("find_test_%d", time.Now().UnixNano()),
 			Value:       100,
-			OwnerUserId: "find_owner",
+			OwnerUserId: ownerID.String(),
 			CreatedDate: time.Now().Unix(),
 			LastUpdated: time.Now().Unix(),
 			Deleted:     false,
 		}
 		
-		result := <-repo.Save(ctx, collectionName, testData)
+		result := <-repo.Save(ctx, collectionName, testData.ObjectId, ownerID, testData.CreatedDate, testData.LastUpdated, testData)
 		require.NoError(t, result.Error)
 
-		// Test Find operation
-		filter := map[string]interface{}{"ownerUserId": "find_owner"}
+		// Test Find operation - use Query object
+		queryObj := &interfaces.Query{
+			Conditions: []interfaces.Field{
+				{Name: "owner_user_id", Value: ownerID, Operator: "="},
+			},
+		}
 		limit := int64(10)
 		opts := &interfaces.FindOptions{
 			Limit: &limit,
 			Sort:  map[string]int{"created_date": 1},
 		}
 
-		findResult := <-repo.Find(ctx, collectionName, filter, opts)
+		findResult := <-repo.Find(ctx, collectionName, queryObj, opts)
 		assert.NoError(t, findResult.Error(), "Find operation should succeed")
 		
 		// Verify we can iterate through results
@@ -80,61 +85,69 @@ func (ts *TransactionTestSuite) testMissingCoverageOperations(t *testing.T, repo
 		assert.Greater(t, count, 0, "Should find at least one document")
 	})
 
-	// Test UpdateMany operation (0% coverage on MongoDB)
+	// Test UpdateMany operation coverage gap
 	t.Run("UpdateMany_Operation", func(t *testing.T) {
 		// Create multiple test documents
+		ownerID := uuid.Must(uuid.NewV4())
 		for i := 0; i < 3; i++ {
 			testData := TestData{
 				ObjectId:    uuid.Must(uuid.NewV4()),
 				Name:        fmt.Sprintf("update_many_%d", i),
 				Value:       200,
-				OwnerUserId: "update_many_owner",
+				OwnerUserId: ownerID.String(),
 				CreatedDate: time.Now().Unix(),
 				LastUpdated: time.Now().Unix(),
 				Deleted:     false,
 			}
-			result := <-repo.Save(ctx, collectionName, testData)
+			result := <-repo.Save(ctx, collectionName, testData.ObjectId, ownerID, testData.CreatedDate, testData.LastUpdated, testData)
 			require.NoError(t, result.Error)
 		}
 
-		// Test UpdateMany operation
-		filter := map[string]interface{}{"ownerUserId": "update_many_owner"}
-		updateData := map[string]interface{}{
-			"$set": map[string]interface{}{
-				"value":       300,
-				"lastUpdated": time.Now().Unix(),
+		// Test UpdateMany operation - use Query object
+		queryObj := &interfaces.Query{
+			Conditions: []interfaces.Field{
+				{Name: "owner_user_id", Value: ownerID, Operator: "="},
 			},
 		}
+		updateData := map[string]interface{}{
+			"value":       300,
+			"lastUpdated": time.Now().Unix(),
+		}
 
-		updateResult := <-repo.UpdateMany(ctx, collectionName, filter, updateData, nil)
+		updateResult := <-repo.UpdateMany(ctx, collectionName, queryObj, updateData, nil)
 		assert.NoError(t, updateResult.Error, "UpdateMany operation should succeed")
 	})
 
-	// Test Count operation (0% coverage on MongoDB)
+	// Test Count operation coverage gap
 	t.Run("Count_Operation", func(t *testing.T) {
 		// Create test data for counting
+		ownerID := uuid.Must(uuid.NewV4())
 		for i := 0; i < 5; i++ {
 			testData := TestData{
 				ObjectId:    uuid.Must(uuid.NewV4()),
 				Name:        fmt.Sprintf("count_test_%d", i),
 				Value:       500,
-				OwnerUserId: "count_owner",
+				OwnerUserId: ownerID.String(),
 				CreatedDate: time.Now().Unix(),
 				LastUpdated: time.Now().Unix(),
 				Deleted:     false,
 			}
-			result := <-repo.Save(ctx, collectionName, testData)
+			result := <-repo.Save(ctx, collectionName, testData.ObjectId, ownerID, testData.CreatedDate, testData.LastUpdated, testData)
 			require.NoError(t, result.Error)
 		}
 
-		// Test Count operation
-		filter := map[string]interface{}{"ownerUserId": "count_owner"}
-		countResult := <-repo.Count(ctx, collectionName, filter)
+		// Test Count operation - use Query object
+		queryObj := &interfaces.Query{
+			Conditions: []interfaces.Field{
+				{Name: "owner_user_id", Value: ownerID, Operator: "="},
+			},
+		}
+		countResult := <-repo.Count(ctx, collectionName, queryObj)
 		assert.NoError(t, countResult.Error, "Count operation should succeed")
 		assert.GreaterOrEqual(t, countResult.Count, int64(5), "Should count at least 5 documents")
 	})
 
-	// Test CreateIndex operation (0% coverage on MongoDB)
+	// Test CreateIndex operation coverage gap
 	t.Run("CreateIndex_Operation", func(t *testing.T) {
 		indexes := map[string]interface{}{
 			"ownerUserId": 1,
@@ -148,6 +161,7 @@ func (ts *TransactionTestSuite) testMissingCoverageOperations(t *testing.T, repo
 	// Test WithTransaction operation (0% coverage)
 	t.Run("WithTransaction_Operation", func(t *testing.T) {
 		var transactionExecuted bool
+		ownerID := uuid.Must(uuid.NewV4())
 		
 		err := repo.WithTransaction(ctx, func(txCtx context.Context) error {
 			transactionExecuted = true
@@ -157,13 +171,13 @@ func (ts *TransactionTestSuite) testMissingCoverageOperations(t *testing.T, repo
 				ObjectId:    uuid.Must(uuid.NewV4()),
 				Name:        fmt.Sprintf("with_tx_test_%d", time.Now().UnixNano()),
 				Value:       777,
-				OwnerUserId: "with_tx_owner",
+				OwnerUserId: ownerID.String(),
 				CreatedDate: time.Now().Unix(),
 				LastUpdated: time.Now().Unix(),
 				Deleted:     false,
 			}
 			
-			result := <-repo.Save(txCtx, collectionName, testData)
+			result := <-repo.Save(txCtx, collectionName, testData.ObjectId, ownerID, testData.CreatedDate, testData.LastUpdated, testData)
 			return result.Error
 		})
 
@@ -181,12 +195,14 @@ func (ts *TransactionTestSuite) testMissingCoverageOperations(t *testing.T, repo
 	t.Run("Error_Handling", func(t *testing.T) {
 		// Test operations with invalid data to trigger error paths
 		
-		// Invalid filter for FindOne
-		invalidFilter := map[string]interface{}{
-			"$invalid": "invalid_operator",
+		// Invalid query for FindOne - use Query object with invalid field
+		invalidQuery := &interfaces.Query{
+			Conditions: []interfaces.Field{
+				{Name: "invalid_field_that_does_not_exist", Value: "invalid_value", Operator: "="},
+			},
 		}
 		
-		findResult := <-repo.FindOne(ctx, collectionName, invalidFilter)
+		findResult := <-repo.FindOne(ctx, collectionName, invalidQuery)
 		// This may or may not error depending on database implementation
 		// The important thing is we're exercising the error handling code paths
 		_ = findResult.Error()
@@ -225,17 +241,23 @@ func (ts *TransactionTestSuite) testTransactionSpecificCoverage(t *testing.T, re
 			Deleted:     false,
 		}
 
-		saveResult := <-tx.Save(ctx, collectionName, testData)
+		ownerID := uuid.Must(uuid.NewV4())
+		testData.OwnerUserId = ownerID.String()
+		saveResult := <-tx.Save(ctx, collectionName, testData.ObjectId, ownerID, testData.CreatedDate, testData.LastUpdated, testData)
 		require.NoError(t, saveResult.Error)
 
-		// Test Find operation in transaction
-		filter := map[string]interface{}{"ownerUserId": "tx_find_owner"}
+		// Test Find operation in transaction - use Query object
+		queryObj := &interfaces.Query{
+			Conditions: []interfaces.Field{
+				{Name: "owner_user_id", Value: ownerID, Operator: "="},
+			},
+		}
 		limit := int64(5)
 		opts := &interfaces.FindOptions{
 			Limit: &limit,
 		}
 
-		findResult := <-tx.Find(ctx, collectionName, filter, opts)
+		findResult := <-tx.Find(ctx, collectionName, queryObj, opts)
 		assert.NoError(t, findResult.Error(), "Transaction Find should succeed")
 
 		err = tx.Commit()
@@ -245,32 +267,35 @@ func (ts *TransactionTestSuite) testTransactionSpecificCoverage(t *testing.T, re
 	// Test transaction UpdateMany operation (0% coverage)
 	t.Run("Transaction_UpdateMany", func(t *testing.T) {
 		// Create initial data
+		ownerID := uuid.Must(uuid.NewV4())
 		for i := 0; i < 2; i++ {
 			testData := TestData{
 				ObjectId:    uuid.Must(uuid.NewV4()),
 				Name:        fmt.Sprintf("tx_update_many_%d", i),
 				Value:       999,
-				OwnerUserId: "tx_update_many_owner",
+				OwnerUserId: ownerID.String(),
 				CreatedDate: time.Now().Unix(),
 				LastUpdated: time.Now().Unix(),
 				Deleted:     false,
 			}
-			result := <-repo.Save(ctx, collectionName, testData)
+			result := <-repo.Save(ctx, collectionName, testData.ObjectId, ownerID, testData.CreatedDate, testData.LastUpdated, testData)
 			require.NoError(t, result.Error)
 		}
 
 		tx, err := repo.Begin(ctx)
 		require.NoError(t, err)
 
-		// Test UpdateMany in transaction
-		filter := map[string]interface{}{"ownerUserId": "tx_update_many_owner"}
-		updateData := map[string]interface{}{
-			"$set": map[string]interface{}{
-				"value": 1111,
+		// Test UpdateMany in transaction - use Query object
+		queryObj := &interfaces.Query{
+			Conditions: []interfaces.Field{
+				{Name: "owner_user_id", Value: ownerID, Operator: "="},
 			},
 		}
+		updateData := map[string]interface{}{
+			"value": 1111,
+		}
 
-		updateResult := <-tx.UpdateMany(ctx, collectionName, filter, updateData, nil)
+		updateResult := <-tx.UpdateMany(ctx, collectionName, queryObj, updateData, nil)
 		assert.NoError(t, updateResult.Error, "Transaction UpdateMany should succeed")
 
 		err = tx.Commit()
@@ -282,9 +307,13 @@ func (ts *TransactionTestSuite) testTransactionSpecificCoverage(t *testing.T, re
 		tx, err := repo.Begin(ctx)
 		require.NoError(t, err)
 
-		// Test Count in transaction
-		filter := map[string]interface{}{"value": 1111}
-		countResult := <-tx.Count(ctx, collectionName, filter)
+		// Test Count in transaction - use Query object
+		queryObj := &interfaces.Query{
+			Conditions: []interfaces.Field{
+				{Name: "data->>'value'", Value: 1111, Operator: "=", IsJSONB: true},
+			},
+		}
+		countResult := <-tx.Count(ctx, collectionName, queryObj)
 		assert.NoError(t, countResult.Error, "Transaction Count should succeed")
 
 		err = tx.Commit()
@@ -292,10 +321,8 @@ func (ts *TransactionTestSuite) testTransactionSpecificCoverage(t *testing.T, re
 	})
 
 	// Test CreateIndex in transaction 
-	// MongoDB Reference: https://www.mongodb.com/docs/manual/core/transactions-operations/
 	// PostgreSQL Reference: https://www.postgresql.org/docs/current/sql-createindex.html
 	// 
-	// MongoDB: Supports CreateIndex in transactions with restrictions:
 	// 1. Index must be on non-existent collection OR new empty collection created in same transaction
 	// 2. Transaction must use read concern "local"
 	// 3. Cannot be cross-shard write transaction with non-local read concern
@@ -314,7 +341,7 @@ func (ts *TransactionTestSuite) testTransactionSpecificCoverage(t *testing.T, re
 		}
 
 		indexResult := <-tx.CreateIndex(ctx, uniqueCollectionName, indexes)
-		// Both MongoDB and PostgreSQL should support this operation per documentation
+		// PostgreSQL should support this operation per documentation
 		// If it fails, it's likely due to implementation-specific restrictions
 		if indexResult != nil {
 			t.Logf("CreateIndex in transaction failed: %v", indexResult)
@@ -332,11 +359,19 @@ func (ts *TransactionTestSuite) testTransactionSpecificCoverage(t *testing.T, re
 
 		// Test operations that might fail to exercise error handling
 		// This is important for coverage of error handling paths
-		invalidData := map[string]interface{}{
-			"invalid_field": func() {}, // Function types are typically not supported
+		// Create a test data object with invalid data
+		invalidOwnerID := uuid.Must(uuid.NewV4())
+		invalidData := TestData{
+			ObjectId:    uuid.Must(uuid.NewV4()),
+			Name:        "invalid_test",
+			Value:       0,
+			OwnerUserId: invalidOwnerID.String(),
+			CreatedDate: time.Now().Unix(),
+			LastUpdated: time.Now().Unix(),
+			Deleted:     false,
 		}
 
-		result := <-tx.Save(ctx, collectionName, invalidData)
+		result := <-tx.Save(ctx, collectionName, invalidData.ObjectId, invalidOwnerID, invalidData.CreatedDate, invalidData.LastUpdated, invalidData)
 		// This should likely error, which is good for testing error paths
 		_ = result.Error
 
