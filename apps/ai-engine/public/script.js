@@ -125,10 +125,12 @@ async function loadStatus() {
         const embedTech = document.getElementById('embed-tech');
         const completionTech = document.getElementById('completion-tech');
         const genCompletionTech = document.getElementById('gen-completion-tech');
+        const modCompletionTech = document.getElementById('mod-completion-tech');
         
         if (embedTech) embedTech.textContent = data.embedding_provider;
         if (completionTech) completionTech.textContent = data.completion_provider;
         if (genCompletionTech) genCompletionTech.textContent = data.completion_provider;
+        if (modCompletionTech) modCompletionTech.textContent = data.completion_provider;
         
         if (data.status === 'healthy') {
             document.getElementById('status-indicator').style.color = '#4CAF50';
@@ -157,6 +159,16 @@ function resetFlowDiagram() {
 
 function resetGenerationFlowDiagram() {
     const steps = ['gen-step-input', 'gen-step-process', 'gen-step-generate', 'gen-step-format', 'gen-step-output'];
+    steps.forEach(stepId => {
+        const element = document.getElementById(stepId);
+        if (element) {
+            element.className = 'flow-step idle';
+        }
+    });
+}
+
+function resetModerationFlowDiagram() {
+    const steps = ['mod-step-input', 'mod-step-analyze', 'mod-step-score', 'mod-step-decision', 'mod-step-result'];
     steps.forEach(stepId => {
         const element = document.getElementById(stepId);
         if (element) {
@@ -719,4 +731,235 @@ function logMessage(message, type = 'info') {
     while (logContainer.children.length > 50) {
         logContainer.removeChild(logContainer.firstChild);
     }
+}
+
+// ============================================
+// CONTENT MODERATION FUNCTIONS (Phase 5)
+// ============================================
+
+// Load example content for testing
+function loadToxicExample() {
+    document.getElementById('content-text').value = "You are a stupid idiot and I hate you! Go die!";
+    logMessage('Loaded toxic content example', 'info');
+}
+
+function loadBenignExample() {
+    document.getElementById('content-text').value = "I really enjoyed the new Go 1.23 features! The iterator support is amazing and makes code so much cleaner.";
+    logMessage('Loaded benign content example', 'info');
+}
+
+function loadSpamExample() {
+    document.getElementById('content-text').value = "BUY NOW!!! Click here for amazing deals!!! Limited time offer!!! www.spam-site.com GET RICH QUICK!!!";
+    logMessage('Loaded spam content example', 'info');
+}
+
+function clearContent() {
+    document.getElementById('content-text').value = '';
+    logMessage('Content cleared', 'info');
+}
+
+// Handle content analysis
+async function handleAnalyze() {
+    const content = document.getElementById('content-text').value.trim();
+    
+    if (!content) {
+        showStatus('analyze-status', 'Please enter content to analyze', 'error');
+        return;
+    }
+    
+    // Reset and start flow diagram
+    resetModerationFlowDiagram();
+    
+    const analyzeBtn = document.getElementById('analyze-btn');
+    analyzeBtn.disabled = true;
+    analyzeBtn.textContent = '🔍 Analyzing...';
+    
+    // Step 1: Input
+    highlightFlowStep('mod-step-input');
+    logMessage(`Starting content moderation analysis (${content.length} chars)`, 'info');
+    
+    try {
+        const startTime = Date.now();
+        
+        // Step 2: Analyze
+        completeFlowStep('mod-step-input');
+        highlightFlowStep('mod-step-analyze');
+        logMessage('Sending content to AI analyzer...', 'info');
+        
+        const response = await fetch('/api/v1/analyze/content', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                content: content
+            })
+        });
+        
+        // Step 3: Score
+        completeFlowStep('mod-step-analyze');
+        highlightFlowStep('mod-step-score');
+        logMessage('Processing AI analysis scores...', 'info');
+        
+        const endTime = Date.now();
+        const responseTime = endTime - startTime;
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            // Step 4: Decision
+            completeFlowStep('mod-step-score');
+            highlightFlowStep('mod-step-decision');
+            logMessage('Making moderation decision...', 'info');
+            
+            // Step 5: Result
+            completeFlowStep('mod-step-decision');
+            highlightFlowStep('mod-step-result');
+            logMessage('Displaying results...', 'info');
+            
+            // Complete the moderation flow
+            completeFlowStep('mod-step-result');
+            
+            // Display results
+            displayModerationResults(data, content, responseTime);
+            
+            const status = data.is_flagged ? 'FLAGGED' : 'APPROVED';
+            showStatus('analyze-status', `✅ Analysis complete: ${status} (${responseTime}ms)`, data.is_flagged ? 'warning' : 'success');
+            logMessage(`Content ${status}: ${data.is_flagged ? data.flag_reason : 'No violations detected'} (${responseTime}ms)`);
+            
+        } else {
+            // Mark current step as error
+            const activeStep = document.querySelector('.flow-step.active');
+            if (activeStep) {
+                errorFlowStep(activeStep.id);
+            }
+            showStatus('analyze-status', `❌ Error: ${data.error || 'Unknown error'}`, 'error');
+            logMessage(`Analysis failed: ${data.error}`, 'error');
+            
+            // Show error in results
+            document.getElementById('moderation-results').innerHTML = `
+                <div class="placeholder error">
+                    <h4>❌ Analysis Failed</h4>
+                    <p><strong>Error:</strong> ${data.error || 'Unknown error occurred'}</p>
+                    <p><strong>Details:</strong> ${data.details || 'No additional details available'}</p>
+                </div>
+            `;
+        }
+        
+    } catch (error) {
+        // Mark current step as error
+        const activeStep = document.querySelector('.flow-step.active');
+        if (activeStep) {
+            errorFlowStep(activeStep.id);
+        }
+        showStatus('analyze-status', `❌ Network error: ${error.message}`, 'error');
+        logMessage(`Analysis network error: ${error.message}`, 'error');
+        
+        // Show network error
+        document.getElementById('moderation-results').innerHTML = `
+            <div class="placeholder error">
+                <h4>❌ Network Error</h4>
+                <p><strong>Error:</strong> ${error.message}</p>
+                <p>Please check your network connection and try again.</p>
+            </div>
+        `;
+    } finally {
+        analyzeBtn.disabled = false;
+        analyzeBtn.textContent = '🔍 Analyze Content';
+    }
+}
+
+// Display moderation results
+function displayModerationResults(data, content, responseTime) {
+    const resultsContainer = document.getElementById('moderation-results');
+    const scoresContainer = document.getElementById('scores-display');
+    
+    // Main result display
+    const statusIcon = data.is_flagged ? '🚫' : '✅';
+    const statusText = data.is_flagged ? 'FLAGGED' : 'APPROVED';
+    const statusClass = data.is_flagged ? 'flagged' : 'approved';
+    
+    let html = `
+        <div class="moderation-result ${statusClass}">
+            <div class="result-header">
+                <div class="result-icon">${statusIcon}</div>
+                <div class="result-status">
+                    <h3>Content ${statusText}</h3>
+                    <p class="result-confidence">Confidence: ${(data.confidence * 100).toFixed(0)}%</p>
+                </div>
+            </div>
+    `;
+    
+    if (data.is_flagged && data.flag_reason) {
+        html += `
+            <div class="result-reason">
+                <h4>🔍 Reason for Flagging:</h4>
+                <p>${data.flag_reason}</p>
+            </div>
+        `;
+    }
+    
+    html += `
+            <div class="result-metadata">
+                <span><strong>Analysis Time:</strong> ${responseTime}ms</span>
+                <span><strong>Content Length:</strong> ${content.length} chars</span>
+                <span><strong>Timestamp:</strong> ${new Date(data.timestamp).toLocaleString()}</span>
+                <span><strong>Model:</strong> ${modelConfig.provider}</span>
+            </div>
+        </div>
+    `;
+    
+    resultsContainer.innerHTML = html;
+    
+    // Scores display
+    displayScores(data.scores, data.is_flagged);
+}
+
+// Display category scores with visual bars
+function displayScores(scores, isFlagged) {
+    const scoresContainer = document.getElementById('scores-display');
+    
+    const categories = [
+        { key: 'toxicity', label: 'Toxicity', icon: '😡', description: 'Hate speech, harassment, threats' },
+        { key: 'sexual', label: 'Sexual Content', icon: '🔞', description: 'Explicit or inappropriate sexual material' },
+        { key: 'violence', label: 'Violence', icon: '⚔️', description: 'Graphic violence, gore, violent threats' },
+        { key: 'spam', label: 'Spam', icon: '📧', description: 'Repetitive, promotional, low-quality content' },
+        { key: 'misinformation', label: 'Misinformation', icon: '❌', description: 'False or misleading information' }
+    ];
+    
+    let html = '<div class="scores-grid">';
+    
+    categories.forEach(category => {
+        const score = scores[category.key] || 0;
+        const percentage = (score * 100).toFixed(0);
+        const isFlaggedCategory = score >= 0.7;
+        const barClass = isFlaggedCategory ? 'danger' : (score >= 0.5 ? 'warning' : 'safe');
+        
+        html += `
+            <div class="score-card ${isFlaggedCategory ? 'flagged' : ''}">
+                <div class="score-header">
+                    <span class="score-icon">${category.icon}</span>
+                    <span class="score-label">${category.label}</span>
+                    <span class="score-value">${percentage}%</span>
+                </div>
+                <div class="score-bar-container">
+                    <div class="score-bar ${barClass}" style="width: ${percentage}%"></div>
+                </div>
+                <div class="score-description">${category.description}</div>
+                ${isFlaggedCategory ? '<div class="score-alert">⚠️ Exceeds threshold (70%)</div>' : ''}
+            </div>
+        `;
+    });
+    
+    html += '</div>';
+    
+    // Add threshold info
+    html += `
+        <div class="threshold-info">
+            <p><strong>Flagging Threshold:</strong> Content is flagged if any category score exceeds 70% (0.7)</p>
+            <p><strong>Current Status:</strong> ${isFlagged ? '🚫 Content flagged for review' : '✅ Content approved'}</p>
+        </div>
+    `;
+    
+    scoresContainer.innerHTML = html;
 }

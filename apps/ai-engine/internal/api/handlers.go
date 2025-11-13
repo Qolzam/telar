@@ -8,6 +8,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"github.com/qolzam/telar/apps/ai-engine/internal/analyzer"
 	"github.com/qolzam/telar/apps/ai-engine/internal/config"
 	"github.com/qolzam/telar/apps/ai-engine/internal/generator"
 	"github.com/qolzam/telar/apps/ai-engine/internal/knowledge"
@@ -16,15 +17,17 @@ import (
 // Handler contains HTTP handlers for AI Engine endpoints
 type Handler struct {
 	knowledgeService *knowledge.Service
-	generatorService *generator.Service 
+	generatorService *generator.Service
+	analyzerService  *analyzer.Service
 	config           *config.Config
 }
 
 // NewHandler creates a new handler instance
-func NewHandler(knowledgeService *knowledge.Service, generatorService *generator.Service, config *config.Config) *Handler {
+func NewHandler(knowledgeService *knowledge.Service, generatorService *generator.Service, analyzerService *analyzer.Service, config *config.Config) *Handler {
 	return &Handler{
 		knowledgeService: knowledgeService,
 		generatorService: generatorService,
+		analyzerService:  analyzerService,
 		config:           config,
 	}
 }
@@ -323,4 +326,52 @@ func (h *Handler) ServeDemo(c *fiber.Ctx) error {
 
 	c.Set("Content-Type", "text/html")
 	return c.Send(content)
+}
+
+// AnalyzeContent handles content moderation analysis requests
+func (h *Handler) AnalyzeContent(c *fiber.Ctx) error {
+	var req analyzer.AnalysisRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error":   "Invalid request payload",
+			"details": err.Error(),
+		})
+	}
+
+	// Validate that content is provided
+	if strings.TrimSpace(req.Content) == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error":   "Content is required",
+			"details": "The 'content' field cannot be empty",
+		})
+	}
+
+	// Perform the analysis
+	result, err := h.analyzerService.AnalyzeContent(c.Context(), req.Content)
+	if err != nil {
+		log.Printf("Content analysis failed: %v", err)
+
+		// Check for specific error types
+		if strings.Contains(err.Error(), "timeout") {
+			return c.Status(fiber.StatusRequestTimeout).JSON(fiber.Map{
+				"error":   "Analysis request timed out",
+				"details": "The content analysis took too long. Please try again.",
+			})
+		}
+
+		if strings.Contains(err.Error(), "ollama service is not available") {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"error":   "AI service temporarily unavailable",
+				"details": "Ollama LLM service is not running. Please ensure Ollama is started and accessible.",
+				"code":    "OLLAMA_UNAVAILABLE",
+			})
+		}
+
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error":   "Failed to analyze content",
+			"details": err.Error(),
+		})
+	}
+
+	return c.JSON(result)
 }

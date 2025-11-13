@@ -30,6 +30,7 @@
         <nav class="nav-tabs">
             <button class="tab-button active" onclick="showTab('rag')">Knowledge Base (RAG)</button>
             <button class="tab-button" onclick="showTab('generation')">Content Generation</button>
+            <button class="tab-button" onclick="showTab('moderation')">Content Moderation</button>
         </nav>
 
         <!-- RAG Tab -->
@@ -221,6 +222,90 @@
             <div class="section">
                 <h2>Generated Starters</h2>
                 <div id="generated-starters" class="starters-box"></div>
+            </div>
+        </div>
+
+        <!-- Moderation Tab -->
+        <div id="moderation-tab" class="tab-content">
+            <!-- Content Moderation Flow Diagram -->
+            <div class="flow-diagram">
+                <div class="flow-title">Content Moderation Pipeline Status</div>
+                <div class="flow-container">
+                    <span class="flow-step idle" id="mod-step-input">
+                        <div class="flow-step-content">
+                            <div class="flow-step-icon">📝</div>
+                            <div class="flow-step-name">INPUT</div>
+                            <div class="flow-step-tech">User Content</div>
+                        </div>
+                    </span>
+                    <span class="flow-arrow">→</span>
+                    <span class="flow-step idle" id="mod-step-analyze">
+                        <div class="flow-step-content">
+                            <div class="flow-step-icon">🔍</div>
+                            <div class="flow-step-name">ANALYZE</div>
+                            <div class="flow-step-tech" id="mod-completion-tech">Groq</div>
+                        </div>
+                    </span>
+                    <span class="flow-arrow">→</span>
+                    <span class="flow-step idle" id="mod-step-score">
+                        <div class="flow-step-content">
+                            <div class="flow-step-icon">📊</div>
+                            <div class="flow-step-name">SCORE</div>
+                            <div class="flow-step-tech">AI Analysis</div>
+                        </div>
+                    </span>
+                    <span class="flow-arrow">→</span>
+                    <span class="flow-step idle" id="mod-step-decision">
+                        <div class="flow-step-content">
+                            <div class="flow-step-icon">⚖️</div>
+                            <div class="flow-step-name">DECISION</div>
+                            <div class="flow-step-tech">Go API</div>
+                        </div>
+                    </span>
+                    <span class="flow-arrow">→</span>
+                    <span class="flow-step idle" id="mod-step-result">
+                        <div class="flow-step-content">
+                            <div class="flow-step-icon">✅</div>
+                            <div class="flow-step-name">RESULT</div>
+                            <div class="flow-step-tech">UI Display</div>
+                        </div>
+                    </span>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>🛡️ Analyze Content for Moderation</h2>
+                <div class="input-group">
+                    <label for="content-text">Enter content to analyze:</label>
+                    <textarea id="content-text" placeholder="Enter text content to check for policy violations (toxicity, spam, violence, etc.)..."></textarea>
+                </div>
+                <div class="quick-content">
+                    <strong>Quick Test:</strong>
+                    <button onclick="loadToxicExample()">Toxic Example</button>
+                    <button onclick="loadBenignExample()">Benign Example</button>
+                    <button onclick="loadSpamExample()">Spam Example</button>
+                    <button onclick="clearContent()">Clear</button>
+                </div>
+                <button id="analyze-btn" onclick="handleAnalyze()">🔍 Analyze Content</button>
+                <div id="analyze-status" class="status-message"></div>
+            </div>
+
+            <div class="section">
+                <h2>📊 Analysis Results</h2>
+                <div id="moderation-results" class="moderation-results">
+                    <div class="placeholder">
+                        <p>👆 Enter content above and click "Analyze Content" to see moderation results</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>📈 Category Scores</h2>
+                <div id="scores-display" class="scores-container">
+                    <div class="placeholder">
+                        <p>Detailed scores will appear here after analysis</p>
+                    </div>
+                </div>
             </div>
         </div>
 
