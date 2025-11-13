@@ -111,6 +111,54 @@ The AI Engine supports multiple deployment scenarios, each optimized for a diffe
 
 ---
 
+## 🚀 Features
+
+### 1. Knowledge Management (RAG)
+- **Document Ingestion**: Store and vectorize documents for semantic search
+- **Intelligent Query**: Ask questions and get contextual answers from your knowledge base
+- **Provider-Agnostic**: Works with Ollama, OpenAI, Groq, or OpenRouter
+
+### 2. Content Generation
+- **Conversation Starters**: Generate engaging discussion prompts for communities
+- **Concurrent Request Management**: Built-in rate limiting and queue management
+- **Style Customization**: Generate content in different tones and styles
+
+### 3. Content Moderation (NEW) ✨
+- **AI-Powered Analysis**: Automatically analyze content for policy violations
+- **Multi-Category Scoring**: Toxicity, sexual content, violence, spam, and misinformation
+- **Structured Results**: Get detailed scores, confidence levels, and reasons
+- **Async Processing**: Non-blocking analysis for high-performance applications
+
+**Example Usage**:
+```bash
+# Analyze content for moderation
+curl -X POST http://localhost:8000/api/v1/analyze/content \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Text to analyze"}'
+
+# Response
+{
+  "is_flagged": true,
+  "flag_reason": "Toxicity exceeds 0.7",
+  "scores": {
+    "toxicity": 0.95,
+    "sexual": 0.0,
+    "violence": 0.0,
+    "spam": 0.0,
+    "misinformation": 0.0
+  },
+  "confidence": 0.98,
+  "timestamp": "2025-10-09T12:00:00Z"
+}
+```
+
+**Documentation**:
+- [Analyzer Package README](./internal/analyzer/README.md)
+- [Integration Guide](./docs/INTEGRATION_GUIDE.md)
+- [Implementation Status](./docs/PHASE5_IMPLEMENTATION_STATUS.md)
+
+---
+
 ## 🗺️ Project Roadmap
 
 This project is being developed in deliberate phases to ensure a robust and feature-complete architecture.
@@ -118,7 +166,8 @@ This project is being developed in deliberate phases to ensure a robust and feat
 -   [x] **Phase 1: Local-First Foundation** - Implemented a manual RAG pipeline with a provider-agnostic interface using Ollama.
 -   [x] **Phase 2: High-Performance Showcase** - Integrated the Groq client and evolved the architecture to a specialized hybrid model (embeddings vs. completions).
 -   [x] **Phase 3: Enterprise-Ready Refactor** - Integrated OpenAI, refactored orchestration to LangChainGo, and built a comprehensive, enterprise-grade testing suite.
--   [ ] **Phase 4: Product-First Feature Launch** - Leverage the engine to build the first user-facing AI feature: the "Community Ignition Toolkit" for generating high-quality conversation starters.
+-   [x] **Phase 4: Product-First Feature Launch** - Launched the "Community Ignition Toolkit" for generating high-quality conversation starters.
+-   [x] **Phase 5: The Guardian Protocol** - Built AI-powered content moderation system for proactive community safety (Backend Complete).
 
 ---
 

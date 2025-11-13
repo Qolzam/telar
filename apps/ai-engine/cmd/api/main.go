@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/qolzam/telar/apps/ai-engine/internal/analyzer"
 	"github.com/qolzam/telar/apps/ai-engine/internal/api"
 	"github.com/qolzam/telar/apps/ai-engine/internal/config"
 	"github.com/qolzam/telar/apps/ai-engine/internal/generator"
@@ -176,6 +177,10 @@ func main() {
 	generatorService := generator.NewService(completionClient, cfg.LLM.MaxConcurrent)
 	log.Printf("✓ Generator service initialized (max concurrent: %d)", cfg.LLM.MaxConcurrent)
 
+	log.Printf("Initializing analyzer service...")
+	analyzerService := analyzer.NewService(completionClient)
+	log.Printf("✓ Analyzer service initialized")
+
 	log.Println("Performing health checks...")
 	if err := knowledgeService.HealthCheck(ctx); err != nil {
 		log.Printf("Warning: Health check failed: %v", err)
@@ -184,7 +189,7 @@ func main() {
 		log.Println("All health checks passed")
 	}
 
-	app := api.Router(knowledgeService, generatorService, cfg)
+	app := api.Router(knowledgeService, generatorService, analyzerService, cfg)
 
 	go func() {
 		addr := fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port)
