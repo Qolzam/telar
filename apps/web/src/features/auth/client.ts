@@ -132,7 +132,6 @@ export function useSignup() {
     mutationFn: (data: SignupRequest) => sdk.auth.signup(data),
     onSuccess: (data: SignupResponse) => {
       setVerificationId(data.verificationId);
-      console.log('[Signup] ✅ Registration successful, verification ID:', data.verificationId);
     },
     onError: (error: Error) => {
       console.error('[Signup] Signup failed:', error.message);
@@ -200,7 +199,6 @@ export function useForgotPassword() {
     mutationFn: (data: ForgotPasswordRequest) => sdk.auth.forgotPassword(data),
     onSuccess: () => {
       setEmailSent(true);
-      console.log('[ForgotPassword] ✅ Reset email sent');
     },
     onError: (error: Error) => {
       console.error('[ForgotPassword] Failed:', error.message);
@@ -232,7 +230,6 @@ export function useResetPassword() {
   const mutation = useMutation({
     mutationFn: (data: ResetPasswordRequest) => sdk.auth.resetPassword(data),
     onSuccess: () => {
-      console.log('[ResetPassword] ✅ Password reset successfully');
       router.push('/login?message=password_reset_success');
     },
     onError: (error: Error) => {
@@ -262,7 +259,6 @@ export function useChangePassword() {
   const mutation = useMutation({
     mutationFn: (data: ChangePasswordRequest) => sdk.auth.changePassword(data),
     onSuccess: () => {
-      console.log('[ChangePassword] ✅ Password changed successfully');
     },
     onError: (error: Error) => {
       console.error('[ChangePassword] Failed:', error.message);
@@ -296,8 +292,6 @@ export function useVerifyEmail() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: SESSION_QUERY_KEY });
       
-      console.log('[Verify] ✅ Email verified, redirecting to dashboard');
-      
       router.push('/dashboard');
     },
     onError: (error: Error) => {
@@ -323,7 +317,6 @@ export function useResendVerification() {
   const mutation = useMutation({
     mutationFn: (data: ResendVerificationRequest) => sdk.auth.resendVerification(data),
     onSuccess: () => {
-      console.log('[Resend] ✅ Verification email resent');
     },
     onError: (error: Error) => {
       console.error('[Resend] Failed to resend:', error.message);

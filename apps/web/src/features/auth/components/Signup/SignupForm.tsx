@@ -64,7 +64,6 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
 
   const onSubmit = async (data: SignupFormData) => {
     try {
-      console.log('[Signup] Starting registration process...', { email: data.email });
       clearErrors('root');
       
       const fullName = `${data.firstName} ${data.lastName}`;
@@ -74,8 +73,6 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
         newPassword: data.password 
       });
       
-      console.log('[Signup] Registration successful!');
-      
       if (result?.verificationId) {
         setVerificationId(result.verificationId);
         
@@ -84,7 +81,6 @@ export default function SignupForm({ onSuccess }: SignupFormProps) {
         }
       }
     } catch (error: unknown) {
-      console.error('[Signup] Registration failed:', error);
       const errorMessage = mapAuthError(error, 'signup');
       setError('root', { message: errorMessage });
     }

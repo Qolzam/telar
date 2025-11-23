@@ -70,5 +70,19 @@ export const ENDPOINTS = {
   //   CREATE: '/posts',
   //   LIKE: (postId: string) => `/posts/${postId}/like`,
   // },
+  /**
+   * Comments endpoints (direct Go API calls)
+   * Mirrors Go API routes in apps/api/comments/routes.go
+   */
+  COMMENTS: {
+    CREATE: '/comments/',
+    UPDATE: '/comments/',
+    GET_BY_POST: '/comments/',
+    GET_BY_ID: (commentId: string) => `/comments/${commentId}`,
+    GET_REPLIES: (commentId: string) => `/comments/${commentId}/replies`,
+    DELETE: (commentId: string, postId: string) =>
+      `/comments/id/${commentId}/post/${postId}`,
+    SCORE: '/comments/score',
+  },
 } as const;
 

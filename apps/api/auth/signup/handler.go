@@ -75,8 +75,8 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	if model.User.Password == "" {
 		return errors.HandleMissingFieldError(c, "password")
 	}
-	// Password strength check (mirror legacy thresholds)
 	passStrength := gopass.PasswordStrength(model.User.Password, nil)
+
 	if passStrength.Score < 3 || passStrength.Entropy < 37 {
 		return errors.HandleValidationError(c, "Password is not strong enough!")
 	}

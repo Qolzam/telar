@@ -17,6 +17,8 @@ require (
 	github.com/lib/pq v1.10.9
 	github.com/nbutton23/zxcvbn-go v0.0.0-20210217022336-fa2cb2858354
 	github.com/plivo/plivo-go v7.2.0+incompatible
+	github.com/qolzam/telar/protos/gen/go/commentspb v0.0.0-00010101000000-000000000000
+	github.com/qolzam/telar/protos/gen/go/postspb v0.0.0-00010101000000-000000000000
 	github.com/qolzam/telar/protos/gen/go/profilepb v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.10.0
 	github.com/subosito/gotenv v1.6.0
@@ -32,6 +34,7 @@ require (
 
 require (
 	cloud.google.com/go/compute/metadata v0.7.0 // indirect
+	github.com/Masterminds/squirrel v1.5.0 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/clipperhouse/stringish v0.1.1 // indirect
@@ -41,6 +44,8 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/compress v1.18.1 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
+	github.com/lann/builder v0.0.0-20180802200727-47ae307949d0 // indirect
+	github.com/lann/ps v0.0.0-20150810152359-62de8c46ede0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-runewidth v0.0.19 // indirect
@@ -58,5 +63,9 @@ require (
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/qolzam/telar/protos/gen/go/commentspb => ../../protos/gen/go/commentspb
+
+replace github.com/qolzam/telar/protos/gen/go/postspb => ../../protos/gen/go/postspb
 
 replace github.com/qolzam/telar/protos/gen/go/profilepb => ../../protos/gen/go/profilepb

@@ -133,7 +133,6 @@ func (r *Request) WithHMACAuth(secret, uid string) *Request {
 
 	// Generate canonical signature with injected secret
 	sig := SignHMAC(method, path, query, bodyBytes, uid, timestamp, secret)
-=
 
 	// Set required headers for canonical HMAC
 	r.WithHeader(types.HeaderHMACAuthenticate, sig)

@@ -56,4 +56,7 @@ type PostService interface {
 	IncrementFields(ctx context.Context, postID uuid.UUID, increments map[string]interface{}) error
 	UpdateAndIncrementFields(ctx context.Context, postID uuid.UUID, updates map[string]interface{}, increments map[string]interface{}) error
 
+	// Response conversion
+	ConvertPostToResponse(ctx context.Context, post *models.Post) models.PostResponse
 }
+

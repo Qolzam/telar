@@ -33,7 +33,8 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
  * API Client configuration
  */
 export interface ApiClientConfig {
-  baseUrl?: string;
+  apiBaseUrl?: string;
+  bffBaseUrl?: string;
   timeout?: number;
 }
 
@@ -44,11 +45,13 @@ export interface ApiClientConfig {
  * timeout management, and type safety.
  */
 export class ApiClient {
-  private baseUrl: string;
+  private apiBaseUrl: string;
+  private bffBaseUrl: string;
   private timeout: number;
 
   constructor(config: ApiClientConfig = {}) {
-    this.baseUrl = config.baseUrl || '';
+    this.apiBaseUrl = config.apiBaseUrl || '';
+    this.bffBaseUrl = config.bffBaseUrl || '';
     this.timeout = config.timeout || 10000;
   }
 
@@ -109,7 +112,8 @@ export class ApiClient {
     endpoint: string,
     options: RequestOptions & { method: string; body?: string }
   ): Promise<T> {
-    const url = this.baseUrl + endpoint;
+    const baseUrl = endpoint.startsWith('/api/auth') ? this.bffBaseUrl : this.apiBaseUrl;
+    const url = baseUrl + endpoint;
     const timeout = options.timeout || this.timeout;
 
     const controller = new AbortController();

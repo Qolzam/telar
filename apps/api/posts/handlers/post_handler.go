@@ -102,8 +102,8 @@ func (h *PostHandler) GetPost(c *fiber.Ctx) error {
 		}(user, post.ObjectId)
 	}
 
-	// Convert to response format
-	response := h.convertPostToResponse(post)
+	// Convert to response format (uses lazy population for commentCounter)
+	response := h.postService.ConvertPostToResponse(c.Context(), post)
 	return c.JSON(response)
 }
 
@@ -135,8 +135,8 @@ func (h *PostHandler) GetPostByURLKey(c *fiber.Ctx) error {
 		}(user, post.ObjectId)
 	}
 
-	// Convert to response format
-	response := h.convertPostToResponse(post)
+	// Convert to response format (uses lazy population for commentCounter)
+	response := h.postService.ConvertPostToResponse(c.Context(), post)
 	return c.JSON(response)
 }
 
@@ -240,7 +240,6 @@ func (h *PostHandler) QueryPosts(c *fiber.Ctx) error {
 
 // QueryPostsWithCursor handles post querying with cursor-based pagination
 func (h *PostHandler) QueryPostsWithCursor(c *fiber.Ctx) error {
-	fmt.Printf("QueryPostsWithCursor raw URL: %s\n", c.OriginalURL())
 	// Parse query parameters
 	filter := &models.PostQueryFilter{
 		SortField:     "createdDate", // Default sort field
@@ -250,7 +249,6 @@ func (h *PostHandler) QueryPostsWithCursor(c *fiber.Ctx) error {
 
 	// Parse cursor parameters
 	if cursor := c.Query("cursor"); cursor != "" {
-		fmt.Printf("QueryPostsWithCursor cursor param: %s\n", cursor)
 		filter.Cursor = cursor
 	}
 	if afterCursor := c.Query("after"); afterCursor != "" {

@@ -149,6 +149,23 @@ func (r *RedisCache) Increment(ctx context.Context, key string, delta int64) (in
 	return result, nil
 }
 
+// SetAdd adds a member to a Redis set at the given key.
+func (r *RedisCache) SetAdd(ctx context.Context, key string, member string) error {
+	if err := r.client.SAdd(ctx, key, member).Err(); err != nil {
+		return fmt.Errorf("redis sadd error: %w", err)
+	}
+	return nil
+}
+
+// SetIsMember checks if a member exists in a Redis set at the given key.
+func (r *RedisCache) SetIsMember(ctx context.Context, key string, member string) (bool, error) {
+	isMember, err := r.client.SIsMember(ctx, key, member).Result()
+	if err != nil {
+		return false, fmt.Errorf("redis sismember error: %w", err)
+	}
+	return isMember, nil
+}
+
 // Close closes the Redis connection
 func (r *RedisCache) Close() error {
 	if r.client != nil {

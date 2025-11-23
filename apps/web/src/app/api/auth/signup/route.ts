@@ -25,8 +25,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log('[Signup] Registering user:', body.email);
-    
     const signupResponse = await apiRequest<SignupResponse>('/auth/signup', {
       method: 'POST',
       headers: {
@@ -41,19 +39,16 @@ export async function POST(request: NextRequest) {
       }).toString(),
     });
 
-    console.log('[Signup] ✅ Signup successful, verification sent');
     return NextResponse.json(signupResponse, { status: 200 });
 
   } catch (error) {
     if (error instanceof ApiError) {
-      console.error('[Signup] API error:', error.message, error.statusCode);
       return NextResponse.json(
         { error: error.message },
         { status: error.statusCode }
       );
     }
 
-    console.error('[Signup] Unexpected error:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

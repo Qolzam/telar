@@ -1,10 +1,6 @@
 package authhmac
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"

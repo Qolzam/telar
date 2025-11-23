@@ -13,9 +13,12 @@ import (
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
 	platform "github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
+	"github.com/qolzam/telar/apps/api/internal/pkg/log"
 	"github.com/qolzam/telar/apps/api/internal/types"
 	"github.com/qolzam/telar/apps/api/internal/utils"
+	commentsModels "github.com/qolzam/telar/apps/api/comments/models"
 	"github.com/qolzam/telar/apps/api/posts/common"
+	sharedInterfaces "github.com/qolzam/telar/apps/api/shared/interfaces"
 	postsErrors "github.com/qolzam/telar/apps/api/posts/errors"
 	"github.com/qolzam/telar/apps/api/posts/models"
 )
@@ -178,7 +181,6 @@ func (b *postQueryBuilder) WhereSearchText(searchTerm string) *postQueryBuilder 
 // tieBreakerID: the object_id value for tie-breaking
 // direction: "asc" or "desc"
 func (b *postQueryBuilder) WhereCursor(sortField string, sortValue interface{}, tieBreakerID uuid.UUID, direction string, isBefore bool) *postQueryBuilder {
-	fmt.Printf("WhereCursor called with sortField=%s sortValue=%v tieBreakerID=%s direction=%s isBefore=%v\n", sortField, sortValue, tieBreakerID, direction, isBefore)
 	primaryOp := ">"
 	tieOp := ">"
 
@@ -225,13 +227,58 @@ func (b *postQueryBuilder) Build() *dbi.Query {
 
 // postService implements the PostService interface
 type postService struct {
-	base         *platform.BaseService
-	cacheService *cache.GenericCacheService
-	config       *platformconfig.Config
+	base           *platform.BaseService
+	cacheService   *cache.GenericCacheService
+	config         *platformconfig.Config
+	commentCounter sharedInterfaces.CommentCounter // For counting comments
+}
+
+// Ensure postService implements sharedInterfaces.PostStatsUpdater interface
+var _ sharedInterfaces.PostStatsUpdater = (*postService)(nil)
+
+// incrementCommentCountInternal is the internal helper that actually updates the comment counter
+// This is used by both PostService.IncrementCommentCount (with ownership check) and PostStatsUpdater.IncrementCommentCountForService (without ownership check)
+func (s *postService) incrementCommentCountInternal(ctx context.Context, postID uuid.UUID, delta int, checkOwnership bool, ownerID uuid.UUID) error {
+	qb := newPostQueryBuilder().
+		WhereObjectID(postID).
+		WhereNotDeleted()
+	
+	if checkOwnership {
+		qb = qb.WhereOwner(ownerID)
+	}
+	
+	query := qb.Build()
+
+	// Atomically increment/decrement commentCounter using IncrementFields
+	increments := map[string]interface{}{
+		"commentCounter": delta,
+	}
+	result := <-s.base.Repository.IncrementFields(ctx, postCollectionName, query, increments)
+	if result.Error != nil {
+		log.Error("Repository.IncrementFields failed for post %s (delta: %d): %v", postID.String(), delta, result.Error)
+		return result.Error
+	}
+	
+
+	if s.cacheService != nil {
+		log.Info("Invalidating posts cache after commentCounter update for post %s", postID.String())
+		s.invalidateAllPosts(ctx)
+	}
+	
+	return nil
+}
+
+// incrementCommentCountForService increments the comment count for a post 
+func (s *postService) incrementCommentCountForService(ctx context.Context, postID uuid.UUID, delta int) error {
+	err := s.incrementCommentCountInternal(ctx, postID, delta, false, uuid.Nil)
+	if err != nil {
+		log.Error("incrementCommentCountInternal failed for post %s (delta: %d): %v", postID.String(), delta, err)
+	}
+	return err
 }
 
 // NewPostService creates a new instance of the post service
-func NewPostService(base *platform.BaseService, cfg *platformconfig.Config) PostService {
+func NewPostService(base *platform.BaseService, cfg *platformconfig.Config, commentCounter sharedInterfaces.CommentCounter) PostService {
 	enableCache := true
 	if cfg != nil {
 		enableCache = cfg.Cache.Enabled
@@ -243,9 +290,10 @@ func NewPostService(base *platform.BaseService, cfg *platformconfig.Config) Post
 	}
 
 	return &postService{
-		base:         base,
-		cacheService: cacheService,
-		config:       cfg,
+		base:           base,
+		cacheService:   cacheService,
+		config:         cfg,
+		commentCounter: commentCounter,
 	}
 }
 
@@ -554,7 +602,54 @@ func (s *postService) GetPostsByUser(ctx context.Context, userID uuid.UUID, filt
 	// Convert to response format
 	postResponses := make([]models.PostResponse, len(posts))
 	for i, post := range posts {
-		postResponses[i] = s.convertPostToResponse(&post)
+		postResponses[i] = s.ConvertPostToResponse(ctx, &post)
+	}
+
+	// Attach latest comment preview for each post (limit 1)
+	for i, post := range posts {
+		query := &dbi.Query{
+			Conditions: []dbi.Field{
+				{
+					Name:      "data->>'postId'",
+					Value:     post.ObjectId.String(),
+					Operator:  "=",
+					IsJSONB:   true,
+					JSONBCast: "::uuid",
+				},
+				{
+					Name:      "data->>'deleted'",
+					Value:     false,
+					Operator:  "=",
+					IsJSONB:   true,
+					JSONBCast: "::boolean",
+				},
+			},
+		}
+		one := int64(1)
+		opts := &dbi.FindOptions{
+			Limit: &one,
+			Sort:  map[string]int{"created_date": -1},
+		}
+		cur := <-s.base.Repository.Find(ctx, "comment", query, opts)
+		if err := cur.Error(); err != nil {
+			continue
+		}
+		defer cur.Close()
+		if cur.Next() {
+			var c commentsModels.Comment
+			if err := cur.Decode(&c); err == nil {
+				postResponses[i].LatestComments = []models.CommentPreview{
+					{
+						ObjectId:         c.ObjectId.String(),
+						OwnerUserId:      c.OwnerUserId.String(),
+						OwnerDisplayName: c.OwnerDisplayName,
+						OwnerAvatar:      c.OwnerAvatar,
+						Text:             c.Text,
+						CreatedDate:      c.CreatedDate,
+					},
+				}
+			}
+		}
 	}
 
 	return &models.PostsListResponse{
@@ -627,7 +722,7 @@ func (s *postService) SearchPosts(ctx context.Context, query string, filter *mod
 	// Convert to response format
 	postResponses := make([]models.PostResponse, len(posts))
 	for i, post := range posts {
-		postResponses[i] = s.convertPostToResponse(&post)
+		postResponses[i] = s.ConvertPostToResponse(ctx, &post)
 	}
 
 	result := &models.PostsListResponse{
@@ -778,18 +873,14 @@ func (s *postService) IncrementScore(ctx context.Context, postID uuid.UUID, delt
 
 // IncrementCommentCount increments the comment count using native database operation with ownership validation
 func (s *postService) IncrementCommentCount(ctx context.Context, postID uuid.UUID, delta int, user *types.UserContext) error {
-	// Build a query that includes the ownership check for atomic increment
-	query := newPostQueryBuilder().
-		WhereObjectID(postID).
-		WhereOwner(user.UserID).
-		WhereNotDeleted().
-		Build()
+	// Use internal helper with ownership check for PostService interface
+	return s.incrementCommentCountInternal(ctx, postID, delta, true, user.UserID)
+}
 
-	increments := map[string]interface{}{
-		"commentCounter": delta,
-	}
-	result := <-s.base.Repository.IncrementFields(ctx, postCollectionName, query, increments)
-	return result.Error
+// IncrementCommentCountForService increments the comment count for a post (implements PostStatsUpdater interface)
+// This is the microservice-safe version that doesn't require UserContext or ownership check
+func (s *postService) IncrementCommentCountForService(ctx context.Context, postID uuid.UUID, delta int) error {
+	return s.incrementCommentCountForService(ctx, postID, delta)
 }
 
 // IncrementViewCount increments the view count using native database operation with ownership validation
@@ -928,8 +1019,78 @@ func (s *postService) getPostCount(ctx context.Context, query *dbi.Query) (int64
 	return countResult.Count, nil
 }
 
-// convertPostToResponse converts a Post model to PostResponse
-func (s *postService) convertPostToResponse(post *models.Post) models.PostResponse {
+// getRootCommentCount counts root comments (non-reply comments) for a post via the CommentCounter interface
+// This is used to populate commentCounter for existing posts that have 0 but actually have comments
+func (s *postService) getRootCommentCount(ctx context.Context, postID uuid.UUID) (int64, error) {
+	if s.commentCounter == nil {
+		// If no counter is provided (e.g., during initialization), return 0
+		// This allows graceful degradation when services are being wired up
+		return 0, nil
+	}
+
+	count, err := s.commentCounter.GetRootCommentCount(ctx, postID)
+	if err != nil {
+		log.Warn("Failed to count root comments for post %s: %v", postID.String(), err)
+		return 0, err
+	}
+	
+	if count > 0 {
+		log.Info("Lazy population: Found %d root comments for post %s", count, postID.String())
+	}
+	
+	return count, nil
+}
+
+// ConvertPostToResponse converts a Post model to PostResponse
+// If commentCounter is 0 or invalid, it checks actual comment count to populate it for existing posts
+func (s *postService) ConvertPostToResponse(ctx context.Context, post *models.Post) models.PostResponse {
+	commentCounter := post.CommentCounter
+	
+	// Lazy population: If commentCounter is 0 or missing, check actual count from comments
+	// This fixes existing posts that have comments but commentCounter wasn't initialized or is incorrect
+	// We only do this check if counter is 0 to avoid unnecessary queries for posts without comments
+	// Use a short timeout to prevent blocking the response if comment service is slow
+	// Also verify counter matches actual count if counter seems incorrect
+	if commentCounter == 0 || commentCounter < 0 {
+		countCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		
+		actualCount, err := s.getRootCommentCount(countCtx, post.ObjectId)
+		if err != nil {
+			// Log error but don't fail - return original count (0)
+			// This prevents breaking the response if comment service is unavailable or slow
+			if err == context.DeadlineExceeded {
+				log.Warn("Timeout getting root comment count for post %s (lazy population)", post.ObjectId.String())
+			} else {
+				log.Warn("Failed to get root comment count for post %s: %v", post.ObjectId.String(), err)
+			}
+		} else if actualCount > 0 {
+			commentCounter = actualCount
+			// Update post in database asynchronously (fire and forget) to persist the count
+			// This ensures future fetches won't need to recalculate
+			go func() {
+				updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				
+				// Update post's commentCounter using UpdateFields to SET it directly
+				// We use UpdateFields instead of IncrementFields because we want to SET the value,
+				// not increment it (since the current value might be wrong)
+				query := newPostQueryBuilder().
+					WhereObjectID(post.ObjectId).
+					WhereNotDeleted().
+					Build()
+				
+				updates := map[string]interface{}{
+					"commentCounter": actualCount,
+				}
+				result := <-s.base.Repository.UpdateFields(updateCtx, postCollectionName, query, updates)
+				if result.Error != nil {
+					log.Warn("Failed to update commentCounter for post %s: %v", post.ObjectId.String(), result.Error)
+				}
+			}()
+		}
+	}
+	
 	return models.PostResponse{
 		ObjectId:         post.ObjectId.String(),
 		PostTypeId:       post.PostTypeId,
@@ -941,7 +1102,7 @@ func (s *postService) convertPostToResponse(post *models.Post) models.PostRespon
 		OwnerDisplayName: post.OwnerDisplayName,
 		OwnerAvatar:      post.OwnerAvatar,
 		Tags:             post.Tags,
-		CommentCounter:   post.CommentCounter,
+		CommentCounter:   commentCounter,
 		Image:            post.Image,
 		ImageFullPath:    post.ImageFullPath,
 		Video:            post.Video,
@@ -1051,7 +1212,7 @@ func (s *postService) QueryPosts(ctx context.Context, filter *models.PostQueryFi
 	// Convert to response format
 	postResponses := make([]models.PostResponse, len(posts))
 	for i, post := range posts {
-		postResponses[i] = s.convertPostToResponse(&post)
+		postResponses[i] = s.ConvertPostToResponse(ctx, &post)
 	}
 
 	result := &models.PostsListResponse{
@@ -1118,21 +1279,17 @@ func (s *postService) QueryPostsWithCursor(ctx context.Context, filter *models.P
 	var cursorData *models.CursorData
 	var err error
 
-	fmt.Printf("Service received cursor values: cursor=%s after=%s before=%s\n", filter.Cursor, filter.AfterCursor, filter.BeforeCursor)
 	if filter.Cursor != "" {
-		fmt.Printf("cursor raw filter: cursor=%s after=%s before=%s\n", filter.Cursor, filter.AfterCursor, filter.BeforeCursor)
 		cursorData, err = models.DecodeCursor(filter.Cursor)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode cursor: %w", err)
 		}
 	} else if filter.AfterCursor != "" {
-		fmt.Printf("cursor raw filter: cursor=%s after=%s before=%s\n", filter.Cursor, filter.AfterCursor, filter.BeforeCursor)
 		cursorData, err = models.DecodeCursor(filter.AfterCursor)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode after cursor: %w", err)
 		}
 	} else if filter.BeforeCursor != "" {
-		fmt.Printf("cursor raw filter: cursor=%s after=%s before=%s\n", filter.Cursor, filter.AfterCursor, filter.BeforeCursor)
 		cursorData, err = models.DecodeCursor(filter.BeforeCursor)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode before cursor: %w", err)
@@ -1141,7 +1298,6 @@ func (s *postService) QueryPostsWithCursor(ctx context.Context, filter *models.P
 
 	// Apply cursor logic using the query builder
 	if cursorData != nil {
-		fmt.Printf("Applying cursor with decoded data: %+v\n", cursorData)
 		// Map API sort field to database column/path
 		sortColumn := "created_date" // Default
 		if filter.SortField == "objectId" {
@@ -1167,7 +1323,6 @@ func (s *postService) QueryPostsWithCursor(ctx context.Context, filter *models.P
 
 	// Build the final query
 	queryObj := qb.Build()
-	fmt.Printf("cursor query conditions: %+v\n", queryObj.Conditions)
 
 	// Map API sort field to database column/path for CursorFindOptions
 	sortColumn := "created_date" // Default
@@ -1194,6 +1349,7 @@ func (s *postService) QueryPostsWithCursor(ctx context.Context, filter *models.P
 	// Query posts with cursor
 	cursor := <-s.base.Repository.FindWithCursor(ctx, postCollectionName, queryObj, cursorOptions)
 	if err := cursor.Error(); err != nil {
+		log.Error("QueryPostsWithCursor: Failed to find posts with cursor: %v", err)
 		return nil, fmt.Errorf("failed to find posts with cursor: %w", err)
 	}
 	defer cursor.Close()
@@ -1220,7 +1376,7 @@ func (s *postService) QueryPostsWithCursor(ctx context.Context, filter *models.P
 	// Convert to response format
 	postResponses := make([]models.PostResponse, len(posts))
 	for i, post := range posts {
-		postResponses[i] = s.convertPostToResponse(&post)
+		postResponses[i] = s.ConvertPostToResponse(ctx, &post)
 	}
 
 	// Generate cursor values
@@ -1253,7 +1409,7 @@ func (s *postService) QueryPostsWithCursor(ctx context.Context, filter *models.P
 	if s.cacheService != nil && cacheKey != "" {
 		if err := s.cachePosts(ctx, cacheKey, result); err != nil {
 			// Log but don't fail the request if caching fails
-			fmt.Printf("Warning: Failed to cache posts result: %v\n", err)
+			log.Warn("Failed to cache posts result: %v", err)
 		}
 	}
 
@@ -1421,7 +1577,7 @@ func (s *postService) SearchPostsWithCursor(ctx context.Context, searchTerm stri
 	// Convert to response format
 	postResponses := make([]models.PostResponse, len(posts))
 	for i, post := range posts {
-		postResponses[i] = s.convertPostToResponse(&post)
+		postResponses[i] = s.ConvertPostToResponse(ctx, &post)
 	}
 
 	// Generate cursor values
@@ -1454,7 +1610,7 @@ func (s *postService) SearchPostsWithCursor(ctx context.Context, searchTerm stri
 	if s.cacheService != nil && cacheKey != "" {
 		if err := s.cachePosts(ctx, cacheKey, searchResult); err != nil {
 			// Log but don't fail the request if caching fails
-			fmt.Printf("Warning: Failed to cache search result: %v\n", err)
+			log.Warn("Failed to cache search result: %v", err)
 		}
 	}
 

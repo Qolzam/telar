@@ -405,6 +405,7 @@ func (s *Service) VerifySignup(ctx context.Context, params VerifySignupParams) (
 				types.HeaderUID:         verification.UserId.String(),
 				"role":        "user", // Default role for verified users
 				"createdDate": userProfileData.CreatedDate,
+				"jti":         uuid.Must(uuid.NewV4()).String(),
 			}
 
 			// Create profile info for token

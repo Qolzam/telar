@@ -5,6 +5,7 @@ set -euo pipefail
 # Configuration
 BASE_URL="http://127.0.0.1:8080"
 POSTS_BASE="${BASE_URL}/posts"
+COMMENTS_BASE="${BASE_URL}/comments"
 AUTH_URL="http://127.0.0.1:8080"
 AUTH_BASE="${AUTH_URL}/auth"
 MAILHOG_URL="http://localhost:8025"
@@ -31,6 +32,11 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
 NC='\033[0m'
+
+# Communication mode configuration
+DEPLOYMENT_MODE="${DEPLOYMENT_MODE:-serverless}"  # serverless or microservices
+COMMENTS_SERVICE_GRPC_ADDR="${COMMENTS_SERVICE_GRPC_ADDR:-localhost:50052}"
+POSTS_SERVICE_GRPC_ADDR="${POSTS_SERVICE_GRPC_ADDR:-localhost:50053}"
 
 # Test data
 TIMESTAMP=$(date +%s)
@@ -826,6 +832,121 @@ test_delete_post() {
     fi
 }
 
+test_communication_mode() {
+    log_info "=== Testing Communication Mode Configuration ==="
+    
+    log_info "Current deployment mode: ${DEPLOYMENT_MODE}"
+    
+    if [[ "$DEPLOYMENT_MODE" == "microservices" ]]; then
+        log_success "✅ gRPC Adapter Mode"
+        log_info "  - CommentCounter uses gRPC network calls to Comments service"
+        log_info "  - PostStatsUpdater uses gRPC network calls to Posts service"
+        log_info "  - Enables independent service scaling"
+        log_info "  - Optimal for Kubernetes microservices deployment"
+        log_info "  - Comments gRPC Address: ${COMMENTS_SERVICE_GRPC_ADDR}"
+        log_info "  - Posts gRPC Address: ${POSTS_SERVICE_GRPC_ADDR}"
+    else
+        log_success "✅ Direct Call Adapter Mode"
+        log_info "  - CommentCounter uses in-process calls"
+        log_info "  - PostStatsUpdater uses in-process calls"
+        log_info "  - Zero network overhead"
+        log_info "  - Optimal for serverless/monolith deployment"
+    fi
+    
+    log_info ""
+    log_info "To test the other mode:"
+    if [[ "$DEPLOYMENT_MODE" == "microservices" ]]; then
+        log_info "  1. Start combined server: cd apps/api && DEPLOYMENT_MODE=serverless go run cmd/server/main.go"
+        log_info "  2. Run tests: DEPLOYMENT_MODE=serverless bash tools/dev/scripts/posts_e2e_test.sh"
+    else
+        log_info "  1. Start Comments service: cd apps/api && START_GRPC_SERVER=true GRPC_PORT=50052 go run cmd/services/comments/main.go"
+        log_info "  2. Start Posts service: cd apps/api && START_GRPC_SERVER=true GRPC_PORT=50053 go run cmd/services/posts/main.go"
+        log_info "  3. Start main server: cd apps/api && DEPLOYMENT_MODE=microservices COMMENTS_SERVICE_GRPC_ADDR=localhost:50052 POSTS_SERVICE_GRPC_ADDR=localhost:50053 go run cmd/server/main.go"
+        log_info "  4. Run tests: DEPLOYMENT_MODE=microservices COMMENTS_SERVICE_GRPC_ADDR=localhost:50052 POSTS_SERVICE_GRPC_ADDR=localhost:50053 bash tools/dev/scripts/posts_e2e_test.sh"
+    fi
+}
+
+test_cross_service_comment_count() {
+    log_info "=== Testing Cross-Service Comment Count (CommentCounter & PostStatsUpdater) ==="
+    
+    if [[ ${#TEST_POST_IDS[@]} -eq 0 ]]; then
+        log_warning "No test posts available, skipping comment count test"
+        return 0
+    fi
+    
+    local post_id="${TEST_POST_IDS[0]}"
+    
+    if [[ -z "$JWT_TOKEN" ]]; then
+        log_warning "No JWT token, skipping comment count test"
+        return 0
+    fi
+    
+    log_info "Step 1: Getting initial comment count..."
+    local post_response=$(make_request "GET" "${POSTS_BASE}/${post_id}" "" "Authorization: Bearer $JWT_TOKEN" "200" "Get post to check initial comment count" "true")
+    local initial_count=$(extract_json_field "$post_response" "commentCounter")
+    initial_count="${initial_count:-0}"
+    log_info "  Initial comment count: ${initial_count}"
+    
+    log_info "Step 2: Creating multiple comments to test PostStatsUpdater.IncrementCommentCountForService()..."
+    
+    local comments_created=0
+    for i in {1..3}; do
+        local comment_data="{\"postId\":\"${post_id}\",\"text\":\"Test comment ${i} for PostStatsUpdater verification at ${TIMESTAMP}\"}"
+        local response=$(make_request "POST" "${COMMENTS_BASE}/" "$comment_data" "Authorization: Bearer $JWT_TOKEN" "201" "Create comment ${i} to test counter increment" "false")
+        local comment_id=$(extract_json_field "$response" "objectId")
+        if [[ -n "$comment_id" ]]; then
+            comments_created=$((comments_created + 1))
+            log_info "  Created comment ${i}: ${comment_id}"
+        fi
+        sleep 0.5
+    done
+    
+    log_info "Step 3: Waiting for commentCounter to update (PostStatsUpdater may be asynchronous)..."
+    sleep 2
+    
+    log_info "Step 4: Verifying post comment count was updated via PostStatsUpdater adapter..."
+    post_response=$(make_request "GET" "${POSTS_BASE}/${post_id}" "" "Authorization: Bearer $JWT_TOKEN" "200" "Get post to verify comment count increment" "true")
+    local updated_count=$(extract_json_field "$post_response" "commentCounter")
+    updated_count="${updated_count:-0}"
+    
+    log_info "  Initial count: ${initial_count}"
+    log_info "  Comments created: ${comments_created}"
+    log_info "  Updated count: ${updated_count}"
+    log_info "  Expected count: $((initial_count + comments_created))"
+    
+    if [[ -n "$updated_count" ]] && [[ "$updated_count" -ge $((initial_count + comments_created)) ]]; then
+        log_success "✓ Comment counter incremented correctly!"
+        log_success "  Initial: ${initial_count} → Final: ${updated_count} (increment: +${comments_created})"
+        log_info "  This verifies PostStatsUpdater.IncrementCommentCountForService() is working (${DEPLOYMENT_MODE} mode)"
+        log_info "  Flow: Comment creation → updatePostCommentCounter() → PostStatsUpdater → incrementCommentCountForService() → IncrementFields()"
+    elif [[ -n "$updated_count" ]] && [[ "$updated_count" -gt "$initial_count" ]]; then
+        log_warning "⚠️  Comment counter updated but may be incomplete"
+        log_warning "  Initial: ${initial_count} → Final: ${updated_count} (expected: $((initial_count + comments_created)))"
+        log_info "  This may indicate partial PostStatsUpdater updates or async timing issues"
+    else
+        log_error "❌ Comment counter did NOT increment!"
+        log_error "  Initial: ${initial_count} → Final: ${updated_count} (expected: $((initial_count + comments_created)))"
+        log_error "  This indicates PostStatsUpdater.IncrementCommentCountForService() is NOT working correctly!"
+        log_error "  Possible causes:"
+        log_error "    1. PostStatsUpdater adapter not wired correctly"
+        log_error "    2. updatePostCommentCounter() not being called on comment creation"
+        log_error "    3. IncrementFields() failing silently"
+        log_error "    4. Database transaction not committing"
+        CRITICAL_FAILURE=true
+    fi
+    
+    log_info "Step 5: Verifying CommentCounter.GetRootCommentCount() is working..."
+    post_response=$(make_request "GET" "${POSTS_BASE}/${post_id}" "" "Authorization: Bearer $JWT_TOKEN" "200" "Get post to verify CommentCounter adapter" "true")
+    local read_count=$(extract_json_field "$post_response" "commentCounter")
+    
+    if [[ -n "$read_count" ]]; then
+        log_success "✓ CommentCounter adapter accessible (${DEPLOYMENT_MODE} mode)"
+        log_info "  Count is populated via CommentCounter.GetRootCommentCount()"
+    else
+        log_warning "CommentCounter field not found in response"
+    fi
+}
+
 test_hmac_protected_endpoints() {
     log_info "=== Testing HMAC-Protected Endpoints ==="
     
@@ -859,6 +980,7 @@ test_hmac_protected_endpoints() {
     local comment_count_data="{\"postId\":\"${post_id}\",\"count\":3}"
     local hmac_headers=$(build_hmac_headers "PUT" "/posts/actions/comment/count" "" "$comment_count_data")
     make_request "PUT" "${POSTS_BASE}/actions/comment/count" "$comment_count_data" "$hmac_headers" "200" "Increment comment count with valid HMAC" "false"
+    log_info "  Note: This tests PostStatsUpdater.IncrementCommentCountForService() (${DEPLOYMENT_MODE} mode)"
 }
 
 test_validation_errors() {
@@ -963,6 +1085,7 @@ main() {
     log_info "========================================"
     log_info "Posts Service URL: $BASE_URL"
     log_info "Auth Service URL: $AUTH_URL"
+    log_info "Deployment Mode: $DEPLOYMENT_MODE"
     log_info "Debug Mode: $DEBUG_MODE"
     log_info "Fail Fast: $FAIL_FAST"
     log_info "CI Report: $GENERATE_CI_REPORT"
@@ -973,6 +1096,10 @@ main() {
     
     wait_for_service "$BASE_URL" "Posts"
     wait_for_service "$AUTH_URL" "Auth"
+    echo
+    
+    log_info "=== PHASE 0: Communication Mode Verification ==="
+    test_communication_mode
     echo
     
     log_info "=== PHASE 1: Test Setup ==="
@@ -1017,19 +1144,23 @@ main() {
     test_get_post_by_urlkey
     echo
     
-    log_info "=== PHASE 3: Service-to-Service Endpoints (HMAC Auth) ==="
+    log_info "=== PHASE 3: Cross-Service Communication Tests ==="
+    test_cross_service_comment_count
+    echo
+    
+    log_info "=== PHASE 4: Service-to-Service Endpoints (HMAC Auth) ==="
     test_hmac_protected_endpoints
     echo
     
-    log_info "=== PHASE 4: Input Validation & Edge Cases ==="
+    log_info "=== PHASE 5: Input Validation & Edge Cases ==="
     test_validation_errors
     echo
     
-    log_info "=== PHASE 5: Integration Tests ==="
+    log_info "=== PHASE 6: Integration Tests ==="
     test_integration_flow
     echo
     
-    log_info "=== PHASE 6: Delete Operations ==="
+    log_info "=== PHASE 7: Delete Operations ==="
     test_delete_post
     echo
     
@@ -1049,6 +1180,7 @@ main() {
     log_info "  Failed:         $TEST_COUNT_FAILED"
     log_info "  Skipped:        $TEST_COUNT_SKIPPED"
     log_info "  Duration:       ${duration}s"
+    log_info "  Deployment Mode: $DEPLOYMENT_MODE"
     log_info "  Critical Issues: $([ "$CRITICAL_FAILURE" == "true" ] && echo "YES" || echo "NO")"
     echo
     

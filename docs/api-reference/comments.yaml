@@ -215,6 +215,45 @@ paths:
         '500':
           $ref: './common.yaml#/components/responses/InternalServerError'
 
+  /score:
+    put:
+      summary: Increment comment score
+      tags: [Comments]
+      security:
+        - HMACAuth: []
+        - JWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                commentId:
+                  type: string
+                  format: uuid
+                delta:
+                  type: integer
+                  description: Amount to increment (use 1 for like)
+                  default: 1
+      responses:
+        '200':
+          description: Score incremented successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "score incremented"
+        '400':
+          $ref: './common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: './common.yaml#/components/responses/Unauthorized'
+        '500':
+          $ref: './common.yaml#/components/responses/InternalServerError'
+
 components:
   schemas:
     CreateCommentRequest:

@@ -17,7 +17,8 @@
         bench bench-env bench-calibrated bench-summary open-profiles \
         test-transactions \
         lint lint-fix \
-        run-api run-web run-both run-profile run-profile-standalone run-posts dev stop-servers restart-servers pre-flight-check logs-api logs-web
+        run-api run-web run-both run-profile run-profile-standalone run-posts run-comments dev stop-servers restart-servers pre-flight-check logs-api logs-web \
+        test-e2e-posts test-e2e-profile test-e2e-comments
 
 # --- Configuration Variables ---
 PARALLEL ?= 8
@@ -298,12 +299,14 @@ help:
 	@echo "  run-api           - Start the Telar API server on port 8080 (requires databases)."
 	@echo "  run-profile       - Start the Profile microservice on port 8081 (requires databases)."
 	@echo "  run-posts         - Start the Posts microservice on port 8082 (requires databases)."
+	@echo "  run-comments      - Start the Comments microservice on port 8083 (requires databases)."
 	@echo "  run-web           - Start the Next.js web frontend development server."
 	@echo "  run-both          - Start both API and web frontend servers concurrently."
 	@echo "  dev       - Start both servers in background (recommended for development)."
 	@echo "  run-api-background - Start API server in background with PID file (for E2E tests)."
 	@echo "  stop-api-background - Stop background API server using PID file."
 	@echo "  test-e2e-posts    - Run Posts E2E tests with automatic server management."
+	@echo "  test-e2e-comments - Run Comments E2E tests with automatic server management."
 	@echo "  test-e2e-profile  - Run Profile E2E tests with automatic server management."
 	@echo "  stop-servers      - Stop all running servers."
 	@echo "  restart-servers   - Restart all servers safely (preserves Cursor processes)."
@@ -337,6 +340,10 @@ run-profile-standalone:
 run-posts: up-dbs-dev
 	@echo "Starting Posts microservice (using your .env settings)..."
 	@cd apps/api && go run cmd/services/posts/main.go
+
+run-comments: up-dbs-dev
+	@echo "Starting Comments microservice (using your .env settings)..."
+	@cd apps/api && go run cmd/services/comments/main.go
 
 run-both: up-dbs-dev
 	@echo "Starting both API and web frontend servers..."
@@ -382,6 +389,12 @@ stop-api-background:
 test-e2e-posts: stop-api-background run-api-background
 	@echo "Running Posts E2E tests..."
 	@./tools/dev/scripts/posts_e2e_test.sh || true
+	@$(MAKE) stop-api-background
+
+# Running E2E tests for comments service
+test-e2e-comments: stop-api-background run-api-background
+	@echo "Running Comments E2E tests..."
+	@./tools/dev/scripts/comments_e2e_test.sh || true
 	@$(MAKE) stop-api-background
 
 # Running E2E tests for  profile service
