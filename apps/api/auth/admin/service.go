@@ -208,6 +208,7 @@ func (s *Service) CreateAdmin(ctx context.Context, fullName, email, password str
 		types.HeaderUID: createdUserAuth.ObjectId.String(),
 		"role":          createdUserAuth.Role,
 		"createdDate":   createdUserAuth.CreatedDate,
+		"jti":           uuid.Must(uuid.NewV4()).String(),
 	}
 	token, err = s.createTelarToken(profileInfo, claim)
 	if err != nil {

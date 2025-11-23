@@ -344,6 +344,43 @@ export interface ApiErrorResponse {
 }
 
 // ============================================================================
+// Comment Types
+// ============================================================================
+
+export interface Comment {
+  objectId: string;
+  score: number;
+  ownerUserId: string;
+  ownerDisplayName: string;
+  ownerAvatar: string;
+  postId: string;
+  parentCommentId?: string;
+  replyCount?: number;
+  text: string;
+  deleted: boolean;
+  deletedDate?: number;
+  createdDate: number;
+  lastUpdated?: number;
+}
+
+export interface CreateCommentRequest {
+  postId: string;
+  text: string;
+  parentCommentId?: string;
+}
+
+export interface UpdateCommentRequest {
+  objectId: string;
+  text: string;
+}
+
+export interface CommentQueryFilter {
+  postId?: string;
+  page?: number;
+  limit?: number;
+}
+
+// ============================================================================
 // Profile Request/Response Types
 // ============================================================================
 

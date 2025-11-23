@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	uuid "github.com/gofrs/uuid"
 	"github.com/qolzam/telar/apps/api/auth/errors"
 	tokenutil "github.com/qolzam/telar/apps/api/internal/auth/tokens"
 	"github.com/qolzam/telar/apps/api/internal/types"
@@ -129,6 +130,7 @@ func (h *Handler) Authorized(c *fiber.Ctx) error {
 		"role":          userAuth.Role,
 		"createdDate":   userProfile.CreatedDate,
 		"provider":      provider,
+		"jti":           uuid.Must(uuid.NewV4()).String(),
 	}
 
 	sessionToken, err := tokenutil.CreateTokenWithKey("telar", profile, "telar-org", claimData, h.privateKey)

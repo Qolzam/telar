@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package comments.v1;
+
+option go_package = "github.com/qolzam/telar/protos/gen/go/commentspb";
+
+// The Comments service definition.
+service CommentsService {
+  // Gets the count of root comments (non-reply comments) for a post.
+  rpc GetRootCommentCount(GetRootCommentCountRequest) returns (GetRootCommentCountResponse) {}
+}
+
+// The request message containing the post ID.
+message GetRootCommentCountRequest {
+  string post_id = 1;
+}
+
+// The response message containing the count of root comments.
+message GetRootCommentCountResponse {
+  int64 count = 1;
+}
+

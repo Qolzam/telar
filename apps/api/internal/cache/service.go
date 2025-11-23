@@ -190,6 +190,51 @@ func (gcs *GenericCacheService) InvalidateKey(ctx context.Context, key string) e
 	return nil
 }
 
+// setOps defines optional set operations supported by some cache backends (e.g., Redis).
+// Implementations that don't support sets can ignore this (GenericCacheService checks at runtime).
+type setOps interface {
+	SetAdd(ctx context.Context, key string, member string) error
+	SetIsMember(ctx context.Context, key string, member string) (bool, error)
+}
+
+// SetAdd adds a member to a set stored at key. Best-effort; returns ErrCacheDisabled if unsupported/disabled.
+func (gcs *GenericCacheService) SetAdd(ctx context.Context, key string, member string) error {
+	if !gcs.IsEnabled() {
+		return ErrCacheDisabled
+	}
+	setCache, ok := gcs.cache.(setOps)
+	if !ok {
+		return ErrCacheDisabled
+	}
+	fullKey := gcs.buildKey(key)
+	if err := setCache.SetAdd(ctx, fullKey, member); err != nil {
+		gcs.stats.incErrors()
+		log.Error("Cache set add error for key %s: %v", fullKey, err)
+		return err
+	}
+	gcs.stats.incSets()
+	return nil
+}
+
+// SetIsMember checks if a member is part of the set at key. Returns false with ErrCacheDisabled if unsupported/disabled.
+func (gcs *GenericCacheService) SetIsMember(ctx context.Context, key string, member string) (bool, error) {
+	if !gcs.IsEnabled() {
+		return false, ErrCacheDisabled
+	}
+	setCache, ok := gcs.cache.(setOps)
+	if !ok {
+		return false, ErrCacheDisabled
+	}
+	fullKey := gcs.buildKey(key)
+	isMember, err := setCache.SetIsMember(ctx, fullKey, member)
+	if err != nil {
+		gcs.stats.incErrors()
+		log.Error("Cache set isMember error for key %s: %v", fullKey, err)
+		return false, err
+	}
+	return isMember, nil
+}
+
 // GenerateHashKey creates a deterministic hash-based cache key from parameters
 func (gcs *GenericCacheService) GenerateHashKey(prefix string, params map[string]interface{}) string {
 	// Create a hash from sorted parameters for deterministic keys

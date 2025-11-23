@@ -1,11 +1,11 @@
 
-const getAuthServiceUrl = () => {
-  const url = process.env.AUTH_SERVICE_URL || 'http://localhost:8080';
+const getInternalApiUrl = () => {
+  const url = process.env.INTERNAL_API_URL || 'http://localhost:8080';
   return url.replace('localhost', '127.0.0.1');
 };
 
 export const API_CONFIG = {
-  AUTH_SERVICE_URL: getAuthServiceUrl(),
+  INTERNAL_API_URL: getInternalApiUrl(),
   TIMEOUT: 10000, // 10 seconds
 } as const;
 
@@ -35,7 +35,7 @@ export async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const url = `${API_CONFIG.AUTH_SERVICE_URL}${endpoint}`;
+  const url = `${API_CONFIG.INTERNAL_API_URL}${endpoint}`;
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), API_CONFIG.TIMEOUT);
@@ -45,7 +45,10 @@ export async function apiRequest<T>(
       ...options,
       signal: controller.signal,
       headers: {
-        'Content-Type': 'application/json',
+        // Respect caller-provided Content-Type; only default if none is given
+        ...(options.headers && (options.headers as Record<string, string>)['Content-Type']
+          ? {}
+          : { 'Content-Type': 'application/json' }),
         ...options.headers,
       },
     });

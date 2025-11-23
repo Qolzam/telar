@@ -17,12 +17,16 @@ import (
 	passwordUC "github.com/qolzam/telar/apps/api/auth/password"
 	signupUC "github.com/qolzam/telar/apps/api/auth/signup"
 	verifyUC "github.com/qolzam/telar/apps/api/auth/verification"
+	"github.com/qolzam/telar/apps/api/comments"
+	commentHandlers "github.com/qolzam/telar/apps/api/comments/handlers"
+	commentServices "github.com/qolzam/telar/apps/api/comments/services"
 	platform "github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	platformemail "github.com/qolzam/telar/apps/api/internal/platform/email"
 	"github.com/qolzam/telar/apps/api/posts"
 	"github.com/qolzam/telar/apps/api/posts/handlers"
 	postsServices "github.com/qolzam/telar/apps/api/posts/services"
+	sharedInterfaces "github.com/qolzam/telar/apps/api/shared/interfaces"
 	"github.com/qolzam/telar/apps/api/profile"
 	profileServices "github.com/qolzam/telar/apps/api/profile/services"
 )
@@ -32,7 +36,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load platform config: %v", err)
 	}
-	
+
 	app := fiber.New(fiber.Config{
 		// Disable default error handler that might interfere with custom responses
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
@@ -40,21 +44,20 @@ func main() {
 			if e, ok := err.(*fiber.Error); ok {
 				code = e.Code
 			}
-			log.Printf("[ErrorHandler] Path: %s, Error: %v, Code: %d, ResponseSet: %d bytes", 
+			log.Printf("[ErrorHandler] Path: %s, Error: %v, Code: %d, ResponseSet: %d bytes",
 				c.Path(), err, code, len(c.Response().Body()))
-			
+
 			// If response already set by handler, don't override it
 			if len(c.Response().Body()) > 0 {
 				log.Printf("[ErrorHandler] Response already set, passing through")
 				return nil
 			}
-			
+
 			return c.Status(code).JSON(fiber.Map{
 				"error": err.Error(),
 			})
 		},
 	})
-
 
 	payloadSecret := cfg.HMAC.Secret
 	publicKey := cfg.JWT.PublicKey
@@ -166,7 +169,7 @@ func main() {
 		},
 	}
 	loginService := loginUC.NewService(baseService, loginServiceConfig)
-	
+
 	loginHandlerConfig := &loginUC.HandlerConfig{
 		WebDomain:           webDomain,
 		PrivateKey:          privateKey,
@@ -197,7 +200,7 @@ func main() {
 		cfg.App.WebDomain,
 		profileCreator,
 	)
-	
+
 	verifyHandlerConfig := &verifyUC.HandlerConfig{
 		PublicKey: publicKey,
 		OrgName:   "Telar",
@@ -236,7 +239,7 @@ func main() {
 			passwordService = passwordService.WithEmailSender(sender)
 		}
 	}
-	
+
 	passwordHandlerConfig := &passwordUC.HandlerConfig{
 		RefEmail:     refEmail,
 		RefEmailPass: refEmailPass,
@@ -255,7 +258,7 @@ func main() {
 		"",
 		"",
 	)
-	
+
 	oauthServiceConfig := &oauthUC.ServiceConfig{
 		OAuthConfig: oauthConfig,
 		JWTConfig: platformconfig.JWTConfig{
@@ -270,7 +273,7 @@ func main() {
 		},
 	}
 	oauthService := oauthUC.NewService(baseService, oauthServiceConfig)
-	
+
 	stateStore := oauthUC.NewMemoryStateStore()
 	oauthHandlerConfig := &oauthUC.HandlerConfig{
 		WebDomain:  webDomain,
@@ -293,8 +296,56 @@ func main() {
 	auth.RegisterRoutes(app, authHandlers, cfg)
 	profile.RegisterRoutes(app, profileHandlers, cfg)
 
-	// Initialize Posts service
-	postsService := postsServices.NewPostService(baseService, cfg)
+	// We'll re-initialize them after setting up the adapters
+	var commentsService commentServices.CommentService
+	var postsService postsServices.PostService
+
+	var commentCounter sharedInterfaces.CommentCounter
+	var postStatsUpdater sharedInterfaces.PostStatsUpdater
+
+	// Decide which adapters to use based on deployment mode (reuse same env var)
+	if deploymentMode == "microservices" {
+		log.Println("🔌 Wiring Posts and Comments services using gRPC Adapters")
+		
+		commentsServiceAddr := os.Getenv("COMMENTS_SERVICE_GRPC_ADDR")
+		if commentsServiceAddr == "" {
+			commentsServiceAddr = "localhost:50052"
+		}
+		
+		postsServiceAddr := os.Getenv("POSTS_SERVICE_GRPC_ADDR")
+		if postsServiceAddr == "" {
+			postsServiceAddr = "localhost:50053"
+		}
+
+		grpcCounter, err := comments.NewGrpcCounter(commentsServiceAddr)
+		if err != nil {
+			log.Fatalf("Failed to create gRPC comment counter: %v", err)
+		}
+		commentCounter = grpcCounter
+		log.Printf("✅ Comments gRPC client connected to %s", commentsServiceAddr)
+
+		grpcStatsUpdater, err := posts.NewGrpcStatsUpdater(postsServiceAddr)
+		if err != nil {
+			log.Fatalf("Failed to create gRPC post stats updater: %v", err)
+		}
+		postStatsUpdater = grpcStatsUpdater
+		log.Printf("✅ Posts gRPC client connected to %s", postsServiceAddr)
+	} else {
+		log.Println("🔌 Wiring Posts and Comments services using Direct Call Adapters")
+		
+		// Create temporary service instances to get adapters
+		tempCommentsService := commentServices.NewCommentService(baseService, cfg, nil)
+		tempPostsService := postsServices.NewPostService(baseService, cfg, nil)
+		
+		// Create direct call adapters
+		commentCounter = comments.NewDirectCallCounter(tempCommentsService)
+		postStatsUpdater = posts.NewDirectCallStatsUpdater(tempPostsService)
+		log.Println("✅ Direct call adapters initialized")
+	}
+
+	// Re-initialize services with cross-service dependencies
+	commentsService = commentServices.NewCommentService(baseService, cfg, postStatsUpdater)
+	postsService = postsServices.NewPostService(baseService, cfg, commentCounter)
 
 	// Create database indexes on startup
 	log.Println("🔧 Creating database indexes for Posts service...")
@@ -315,6 +366,14 @@ func main() {
 
 	posts.RegisterRoutes(app, postsHandlers, cfg)
 
-	log.Printf("Starting Telar API Server (Auth + Profile + Posts) on port 8080")
+	commentHandler := commentHandlers.NewCommentHandler(commentsService, cfg.JWT, cfg.HMAC)
+
+	commentRoutes := &comments.CommentsHandlers{
+		CommentHandler: commentHandler,
+	}
+
+	comments.RegisterRoutes(app, commentRoutes, cfg)
+
+	log.Printf("Starting Telar API Server (Auth + Profile + Posts + Comments) on port 8080")
 	log.Fatal(app.Listen(":8080"))
 }

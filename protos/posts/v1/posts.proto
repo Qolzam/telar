@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package posts.v1;
+
+option go_package = "github.com/qolzam/telar/protos/gen/go/postspb";
+
+// The Posts service definition.
+service PostsService {
+  // Increments or decrements the comment count for a post.
+  // delta: +1 to increment (when creating root comment), -1 to decrement (when deleting root comment)
+  rpc IncrementCommentCount(IncrementCommentCountRequest) returns (IncrementCommentCountResponse) {}
+}
+
+// The request message containing the post ID and delta.
+message IncrementCommentCountRequest {
+  string post_id = 1;
+  int32 delta = 2;  // +1 for create, -1 for delete
+}
+
+// The response message indicating success.
+message IncrementCommentCountResponse {
+  bool success = 1;
+}
+

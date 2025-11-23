@@ -1,6 +1,7 @@
 package authjwt
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,6 +10,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gofrs/uuid"
+	"github.com/qolzam/telar/apps/api/internal/cache"
+	"github.com/qolzam/telar/apps/api/internal/pkg/log"
 	"github.com/qolzam/telar/apps/api/internal/types"
 )
 
@@ -24,6 +27,8 @@ type Config struct {
 	JWKSUrl string
 	// Expected Key ID (optional)
 	KeyID string
+	// Optional cache service for session allowlisting
+	CacheService *cache.GenericCacheService
 }
 
 // New creates a new middleware handler.
@@ -32,6 +37,12 @@ func New(cfg Config) fiber.Handler {
 	ecPublicKey, err := jwt.ParseECPublicKeyFromPEM([]byte(cfg.PublicKey))
 	if err != nil {
 		panic(fmt.Sprintf("failed to parse EC public key: %v", err))
+	}
+
+	// Use only the provided cache instance; do NOT auto-create one here
+	var sessionCache *cache.GenericCacheService
+	if cfg.CacheService != nil && cfg.CacheService.IsEnabled() {
+		sessionCache = cfg.CacheService
 	}
 
 	return func(c *fiber.Ctx) error {
@@ -94,6 +105,40 @@ func New(cfg Config) fiber.Handler {
 					"code":    "UNAUTHORIZED",
 					"message": "Invalid token claim format",
 				})
+			}
+
+			// Optional session allowlist check via cache
+			if sessionCache != nil {
+				jtiStr, _ := claims["jti"].(string)
+				if jtiStr == "" {
+					return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+						"code":    "UNAUTHORIZED",
+						"message": "Missing session ID",
+					})
+				}
+				uidStr, _ := claimData[types.HeaderUID].(string)
+				if uidStr == "" {
+					return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+						"code":    "UNAUTHORIZED",
+						"message": "Missing user ID",
+					})
+				}
+				key := sessionCache.GenerateHashKey("sessions", map[string]interface{}{"uid": uidStr})
+				isMember, err := sessionCache.SetIsMember(context.Background(), key, jtiStr)
+				if err != nil {
+					// Fail-closed: deny access on cache check error
+					log.Warn("CRITICAL: Redis session check failed for user %s: %v", uidStr, err)
+					return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+						"code":    "UNAUTHORIZED",
+						"message": "Session validation failed. Please log in again.",
+					})
+				}
+				if !isMember {
+					return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+						"code":    "UNAUTHORIZED",
+						"message": "Session has been invalidated.",
+					})
+				}
 			}
 
 			// Map claim data to UserContext

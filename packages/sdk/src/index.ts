@@ -28,12 +28,19 @@ export { profileApi } from './profile';
 export type { IProfileApi } from './profile';
 export { postsApi } from './posts';
 export type { IPostsApi } from './posts';
+export { commentsApi } from './comments';
+export type { ICommentsApi } from './comments';
+export { adminApi } from './admin';
+export type { IAdminApi } from './admin';
+export type { AdminMember, MembersListResponse } from './admin';
 
 import { ApiClient } from './client';
 import { SDK_CONFIG } from './config';
 import { authApi, IAuthApi } from './auth';
 import { profileApi, IProfileApi } from './profile';
 import { postsApi, IPostsApi } from './posts';
+import { commentsApi, ICommentsApi } from './comments';
+import { adminApi, IAdminApi } from './admin';
 
 /**
  * Telar SDK interface
@@ -53,6 +60,16 @@ export interface ITelarSDK {
    * Posts API
    */
   posts: IPostsApi;
+
+  /**
+   * Comments API
+   */
+  comments: ICommentsApi;
+
+  /**
+   * Admin API
+   */
+  admin: IAdminApi;
 }
 
 /**
@@ -64,13 +81,15 @@ export interface ITelarSDK {
 export const createTelarSDK = (): ITelarSDK => {
   // BFF Client for authentication operations (same-origin)
   const bffClient = new ApiClient({
-    baseUrl: SDK_CONFIG.BFF_BASE_URL,  // Empty string = same-origin
+    apiBaseUrl: SDK_CONFIG.GO_API_BASE_URL,
+    bffBaseUrl: SDK_CONFIG.BFF_BASE_URL,  // Empty string = same-origin
     timeout: SDK_CONFIG.TIMEOUT,
   });
 
   // Direct API Client for data operations (Go API)
   const apiClient = new ApiClient({
-    baseUrl: SDK_CONFIG.GO_API_BASE_URL,  // Read from NEXT_PUBLIC_API_URL env var
+    apiBaseUrl: SDK_CONFIG.GO_API_BASE_URL,  // Read from NEXT_PUBLIC_API_URL env var
+    bffBaseUrl: SDK_CONFIG.BFF_BASE_URL,
     timeout: SDK_CONFIG.TIMEOUT,
   });
 
@@ -78,6 +97,8 @@ export const createTelarSDK = (): ITelarSDK => {
     auth: authApi(bffClient),       // Auth uses BFF (cookie management)
     profile: profileApi(apiClient),
     posts: postsApi(apiClient),
+    comments: commentsApi(apiClient),
+    admin: adminApi(apiClient),
   };
 };
 

@@ -191,8 +191,18 @@ type PostResponse struct {
 	LastUpdated      int64             `json:"lastUpdated,omitempty"`
 	Permission       string            `json:"permission"`
 	Version          string            `json:"version,omitempty"`
+	LatestComments   []CommentPreview  `json:"latestComments,omitempty"`
 }
 
+// CommentPreview is a lightweight view of a comment for feed previews
+type CommentPreview struct {
+	ObjectId         string `json:"objectId"`
+	OwnerUserId      string `json:"ownerUserId"`
+	OwnerDisplayName string `json:"ownerDisplayName"`
+	OwnerAvatar      string `json:"ownerAvatar"`
+	Text             string `json:"text"`
+	CreatedDate      int64  `json:"createdDate"`
+}
 // PostsListResponse represents the response for listing posts
 type PostsListResponse struct {
 	Posts []PostResponse `json:"posts"`

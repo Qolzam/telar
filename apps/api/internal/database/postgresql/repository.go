@@ -360,74 +360,36 @@ func (r *PostgreSQLRepository) Find(ctx context.Context, collectionName string, 
 
 		tableName := r.getTableName(collectionName)
 
-		// Build the WHERE clause using the hybrid approach (named + positional params)
-		whereClause, namedArgs, positionalArgs, err := r.buildWhereClause(query)
+		// 1. Define the base query
+		baseQuery := fmt.Sprintf("SELECT data FROM %s", tableName)
+
+		// 2. Delegate complex query preparation to the helper
+		finalQuery, args, err := r.prepareQuery(query, baseQuery)
 		if err != nil {
 			result <- &PostgreSQLQueryResult{err: err}
 			return
 		}
 
-		// Build the full SQL query
-		fullQuery := fmt.Sprintf("SELECT data FROM %s", tableName)
-		if whereClause != "" && whereClause != "TRUE" {
-			fullQuery += " WHERE " + whereClause
-		}
-
-		// Add sorting
+		// 3. Apply specific options (Sort, Limit, Offset) after query preparation
+		// These are appended to the final query as they don't use parameters
 		if opts != nil && opts.Sort != nil {
 			orderBy := r.buildOrderByClause(opts.Sort)
 			if orderBy != "" {
-				fullQuery += " ORDER BY " + orderBy
+				finalQuery += " ORDER BY " + orderBy
 			}
 		}
 
-		// Add limit and offset
 		if opts != nil {
 			if opts.Limit != nil {
-				fullQuery += fmt.Sprintf(" LIMIT %d", *opts.Limit)
+				finalQuery += fmt.Sprintf(" LIMIT %d", *opts.Limit)
 			}
 			if opts.Skip != nil {
-				fullQuery += fmt.Sprintf(" OFFSET %d", *opts.Skip)
+				finalQuery += fmt.Sprintf(" OFFSET %d", *opts.Skip)
 			}
 		}
 
-		// Use sqlx to bind named parameters
-		// IMPORTANT: sqlx.BindNamed() matches :paramName patterns, which can incorrectly match ::type casts.
-		// We need to temporarily escape ::type casts before sqlx.BindNamed(), then unescape them after.
-		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "__CAST__")
-
-		var reboundQuery string
-		var namedArgsSlice []interface{}
-		if len(namedArgs) > 0 {
-			// Use BindNamed to convert named parameters to positional
-			var err2 error
-			reboundQuery, namedArgsSlice, err2 = r.db.BindNamed(tempEscapedQuery, namedArgs)
-			if err2 != nil {
-				result <- &PostgreSQLQueryResult{err: fmt.Errorf("failed to bind named query: %w", err2)}
-				return
-			}
-		} else {
-			// No named parameters - just rebind the query as-is
-			reboundQuery = r.db.Rebind(tempEscapedQuery)
-			namedArgsSlice = []interface{}{}
-		}
-
-		// Replace temporary array placeholders with correct positional numbers
-		finalQuery := reboundQuery
-		for i := range positionalArgs {
-			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
-			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
-			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
-		}
-
-		// Restore ::type casts after sqlx processing
-		finalQuery = strings.ReplaceAll(finalQuery, "__CAST__", "::")
-
-		// Combine argument slices: named args first, then positional args (arrays)
-		allArgs := append(namedArgsSlice, positionalArgs...)
-
-		// Execute the query with the combined arguments
-		rows, err := r.db.QueryContext(ctx, finalQuery, allArgs...)
+		// 4. Execute the query with the combined arguments
+		rows, err := r.db.QueryContext(ctx, finalQuery, args...)
 		if err != nil {
 			log.Error("PostgreSQL Find error: %s", err.Error())
 			result <- &PostgreSQLQueryResult{err: err}
@@ -454,55 +416,21 @@ func (r *PostgreSQLRepository) FindOne(ctx context.Context, collectionName strin
 
 		tableName := r.getTableName(collectionName)
 
-		// Build the WHERE clause using the hybrid approach (named + positional params)
-		whereClause, namedArgs, positionalArgs, err := r.buildWhereClause(query)
+		// 1. Define the base query
+		baseQuery := fmt.Sprintf("SELECT data FROM %s", tableName)
+
+		// 2. Delegate complex query preparation to the helper
+		finalQuery, args, err := r.prepareQuery(query, baseQuery)
 		if err != nil {
 			result <- &PostgreSQLSingleResult{err: err}
 			return
 		}
 
-		// Build the full SQL query
-		fullQuery := fmt.Sprintf("SELECT data FROM %s", tableName)
-		if whereClause != "" && whereClause != "TRUE" {
-			fullQuery += " WHERE " + whereClause
-		}
-		fullQuery += " LIMIT 1"
+		// 3. Append LIMIT 1 (no parameters used, safe to append after preparation)
+		finalQuery += " LIMIT 1"
 
-		// Use sqlx to bind named parameters
-		// Escape :: casts with a sequence that won't be confused with parameter names
-		// Use #CAST# (with #) to avoid sqlx treating it as part of parameter name
-		// sqlx matches :[a-zA-Z0-9_]+ for parameter names, so # breaks the pattern
-		// Don't use __ prefix to avoid sqlx matching :param__ as parameter name
-		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
-		var reboundQuery string
-		var namedArgsSlice []interface{}
-		if len(namedArgs) > 0 {
-			var err2 error
-			reboundQuery, namedArgsSlice, err2 = r.db.BindNamed(tempEscapedQuery, namedArgs)
-			if err2 != nil {
-				result <- &PostgreSQLSingleResult{err: fmt.Errorf("failed to bind named query: %w", err2)}
-				return
-			}
-		} else {
-			reboundQuery = r.db.Rebind(tempEscapedQuery)
-			namedArgsSlice = []interface{}{}
-		}
-
-		// Replace temporary array placeholders with correct positional numbers
-		finalQuery := reboundQuery
-		for i := range positionalArgs {
-			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
-			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
-			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
-		}
-
-		// Restore ::type casts
-		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
-
-		// Combine argument slices
-		allArgs := append(namedArgsSlice, positionalArgs...)
-
-		row := r.db.QueryRowContext(ctx, finalQuery, allArgs...)
+		// 4. Execute the query
+		row := r.db.QueryRowContext(ctx, finalQuery, args...)
 		result <- &PostgreSQLSingleResult{row: row, columns: []string{"data"}}
 	}()
 
@@ -955,55 +883,19 @@ func (r *PostgreSQLRepository) Count(ctx context.Context, collectionName string,
 
 		tableName := r.getTableName(collectionName)
 
-		// Build WHERE clause using the hybrid approach
-		whereClause, namedArgs, positionalArgs, err := r.buildWhereClause(query)
+		// 1. Define the base query
+		baseQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)
+
+		// 2. Delegate complex query preparation to the helper
+		finalQuery, args, err := r.prepareQuery(query, baseQuery)
 		if err != nil {
 			result <- interfaces.CountResult{Error: err}
 			return
 		}
 
-		// Build the full SQL query
-		fullQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)
-		if whereClause != "" && whereClause != "TRUE" {
-			fullQuery += " WHERE " + whereClause
-		}
-
-		// Use sqlx to bind named parameters
-		// Escape :: casts with a sequence that won't be confused with parameter names
-		// Use #CAST# (with #) to avoid sqlx treating it as part of parameter name
-		// sqlx matches :[a-zA-Z0-9_]+ for parameter names, so # breaks the pattern
-		// Don't use __ prefix to avoid sqlx matching :param__ as parameter name
-		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
-		var reboundQuery string
-		var namedArgsSlice []interface{}
-		if len(namedArgs) > 0 {
-			var err2 error
-			reboundQuery, namedArgsSlice, err2 = r.db.BindNamed(tempEscapedQuery, namedArgs)
-			if err2 != nil {
-				result <- interfaces.CountResult{Error: fmt.Errorf("failed to bind named query: %w", err2)}
-				return
-			}
-		} else {
-			reboundQuery = r.db.Rebind(tempEscapedQuery)
-			namedArgsSlice = []interface{}{}
-		}
-
-		// Replace temporary array placeholders with correct positional numbers
-		finalQuery := reboundQuery
-		for i := range positionalArgs {
-			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
-			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
-			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
-		}
-
-		// Restore ::type casts
-		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
-
-		// Combine argument slices
-		allArgs := append(namedArgsSlice, positionalArgs...)
-
+		// 3. Execute the query
 		var count int64
-		err = r.db.QueryRowContext(ctx, finalQuery, allArgs...).Scan(&count)
+		err = r.db.QueryRowContext(ctx, finalQuery, args...).Scan(&count)
 		if err != nil {
 			log.Error("PostgreSQL Count error: %s", err.Error())
 			result <- interfaces.CountResult{Error: err}
@@ -1342,6 +1234,68 @@ func (r *PostgreSQLRepository) Close() error {
 // buildWhereClause is the single source of truth for building WHERE clauses.
 // It uses a HYBRID approach: named parameters for scalars, and temporary placeholders
 // for arrays to work around sqlx limitations with slice values.
+// prepareQuery encapsulates the complex logic of converting a Query object and a SQL template
+// into an executable SQL string and a slice of positional arguments.
+// It handles the hybrid query builder output, sqlx named parameter binding, and type cast escaping.
+// baseQuery: The base SQL query (e.g., "SELECT data FROM table_name" or "SELECT COUNT(*) FROM table_name")
+// Returns: (final executable SQL string, combined arguments slice, error)
+func (r *PostgreSQLRepository) prepareQuery(query *interfaces.Query, baseQuery string) (string, []interface{}, error) {
+	// 1. Build WHERE clause using the hybrid approach
+	whereClause, namedArgs, positionalArgs, err := r.buildWhereClause(query)
+	if err != nil {
+		return "", nil, err
+	}
+
+	// 2. Construct the full query with WHERE clause
+	fullQuery := baseQuery
+	if whereClause != "" && whereClause != "TRUE" {
+		// Check if baseQuery already has a WHERE clause
+		if strings.Contains(strings.ToUpper(baseQuery), " WHERE ") {
+			fullQuery += " AND " + whereClause
+		} else {
+			fullQuery += " WHERE " + whereClause
+		}
+	}
+
+	// 3. Escape :: casts to avoid sqlx parsing errors
+	// Use #CAST# (with #) to avoid sqlx treating it as part of parameter name
+	// sqlx matches :[a-zA-Z0-9_]+ for parameter names, so # breaks the pattern
+	// Don't use __ prefix to avoid sqlx matching :param__ as parameter name
+	tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
+
+	var reboundQuery string
+	var namedArgsSlice []interface{}
+
+	// 4. Use sqlx to bind named parameters
+	if len(namedArgs) > 0 {
+		var err2 error
+		reboundQuery, namedArgsSlice, err2 = r.db.BindNamed(tempEscapedQuery, namedArgs)
+		if err2 != nil {
+			return "", nil, fmt.Errorf("failed to bind named query: %w", err2)
+		}
+	} else {
+		// No named parameters - just rebind the query as-is
+		reboundQuery = r.db.Rebind(tempEscapedQuery)
+		namedArgsSlice = []interface{}{}
+	}
+
+	// 5. Replace temporary array placeholders with correct positional numbers
+	finalQuery := reboundQuery
+	for i := range positionalArgs {
+		tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
+		finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
+		finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
+	}
+
+	// 6. Restore ::type casts after sqlx processing
+	finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
+
+	// 7. Combine argument slices: named args first, then positional args (arrays)
+	allArgs := append(namedArgsSlice, positionalArgs...)
+
+	return finalQuery, allArgs, nil
+}
+
 // Returns: (WHERE clause, named args map, positional args slice, error)
 func (r *PostgreSQLRepository) buildWhereClause(query *interfaces.Query) (string, map[string]interface{}, []interface{}, error) {
 	if query == nil || (len(query.Conditions) == 0 && len(query.OrGroups) == 0) {
@@ -1414,15 +1368,18 @@ func (r *PostgreSQLRepository) buildWhereClause(query *interfaces.Query) (string
 					columnExpr, sortParam, tieOp, tieParam)
 			}
 
-			paramName := nextNamedParam()
-			namedArgs[paramName] = field.Value
-
-			// Translate abstract operators to PostgreSQL syntax.
+			// Handle operators that don't take parameters (IS NULL, IS NOT NULL)
 			switch field.Operator {
+			case "IS NULL", "IS NOT NULL":
+				return fmt.Sprintf("%s %s", columnExpr, field.Operator)
 			case "REGEX_I":
 				// PostgreSQL case-insensitive regex: column ~* pattern
+				paramName := nextNamedParam()
+				namedArgs[paramName] = field.Value
 				return fmt.Sprintf("%s ~* :%s", columnExpr, paramName)
 			default: // Standard operators (=, <, >, <=, >=, !=, etc.)
+				paramName := nextNamedParam()
+				namedArgs[paramName] = field.Value
 				return fmt.Sprintf("%s %s :%s", columnExpr, field.Operator, paramName)
 			}
 		}
@@ -2278,13 +2235,6 @@ func (r *PostgreSQLRepository) FindWithCursor(ctx context.Context, collectionNam
 
 		tableName := r.getTableName(collectionName)
 
-		// Build WHERE clause using the hybrid approach
-		whereClause, namedArgs, positionalArgs, err := r.buildWhereClause(query)
-		if err != nil {
-			result <- &PostgreSQLQueryResult{err: err}
-			return
-		}
-
 		// Determine sort field and direction for cursor conditions
 		var sortField string
 		var sortDirection string
@@ -2324,60 +2274,29 @@ func (r *PostgreSQLRepository) FindWithCursor(ctx context.Context, collectionNam
 		// (via WhereCursorCondition). We do not add them here to avoid duplication.
 		// The service layer is responsible for adding cursor pagination filters to the Query.
 
-		// Build the full SELECT query
-		fullQuery := fmt.Sprintf("SELECT data FROM %s", tableName)
+		// 1. Define the base query
+		baseQuery := fmt.Sprintf("SELECT data FROM %s", tableName)
 
-		if whereClause != "" && whereClause != "TRUE" {
-			fullQuery += " WHERE " + whereClause
+		// 2. Delegate complex query preparation to the helper
+		finalQuery, args, err := r.prepareQuery(query, baseQuery)
+		if err != nil {
+			result <- &PostgreSQLQueryResult{err: err}
+			return
 		}
 
-		// Add cursor-based sorting
+		// 3. Apply cursor-based sorting and limit (no parameters used, safe to append after preparation)
 		if opts != nil {
 			// For compound sorting, always include object_id as tiebreaker (indexed)
 			orderBy := fmt.Sprintf("%s %s, object_id %s", primary, sortDirection, sortDirection)
-			fullQuery += " ORDER BY " + orderBy
+			finalQuery += " ORDER BY " + orderBy
 		}
 
-		// Add limit
 		if opts != nil && opts.Limit != nil {
-			fullQuery += fmt.Sprintf(" LIMIT %d", *opts.Limit)
+			finalQuery += fmt.Sprintf(" LIMIT %d", *opts.Limit)
 		}
 
-		// Use sqlx to bind named parameters
-		// Escape :: casts with a sequence that won't be confused with parameter names
-		// Use #CAST# (with #) to avoid sqlx treating it as part of parameter name
-		// sqlx matches :[a-zA-Z0-9_]+ for parameter names, so # breaks the pattern
-		// Don't use __ prefix to avoid sqlx matching :param__ as parameter name
-		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
-		var reboundQuery string
-		var namedArgsSlice []interface{}
-		if len(namedArgs) > 0 {
-			var err2 error
-			reboundQuery, namedArgsSlice, err2 = r.db.BindNamed(tempEscapedQuery, namedArgs)
-			if err2 != nil {
-				result <- &PostgreSQLQueryResult{err: fmt.Errorf("failed to bind named query: %w", err2)}
-				return
-			}
-		} else {
-			reboundQuery = r.db.Rebind(tempEscapedQuery)
-			namedArgsSlice = []interface{}{}
-		}
-
-		// Replace temporary array placeholders
-		finalQuery := reboundQuery
-		for i := range positionalArgs {
-			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
-			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
-			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
-		}
-
-		// Restore ::type casts
-		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
-
-		// Combine argument slices
-		allArgs := append(namedArgsSlice, positionalArgs...)
-
-		rows, err := r.db.QueryContext(ctx, finalQuery, allArgs...)
+		// 4. Execute the query
+		rows, err := r.db.QueryContext(ctx, finalQuery, args...)
 		if err != nil {
 			log.Error("PostgreSQL FindWithCursor error: %s", err.Error())
 			result <- &PostgreSQLQueryResult{err: err}
@@ -2404,55 +2323,19 @@ func (r *PostgreSQLRepository) CountWithFilter(ctx context.Context, collectionNa
 
 		tableName := r.getTableName(collectionName)
 
-		// Build WHERE clause using the hybrid approach
-		whereClause, namedArgs, positionalArgs, err := r.buildWhereClause(query)
+		// 1. Define the base query
+		baseQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)
+
+		// 2. Delegate complex query preparation to the helper
+		finalQuery, args, err := r.prepareQuery(query, baseQuery)
 		if err != nil {
 			result <- interfaces.CountResult{Count: 0, Error: err}
 			return
 		}
 
-		// Build the full COUNT query
-		fullQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)
-		if whereClause != "" && whereClause != "TRUE" {
-			fullQuery += " WHERE " + whereClause
-		}
-
-		// Use sqlx to bind named parameters
-		// Escape :: casts with a sequence that won't be confused with parameter names
-		// Use #CAST# (with #) to avoid sqlx treating it as part of parameter name
-		// sqlx matches :[a-zA-Z0-9_]+ for parameter names, so # breaks the pattern
-		// Don't use __ prefix to avoid sqlx matching :param__ as parameter name
-		tempEscapedQuery := strings.ReplaceAll(fullQuery, "::", "#CAST#")
-		var reboundQuery string
-		var namedArgsSlice []interface{}
-		if len(namedArgs) > 0 {
-			var err2 error
-			reboundQuery, namedArgsSlice, err2 = r.db.BindNamed(tempEscapedQuery, namedArgs)
-			if err2 != nil {
-				result <- interfaces.CountResult{Error: fmt.Errorf("failed to bind named query: %w", err2)}
-				return
-			}
-		} else {
-			reboundQuery = r.db.Rebind(tempEscapedQuery)
-			namedArgsSlice = []interface{}{}
-		}
-
-		// Replace temporary array placeholders with correct positional numbers
-		finalQuery := reboundQuery
-		for i := range positionalArgs {
-			tempPlaceholder := fmt.Sprintf("__ARRAY_PARAM_%d__", i)
-			finalPlaceholder := fmt.Sprintf("$%d", len(namedArgsSlice)+i+1)
-			finalQuery = strings.Replace(finalQuery, tempPlaceholder, finalPlaceholder, 1)
-		}
-
-		// Restore ::type casts
-		finalQuery = strings.ReplaceAll(finalQuery, "#CAST#", "::")
-
-		// Combine argument slices
-		allArgs := append(namedArgsSlice, positionalArgs...)
-
+		// 3. Execute the query
 		var count int64
-		err = r.db.QueryRowContext(ctx, finalQuery, allArgs...).Scan(&count)
+		err = r.db.QueryRowContext(ctx, finalQuery, args...).Scan(&count)
 		if err != nil {
 			log.Error("PostgreSQL CountWithFilter error: %s", err.Error())
 			result <- interfaces.CountResult{Count: 0, Error: err}

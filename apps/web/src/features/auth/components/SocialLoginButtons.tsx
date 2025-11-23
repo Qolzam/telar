@@ -16,13 +16,11 @@ const SocialLoginButtons: React.FC<SocialLoginButtonsProps> = ({
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const handleGitHubLogin = () => {
-    const authApiUrl = process.env.NEXT_PUBLIC_AUTH_API_URL || 'http://localhost:8080';
-    window.location.href = `${authApiUrl}/auth/login/github`;
+    window.location.href = `/api/auth/login/github`;
   };
 
   const handleGoogleLogin = () => {
-    const authApiUrl = process.env.NEXT_PUBLIC_AUTH_API_URL || 'http://localhost:8080';
-    window.location.href = `${authApiUrl}/auth/login/google`;
+    window.location.href = `/api/auth/login/google`;
   };
 
   const flexDirection = layout === 'responsive' 

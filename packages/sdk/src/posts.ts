@@ -28,6 +28,10 @@ export interface IPostsApi {
    * Get posts with cursor-based pagination
    */
   getPostsWithCursor(params?: CursorQueryParams): Promise<PostsResponse>;
+  /**
+   * Get a single post by id
+   */
+  getById(postId: string): Promise<Post>;
 }
 
 /**
@@ -45,6 +49,10 @@ export const postsApi = (client: ApiClient): IPostsApi => ({
     
     const url = `/posts/queries/cursor${queryParams.toString() ? `?${queryParams}` : ''}`;
     return client.get<PostsResponse>(url);
+  },
+
+  getById: async (postId: string): Promise<Post> => {
+    return client.get<Post>(`/posts/${postId}`);
   },
 });
 
