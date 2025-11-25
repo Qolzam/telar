@@ -153,6 +153,7 @@ func setupPostgreSQLTestService(t *testing.T, ctx context.Context) *platform.Bas
 }
 
 // All MongoDB tests removed - PostgreSQL only
+func TestDatabase_Placeholder(t *testing.T) {
 	if !testutil.ShouldRunDatabaseTests() {
 		t.Skip("set RUN_DB_TESTS=1 to run database tests")
 	}
@@ -161,7 +162,7 @@ func setupPostgreSQLTestService(t *testing.T, ctx context.Context) *platform.Bas
 	}
 	
 	ctx := context.Background()
-	base := setupMongoDBTestService(t, ctx)
+	base := setupPostgreSQLTestService(t, ctx)
 	
 	const testCollection = "comments_performance_test"
 	
@@ -234,10 +235,3 @@ func setupPostgreSQLTestService(t *testing.T, ctx context.Context) *platform.Bas
 		require.Equal(t, int64(0), countAfter.Count)
 	})
 }
-
-// BenchmarkBulkOperations_MongoDB_Comments - removed (MongoDB tests removed)
-// Error recovery tests for comments - MongoDB tests removed
-// Helper functions for test setup
-// setupMongoDBTestService - removed (MongoDB tests removed)
-// Duplicate setupPostgreSQLTestService - removed (keeping first one)
-// Index performance tests for comments - MongoDB tests removed

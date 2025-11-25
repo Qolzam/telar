@@ -6,7 +6,7 @@ import (
 )
 
 // NewDirectCallAdapter creates a direct call adapter for serverless deployment mode
-func NewDirectCallAdapter(service *services.Service) services.ProfileServiceClient {
+func NewDirectCallAdapter(service services.ProfileService) services.ProfileServiceClient {
 	return adapters.NewDirectCallCreator(service)
 }
 

@@ -90,6 +90,7 @@ func RegisterRoutes(app *fiber.App, handlers *AuthHandlers, cfg *platformconfig.
 	}
 
 	// Admin (HMAC only with rate limiting)
+	// Admin (HMAC only with rate limiting)
 	admin := group.Group("/admin",
 		authHMACMiddleware(false, *routerConfig),
 		ratelimit.NewWithConfig(

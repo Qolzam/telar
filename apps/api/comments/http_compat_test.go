@@ -15,9 +15,10 @@ import (
 	uuid "github.com/gofrs/uuid"
 	"github.com/qolzam/telar/apps/api/comments"
 	"github.com/qolzam/telar/apps/api/comments/handlers"
+	commentRepository "github.com/qolzam/telar/apps/api/comments/repository"
 	"github.com/qolzam/telar/apps/api/comments/services"
+	postsRepository "github.com/qolzam/telar/apps/api/posts/repository"
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
-	"github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/internal/testutil"
 	"github.com/qolzam/telar/apps/api/internal/types"
@@ -73,7 +74,7 @@ func addHMACHeaders(req *http.Request, body []byte, secret string, uid string) {
 
 // newTestApp creates a new test Fiber app with comments routes
 // Returns the app and the secret used for HMAC signing
-func newTestApp(t *testing.T, base *platform.BaseService, cfg *platformconfig.Config) (*fiber.App, string) {
+func newTestApp(t *testing.T, commentRepo commentRepository.CommentRepository, postRepo postsRepository.PostRepository, cfg *platformconfig.Config) (*fiber.App, string) {
 	app := fiber.New()
 
 	// Add test middleware to set user context
@@ -99,8 +100,8 @@ func newTestApp(t *testing.T, base *platform.BaseService, cfg *platformconfig.Co
 		return c.Next()
 	})
 
-	// Create handlers and config using the injected base service
-	commentService := services.NewCommentService(base, cfg)
+	// Create handlers and config using the new repository-based service
+	commentService := services.NewCommentService(commentRepo, postRepo, cfg, nil)
 	commentHandler := handlers.NewCommentHandler(commentService, cfg.JWT, cfg.HMAC)
 
 	commentsHandlers := &comments.CommentsHandlers{
@@ -147,17 +148,22 @@ func TestCommentsHTTPCompatibilityMongoDB(t *testing.T) {
 	suite := testutil.Setup(t)
 
 	// Create isolated test environment with transaction
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
+	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 	if iso.Repo == nil {
 		t.Skip("MongoDB not available, skipping test")
 	}
 
 	ctx := context.Background()
 
-	base, err := platform.NewBaseService(ctx, iso.Config)
-	require.NoError(t, err)
+	// Create PostRepository FIRST (applies posts migration, required for comments foreign key)
+	postRepo, err := postsRepository.NewPostgresRepositoryForTest(ctx, iso)
+	require.NoError(t, err, "failed to create PostRepository")
 
-	app, secret := newTestApp(t, base, iso.Config)
+	// Create CommentRepository AFTER posts migration (comments table has FK to posts)
+	commentRepo, err := commentRepository.NewPostgresCommentRepositoryForTest(ctx, iso)
+	require.NoError(t, err, "failed to create CommentRepository")
+
+	app, secret := newTestApp(t, commentRepo, postRepo, iso.Config)
 	uid := uuid.Must(uuid.NewV4()).String()
 
 	// Create HTTP helper
@@ -176,7 +182,7 @@ func TestCommentsHTTPCompatibilityPostgreSQL(t *testing.T) {
 	// Get the shared connection pool
 	suite := testutil.Setup(t)
 
-	// Create isolated test environment with transaction
+	// Create isolated test environment
 	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 	if iso.Repo == nil {
 		t.Skip("PostgreSQL not available, skipping test")
@@ -184,10 +190,15 @@ func TestCommentsHTTPCompatibilityPostgreSQL(t *testing.T) {
 
 	ctx := context.Background()
 
-	base, err := platform.NewBaseService(ctx, iso.Config)
-	require.NoError(t, err)
+	// Create PostRepository FIRST (applies posts migration, required for comments foreign key)
+	postRepo, err := postsRepository.NewPostgresRepositoryForTest(ctx, iso)
+	require.NoError(t, err, "failed to create PostRepository")
 
-	app, secret := newTestApp(t, base, iso.Config)
+	// Create CommentRepository AFTER posts migration (comments table has FK to posts)
+	commentRepo, err := commentRepository.NewPostgresCommentRepositoryForTest(ctx, iso)
+	require.NoError(t, err, "failed to create CommentRepository")
+
+	app, secret := newTestApp(t, commentRepo, postRepo, iso.Config)
 	uid := uuid.Must(uuid.NewV4()).String()
 
 	// Create HTTP helper

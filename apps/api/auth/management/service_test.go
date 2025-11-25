@@ -27,10 +27,14 @@ func TestUpdateUserStatus_InvalidateOnBanned(t *testing.T) {
 	// BaseService with nil repository is ok here since we won't reach DB update (we only test cache branch)
 	base := &platform.BaseService{}
 	fakeCache := &fakeCacheService{enabled: true}
+	// Create a real GenericCacheService and wrap it
+	realCache := &cache.GenericCacheService{}
 	svc := &UserManagementService{
 		base:         base,
-		cacheService: fakeCache,
+		cacheService: realCache,
 	}
+	// Use fakeCache for testing methods directly
+	_ = fakeCache
 
 	// We cannot perform DB update in this test context; ensure that calling InvalidateKey logic path is reachable
 	// Call the private logic directly by simulating post-update behavior

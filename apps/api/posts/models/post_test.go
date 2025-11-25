@@ -560,7 +560,7 @@ func TestPost_LargeDataHandling(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.Equal(t, largeBody, unmarshaledPost.Body)
-	assert.Equal(t, largeTags, unmarshaledPost.Tags)
+	assert.Equal(t, []string(largeTags), []string(unmarshaledPost.Tags))
 }
 
 // Test special characters and unicode
@@ -586,7 +586,7 @@ func TestPost_SpecialCharactersAndUnicode(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.Equal(t, specialBody, unmarshaledPost.Body)
-	assert.Equal(t, unicodeTags, unmarshaledPost.Tags)
+	assert.Equal(t, unicodeTags, []string(unmarshaledPost.Tags))
 	assert.Equal(t, "用户名 with 🌟", unmarshaledPost.OwnerDisplayName)
 }
 

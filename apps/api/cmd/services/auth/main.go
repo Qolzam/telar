@@ -20,6 +20,12 @@ import (
 	platformemail "github.com/qolzam/telar/apps/api/internal/platform/email"
 	"github.com/qolzam/telar/apps/api/profile"
 	profileServices "github.com/qolzam/telar/apps/api/profile/services"
+	authRepository "github.com/qolzam/telar/apps/api/auth/repository"
+	adminRepository "github.com/qolzam/telar/apps/api/auth/admin/repository"
+	profileRepository "github.com/qolzam/telar/apps/api/profile/repository"
+	signupOrchestrator "github.com/qolzam/telar/apps/api/orchestrator/signup"
+	"github.com/qolzam/telar/apps/api/internal/database/postgres"
+	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
 )
 
 func main() {
@@ -43,8 +49,33 @@ func main() {
 		log.Fatalf("Failed to create base service: %v", err)
 	}
 
-	// Initialize Profile service adapter for Auth service to use
-	profileService := profileServices.NewService(baseService, cfg)
+	// Create postgres client for repositories (used by orchestrator and signup service)
+	ctx := context.Background()
+	pgConfig := &dbi.PostgreSQLConfig{
+		Host:               cfg.Database.Postgres.Host,
+		Port:               cfg.Database.Postgres.Port,
+		Username:           cfg.Database.Postgres.Username,
+		Password:           cfg.Database.Postgres.Password,
+		Database:           cfg.Database.Postgres.Database,
+		SSLMode:            cfg.Database.Postgres.SSLMode,
+		MaxOpenConnections: cfg.Database.Postgres.MaxOpenConns,
+		MaxIdleConnections: cfg.Database.Postgres.MaxIdleConns,
+		MaxLifetime:        int(cfg.Database.Postgres.ConnMaxLifetime.Seconds()),
+		ConnectTimeout:     10,
+	}
+	pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
+	if err != nil {
+		log.Fatalf("Failed to create postgres client for repositories: %v", err)
+	}
+
+	// Create repositories
+	authRepo := authRepository.NewPostgresAuthRepository(pgClient)
+	verifRepo := authRepository.NewPostgresVerificationRepository(pgClient)
+	profileRepo := profileRepository.NewPostgresProfileRepository(pgClient)
+	adminRepo := adminRepository.NewPostgresAdminRepository(pgClient)
+
+	// Initialize Profile service with repository
+	profileService := profileServices.NewProfileService(profileRepo, cfg)
 	var profileCreator profileServices.ProfileServiceClient
 	deploymentMode := os.Getenv("DEPLOYMENT_MODE")
 
@@ -67,13 +98,9 @@ func main() {
 		log.Println("✅ Profile direct call adapter initialized")
 	}
 
-	adminService := adminUC.NewService(baseService, privateKey, cfg)
-	adminHandler := adminUC.NewAdminHandler(adminService, platformconfig.JWTConfig{
-		PublicKey:  publicKey,
-		PrivateKey: privateKey,
-	}, platformconfig.HMACConfig{
-		Secret: payloadSecret,
-	})
+	// Admin service will be created after repositories are set up (see below)
+	var adminService *adminUC.Service
+	var adminHandler *adminUC.AdminHandler
 
 	signupServiceConfig := &signupUC.ServiceConfig{
 		JWTConfig: platformconfig.JWTConfig{
@@ -87,7 +114,9 @@ func main() {
 			WebDomain: webDomain,
 		},
 	}
-	signupService := signupUC.NewService(baseService, signupServiceConfig)
+	// Create verification repository for signup service
+	verifRepoForSignup := authRepository.NewPostgresVerificationRepository(pgClient)
+	signupService := signupUC.NewService(verifRepoForSignup, signupServiceConfig)
 	if smtpHost := cfg.Email.SMTPHost; smtpHost != "" {
 		smtpPort := fmt.Sprintf("%d", cfg.Email.SMTPPort)
 		smtpUser := cfg.Email.SMTPUser
@@ -108,7 +137,20 @@ func main() {
 			Secret: payloadSecret,
 		},
 	}
-	loginService := loginUC.NewService(baseService, loginServiceConfig)
+	// Create signup orchestrator
+	signupOrchestrator := signupOrchestrator.NewService(authRepo, profileRepo, verifRepo)
+
+	// Create admin service with repositories
+	adminService = adminUC.NewService(authRepo, profileRepo, adminRepo, privateKey, cfg)
+	adminHandler = adminUC.NewAdminHandler(adminService, platformconfig.JWTConfig{
+		PublicKey:  publicKey,
+		PrivateKey: privateKey,
+	}, platformconfig.HMACConfig{
+		Secret: payloadSecret,
+	})
+
+	// Create login service with AuthRepository
+	loginService := loginUC.NewService(authRepo, loginServiceConfig)
 	
 	loginHandlerConfig := &loginUC.HandlerConfig{
 		WebDomain:           webDomain,
@@ -140,6 +182,8 @@ func main() {
 		cfg.App.WebDomain,
 		profileCreator,
 	)
+	// Inject orchestrator into verification service
+	verifyService.SetSignupOrchestrator(signupOrchestrator)
 	
 	verifyHandlerConfig := &verifyUC.HandlerConfig{
 		PublicKey: publicKey,
@@ -165,7 +209,8 @@ func main() {
 			WebDomain: webDomain,
 		},
 	}
-	passwordService := passwordUC.NewService(baseService, passwordServiceConfig)
+	// Create password service with repositories
+	passwordService := passwordUC.NewServiceWithRepositories(authRepo, verifRepo, passwordServiceConfig)
 
 	smtpHost := cfg.Email.SMTPHost
 	smtpPort := fmt.Sprintf("%d", cfg.Email.SMTPPort)

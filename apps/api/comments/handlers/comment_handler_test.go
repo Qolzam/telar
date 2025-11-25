@@ -98,6 +98,14 @@ func (m *MockCommentService) GetCommentsByUser(ctx context.Context, userID uuid.
 	return nil, nil
 }
 
+func (m *MockCommentService) GetReplyCount(ctx context.Context, parentID uuid.UUID) (int64, error) {
+	return 0, nil
+}
+
+func (m *MockCommentService) GetRootCommentCount(ctx context.Context, postID uuid.UUID) (int64, error) {
+	return 0, nil
+}
+
 func (m *MockCommentService) QueryComments(ctx context.Context, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error) {
 	if m.queryCommentsFunc != nil {
 		return m.queryCommentsFunc(ctx, filter)

@@ -74,3 +74,10 @@ func ValidateResetToken(plaintextToken, storedHash string) bool {
 	// Constant-time comparison
 	return computedHash == storedHash
 }
+
+// HashResetToken hashes a plaintext reset token using SHA256
+// This is used to look up verification records by hashed token
+func HashResetToken(plaintextToken string) string {
+	hash := sha256.Sum256([]byte(plaintextToken))
+	return fmt.Sprintf("%x", hash)
+}

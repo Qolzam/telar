@@ -51,7 +51,6 @@ func RegisterRoutes(app *fiber.App, handlers *PostsHandlers, cfg *platformconfig
 	// --- Service-to-Service Routes (HMAC-Only) ---
 	// These are actions on the collection, so we group them.
 	s2sActions := group.Group("/actions", hmacMiddleware)
-	s2sActions.Post("/index", handlers.PostHandler.CreateIndex)
 	s2sActions.Put("/score", handlers.PostHandler.IncrementScore)
 	s2sActions.Put("/comment/count", handlers.PostHandler.IncrementCommentCount)
 

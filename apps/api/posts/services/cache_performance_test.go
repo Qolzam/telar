@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -10,10 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
-	platform "github.com/qolzam/telar/apps/api/internal/platform"
+	"github.com/qolzam/telar/apps/api/internal/database/postgres"
 	"github.com/qolzam/telar/apps/api/internal/testutil"
 	"github.com/qolzam/telar/apps/api/internal/types"
 	"github.com/qolzam/telar/apps/api/posts/models"
+	"github.com/qolzam/telar/apps/api/posts/repository"
 )
 
 // TestPostsServiceCacheIntegration tests cache integration with actual posts service
@@ -33,11 +35,35 @@ func TestPostsServiceCacheIntegration(t *testing.T) {
 
 	ctx := context.Background()
 	
-	base, err := platform.NewBaseService(ctx, iso.Config)
-	require.NoError(t, err)
+	// Apply migration manually for isolated test schema
+	// The isolated test creates a unique schema per test, so we need to apply the migration there
+	pgConfig := iso.LegacyConfig.ToServiceConfig(dbi.DatabaseTypePostgreSQL).PostgreSQLConfig
+	pgConfig.Schema = iso.LegacyConfig.PGSchema // Ensure we use the isolated schema
+	
+	client, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
+	require.NoError(t, err, "Failed to create postgres client")
+	defer client.Close()
+	
+	// Create schema if it doesn't exist
+	schemaSQL := fmt.Sprintf(`CREATE SCHEMA IF NOT EXISTS %s`, iso.LegacyConfig.PGSchema)
+	_, err = client.DB().ExecContext(ctx, schemaSQL)
+	require.NoError(t, err, "Failed to create schema")
+	
+	// Set search_path to the isolated schema
+	setSearchPathSQL := fmt.Sprintf(`SET search_path TO %s`, iso.LegacyConfig.PGSchema)
+	_, err = client.DB().ExecContext(ctx, setSearchPathSQL)
+	require.NoError(t, err, "Failed to set search_path")
+	
+	// Apply migration
+	if err := repository.ApplyPostsMigration(ctx, client, iso.LegacyConfig.PGSchema); err != nil {
+		t.Fatalf("Failed to apply posts migration: %v", err)
+	}
+	
+	// Create PostRepository from the client
+	postRepo := repository.NewPostgresRepository(client)
 	
 	// Create posts service with cache
-	postService := NewPostService(base, iso.Config)
+	postService := NewPostService(postRepo, iso.Config, nil)
 	
 	// Test user context
 	userID := uuid.Must(uuid.NewV4())

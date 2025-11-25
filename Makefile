@@ -18,7 +18,7 @@
         test-transactions \
         lint lint-fix \
         run-api run-web run-both run-profile run-profile-standalone run-posts run-comments dev stop-servers restart-servers pre-flight-check logs-api logs-web \
-        test-e2e-posts test-e2e-profile test-e2e-comments
+        test-e2e-auth test-e2e-posts test-e2e-profile test-e2e-comments
 
 # --- Configuration Variables ---
 PARALLEL ?= 8
@@ -305,6 +305,7 @@ help:
 	@echo "  dev       - Start both servers in background (recommended for development)."
 	@echo "  run-api-background - Start API server in background with PID file (for E2E tests)."
 	@echo "  stop-api-background - Stop background API server using PID file."
+	@echo "  test-e2e-auth     - Run Auth E2E tests with automatic server management."
 	@echo "  test-e2e-posts    - Run Posts E2E tests with automatic server management."
 	@echo "  test-e2e-comments - Run Comments E2E tests with automatic server management."
 	@echo "  test-e2e-profile  - Run Profile E2E tests with automatic server management."
@@ -384,6 +385,12 @@ stop-api-background:
 		echo "API not running or PID file not found. Cleaning up any stale processes..."; \
 		ps aux | grep "go run.*cmd/server/main.go\|go run.*cmd/main.go" | grep -v grep | awk '{print $$2}' | xargs kill -9 2>/dev/null || true; \
 	fi
+
+# Running E2E tests for auth service
+test-e2e-auth: stop-api-background run-api-background
+	@echo "Running Auth E2E tests..."
+	@./tools/dev/scripts/auth_e2e_test.sh || true
+	@$(MAKE) stop-api-background
 
 # Running E2E tests for posts service
 test-e2e-posts: stop-api-background run-api-background

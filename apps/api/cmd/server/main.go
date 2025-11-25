@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/qolzam/telar/apps/api/auth"
 	adminUC "github.com/qolzam/telar/apps/api/auth/admin"
+	adminRepository "github.com/qolzam/telar/apps/api/auth/admin/repository"
 	jwksUC "github.com/qolzam/telar/apps/api/auth/jwks"
 	loginUC "github.com/qolzam/telar/apps/api/auth/login"
 	oauthUC "github.com/qolzam/telar/apps/api/auth/oauth"
@@ -29,6 +29,13 @@ import (
 	sharedInterfaces "github.com/qolzam/telar/apps/api/shared/interfaces"
 	"github.com/qolzam/telar/apps/api/profile"
 	profileServices "github.com/qolzam/telar/apps/api/profile/services"
+	authRepository "github.com/qolzam/telar/apps/api/auth/repository"
+	profileRepository "github.com/qolzam/telar/apps/api/profile/repository"
+	postsRepository "github.com/qolzam/telar/apps/api/posts/repository"
+	commentRepository "github.com/qolzam/telar/apps/api/comments/repository"
+	signupOrchestrator "github.com/qolzam/telar/apps/api/orchestrator/signup"
+	"github.com/qolzam/telar/apps/api/internal/database/postgres"
+	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
 )
 
 func main() {
@@ -80,60 +87,34 @@ func main() {
 		log.Fatalf("Failed to create base service: %v", err)
 	}
 
-	// Initialize Profile service (concrete implementation)
-	profileService := profileServices.NewService(baseService, cfg)
-
-	// Create database indexes on startup
-	log.Println("🔧 Creating database indexes for Profile service...")
-	indexCtx, indexCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	if err := profileService.CreateIndexes(indexCtx); err != nil {
-		indexCancel()
-		log.Printf("⚠️  Warning: Failed to create indexes (may already exist): %v", err)
-	} else {
-		indexCancel()
-		log.Println("✅ Profile database indexes created successfully")
-	}
-
-	// Decide which adapter to use based on deployment mode
+	// Profile service will be initialized after repositories are created (see below)
+	var profileService profileServices.ProfileService
 	var profileCreator profileServices.ProfileServiceClient
-	deploymentMode := os.Getenv("DEPLOYMENT_MODE")
+	var profileHandler *profile.ProfileHandler
+	var profileHandlers *profile.ProfileHandlers
 
-	if deploymentMode == "microservices" {
-		log.Println("🔌 Wiring Profile service using gRPC Adapter")
-		profileServiceAddr := os.Getenv("PROFILE_SERVICE_GRPC_ADDR")
-		if profileServiceAddr == "" {
-			profileServiceAddr = "localhost:50051"
-		}
+	// Admin service will be created after repositories are set up (see below)
+	var adminService *adminUC.Service
+	var adminHandler *adminUC.AdminHandler
 
-		grpcCreator, err := profile.NewGrpcAdapter(profileServiceAddr)
-		if err != nil {
-			log.Fatalf("Failed to create gRPC profile creator: %v", err)
-		}
-		profileCreator = grpcCreator
-		log.Printf("✅ Profile gRPC client connected to %s", profileServiceAddr)
-	} else {
-		log.Println("🔌 Wiring Profile service using Direct Call Adapter")
-		profileCreator = profile.NewDirectCallAdapter(profileService)
-		log.Println("✅ Profile direct call adapter initialized")
+	// Create postgres client for repositories (used by orchestrator, signup service, and admin service)
+	ctx := context.Background()
+	pgConfig := &dbi.PostgreSQLConfig{
+		Host:               cfg.Database.Postgres.Host,
+		Port:               cfg.Database.Postgres.Port,
+		Username:           cfg.Database.Postgres.Username,
+		Password:           cfg.Database.Postgres.Password,
+		Database:           cfg.Database.Postgres.Database,
+		SSLMode:            cfg.Database.Postgres.SSLMode,
+		MaxOpenConnections: cfg.Database.Postgres.MaxOpenConns,
+		MaxIdleConnections: cfg.Database.Postgres.MaxIdleConns,
+		MaxLifetime:        int(cfg.Database.Postgres.ConnMaxLifetime.Seconds()),
+		ConnectTimeout:     10,
 	}
-
-	profileHandler := profile.NewProfileHandler(profileService, platformconfig.JWTConfig{
-		PublicKey:  publicKey,
-		PrivateKey: privateKey,
-	}, platformconfig.HMACConfig{
-		Secret: payloadSecret,
-	})
-	profileHandlers := &profile.ProfileHandlers{
-		ProfileHandler: profileHandler,
+	pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
+	if err != nil {
+		log.Fatalf("Failed to create postgres client for repositories: %v", err)
 	}
-
-	adminService := adminUC.NewService(baseService, privateKey, cfg)
-	adminHandler := adminUC.NewAdminHandler(adminService, platformconfig.JWTConfig{
-		PublicKey:  publicKey,
-		PrivateKey: privateKey,
-	}, platformconfig.HMACConfig{
-		Secret: payloadSecret,
-	})
 
 	signupServiceConfig := &signupUC.ServiceConfig{
 		JWTConfig: platformconfig.JWTConfig{
@@ -147,7 +128,13 @@ func main() {
 			WebDomain: webDomain,
 		},
 	}
-	signupService := signupUC.NewService(baseService, signupServiceConfig)
+	// Create repositories early (will be reused)
+	authRepo := authRepository.NewPostgresAuthRepository(pgClient)
+	verifRepo := authRepository.NewPostgresVerificationRepository(pgClient)
+	profileRepo := profileRepository.NewPostgresProfileRepository(pgClient)
+	
+	// Create signup service with verification repository
+	signupService := signupUC.NewService(verifRepo, signupServiceConfig)
 	if smtpHost := cfg.Email.SMTPHost; smtpHost != "" {
 		smtpPort := fmt.Sprintf("%d", cfg.Email.SMTPPort)
 		smtpUser := cfg.Email.SMTPUser
@@ -168,16 +155,9 @@ func main() {
 			Secret: payloadSecret,
 		},
 	}
-	loginService := loginUC.NewService(baseService, loginServiceConfig)
-
-	loginHandlerConfig := &loginUC.HandlerConfig{
-		WebDomain:           webDomain,
-		PrivateKey:          privateKey,
-		HeaderCookieName:    "telar-header",
-		PayloadCookieName:   "telar-payload",
-		SignatureCookieName: "telar-signature",
-	}
-	loginHandler := loginUC.NewHandler(loginService, loginHandlerConfig)
+	// Login service will be created after repositories are set up (see below)
+	var loginService *loginUC.Service
+	var loginHandler *loginUC.Handler
 
 	verifyServiceConfig := &verifyUC.ServiceConfig{
 		JWTConfig: platformconfig.JWTConfig{
@@ -192,14 +172,83 @@ func main() {
 			WebDomain: webDomain,
 		},
 	}
-	verifyService := verifyUC.NewServiceWithKeys(
-		baseService,
+
+	// Create remaining repositories (using same DB connection pool)
+	adminRepo := adminRepository.NewPostgresAdminRepository(pgClient)
+	postRepo := postsRepository.NewPostgresRepository(pgClient)
+	commentRepo := commentRepository.NewPostgresCommentRepository(pgClient)
+
+	// Initialize Profile service with repository (now that repositories are available)
+	profileService = profileServices.NewProfileService(profileRepo, cfg)
+
+	// Initialize profile handler (now that profileService is available)
+	profileHandler = profile.NewProfileHandler(profileService, platformconfig.JWTConfig{
+		PublicKey:  publicKey,
+		PrivateKey: privateKey,
+	}, platformconfig.HMACConfig{
+		Secret: payloadSecret,
+	})
+	profileHandlers = &profile.ProfileHandlers{
+		ProfileHandler: profileHandler,
+	}
+
+	// Decide which adapter to use based on deployment mode (now that profileService is initialized)
+	deploymentMode := os.Getenv("DEPLOYMENT_MODE")
+	if deploymentMode == "microservices" {
+		log.Println("🔌 Wiring Profile service using gRPC Adapter")
+		profileServiceAddr := os.Getenv("PROFILE_SERVICE_GRPC_ADDR")
+		if profileServiceAddr == "" {
+			profileServiceAddr = "localhost:50051"
+		}
+
+		grpcCreator, err := profile.NewGrpcAdapter(profileServiceAddr)
+		if err != nil {
+			log.Fatalf("Failed to create gRPC profile creator: %v", err)
+		}
+		profileCreator = grpcCreator
+		log.Printf("✅ Profile gRPC client connected to %s", profileServiceAddr)
+	} else {
+		log.Println("🔌 Wiring Profile service using Direct Call Adapter")
+		profileCreator = profile.NewDirectCallAdapter(profileService)
+		log.Println("✅ Profile direct call adapter initialized")
+	}
+
+	// Create admin service with repositories (now that repositories are available)
+	adminService = adminUC.NewService(authRepo, profileRepo, adminRepo, privateKey, cfg)
+	adminHandler = adminUC.NewAdminHandler(adminService, platformconfig.JWTConfig{
+		PublicKey:  publicKey,
+		PrivateKey: privateKey,
+	}, platformconfig.HMACConfig{
+		Secret: payloadSecret,
+	})
+
+	// Create login service with AuthRepository and ProfileCreator (now that authRepo and profileCreator are available)
+	loginService = loginUC.NewServiceWithProfileCreator(authRepo, profileCreator, loginServiceConfig)
+	
+	// Create login handler now that loginService is initialized
+	loginHandlerConfig := &loginUC.HandlerConfig{
+		WebDomain:           webDomain,
+		PrivateKey:          privateKey,
+		HeaderCookieName:    "telar-header",
+		PayloadCookieName:   "telar-payload",
+		SignatureCookieName: "telar-signature",
+	}
+	loginHandler = loginUC.NewHandler(loginService, loginHandlerConfig)
+
+	// Create signup orchestrator
+	signupOrchestrator := signupOrchestrator.NewService(authRepo, profileRepo, verifRepo)
+
+	verifyService := verifyUC.NewServiceWithRepositoriesAndKeys(
+		verifRepo,
+		authRepo,
 		verifyServiceConfig,
 		privateKey,
 		cfg.App.OrgName,
 		cfg.App.WebDomain,
 		profileCreator,
 	)
+	// Inject orchestrator into verification service
+	verifyService.SetSignupOrchestrator(signupOrchestrator)
 
 	verifyHandlerConfig := &verifyUC.HandlerConfig{
 		PublicKey: publicKey,
@@ -225,7 +274,8 @@ func main() {
 			WebDomain: webDomain,
 		},
 	}
-	passwordService := passwordUC.NewService(baseService, passwordServiceConfig)
+	// Create password service with repositories
+	passwordService := passwordUC.NewServiceWithRepositories(authRepo, verifRepo, passwordServiceConfig)
 
 	smtpHost := cfg.Email.SMTPHost
 	smtpPort := fmt.Sprintf("%d", cfg.Email.SMTPPort)
@@ -334,8 +384,8 @@ func main() {
 		log.Println("🔌 Wiring Posts and Comments services using Direct Call Adapters")
 		
 		// Create temporary service instances to get adapters
-		tempCommentsService := commentServices.NewCommentService(baseService, cfg, nil)
-		tempPostsService := postsServices.NewPostService(baseService, cfg, nil)
+		tempCommentsService := commentServices.NewCommentService(commentRepo, postRepo, cfg, nil)
+		tempPostsService := postsServices.NewPostService(postRepo, cfg, nil)
 		
 		// Create direct call adapters
 		commentCounter = comments.NewDirectCallCounter(tempCommentsService)
@@ -344,19 +394,11 @@ func main() {
 	}
 
 	// Re-initialize services with cross-service dependencies
-	commentsService = commentServices.NewCommentService(baseService, cfg, postStatsUpdater)
-	postsService = postsServices.NewPostService(baseService, cfg, commentCounter)
+	commentsService = commentServices.NewCommentService(commentRepo, postRepo, cfg, postStatsUpdater)
+	postsService = postsServices.NewPostService(postRepo, cfg, commentCounter)
 
-	// Create database indexes on startup
-	log.Println("🔧 Creating database indexes for Posts service...")
-	postsIndexCtx, postsIndexCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	if err := postsService.CreateIndexes(postsIndexCtx); err != nil {
-		postsIndexCancel()
-		log.Printf("⚠️  Warning: Failed to create Posts indexes (may already exist): %v", err)
-	} else {
-		postsIndexCancel()
-		log.Println("✅ Posts database indexes created successfully")
-	}
+	// Index creation is now handled by SQL migrations
+	log.Println("✅ Posts service initialized (indexes managed via SQL migrations)")
 
 	postsHandler := handlers.NewPostHandler(postsService, cfg.JWT, cfg.HMAC)
 

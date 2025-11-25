@@ -37,7 +37,6 @@ type MockPostService struct {
 	deletePostFunc                    func(ctx context.Context, postID uuid.UUID, user *types.UserContext) error
 	validatePostOwnershipFunc         func(ctx context.Context, postID uuid.UUID, userID uuid.UUID) error
 	incrementViewCountFunc            func(ctx context.Context, postID uuid.UUID) error
-	createIndexFunc                   func(ctx context.Context, indexes map[string]interface{}) error
 	deleteWithOwnershipFunc           func(ctx context.Context, postID uuid.UUID, userID uuid.UUID) error
 	incrementFieldsFunc               func(ctx context.Context, postID uuid.UUID, updates map[string]interface{}) error
 	incrementFieldsWithOwnershipFunc  func(ctx context.Context, postID uuid.UUID, userID uuid.UUID, updates map[string]interface{}) error
@@ -61,23 +60,6 @@ func (m *MockPostService) CreatePost(ctx context.Context, req *models.CreatePost
 		return m.createPostFunc(ctx, req, user)
 	}
 	return nil, nil
-}
-
-func (m *MockPostService) CreateIndex(ctx context.Context, indexes map[string]interface{}) error {
-	if m.createIndexFunc != nil {
-		return m.createIndexFunc(ctx, indexes)
-	}
-	return nil
-}
-
-func (m *MockPostService) CreateIndexes(ctx context.Context) error {
-	if m.createIndexFunc != nil {
-		return m.createIndexFunc(ctx, map[string]interface{}{
-			"body":     "text",
-			"objectId": 1,
-		})
-	}
-	return nil
 }
 
 func (m *MockPostService) GetPost(ctx context.Context, postID uuid.UUID) (*models.Post, error) {
@@ -639,6 +621,16 @@ func (m *MockPostService) GetCursorInfo(ctx context.Context, postID uuid.UUID, s
         SortBy:    sortBy,
         SortOrder: sortOrder,
     }, nil
+}
+
+func (m *MockPostService) ConvertPostToResponse(ctx context.Context, post *models.Post) models.PostResponse {
+	if post == nil {
+		return models.PostResponse{}
+	}
+	return models.PostResponse{
+		ObjectId: post.ObjectId.String(),
+		Body:     post.Body,
+	}
 }
 
 // Test cases

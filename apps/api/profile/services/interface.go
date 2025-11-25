@@ -10,10 +10,12 @@ import (
 
 type ProfileService interface {
 	CreateProfile(ctx context.Context, req *models.CreateProfileRequest, user *types.UserContext) (*models.Profile, error)
+	CreateProfileOnSignup(ctx context.Context, req *models.CreateProfileRequest) error
 	CreateIndex(ctx context.Context, indexes map[string]interface{}) error
 
 	GetProfile(ctx context.Context, userID uuid.UUID) (*models.Profile, error)
 	GetProfileBySocialName(ctx context.Context, socialName string) (*models.Profile, error)
+	GetProfilesByIds(ctx context.Context, userIds []uuid.UUID) ([]*models.Profile, error)
 	GetProfilesBySearch(ctx context.Context, query string, filter *models.ProfileQueryFilter) (*models.ProfilesResponse, error)
 	QueryProfiles(ctx context.Context, filter *models.ProfileQueryFilter) (*models.ProfilesResponse, error)
 	

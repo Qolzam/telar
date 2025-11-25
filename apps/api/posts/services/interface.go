@@ -12,8 +12,6 @@ import (
 type PostService interface {
 	// Create operations
 	CreatePost(ctx context.Context, req *models.CreatePostRequest, user *types.UserContext) (*models.Post, error)
-	CreateIndex(ctx context.Context, indexes map[string]interface{}) error
-	CreateIndexes(ctx context.Context) error
 
 	// Read operations
 	GetPost(ctx context.Context, postID uuid.UUID) (*models.Post, error)

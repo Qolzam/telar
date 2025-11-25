@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -659,22 +658,6 @@ func (h *PostHandler) GeneratePostURLKey(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{
 		"urlKey": urlKey,
-	})
-}
-
-// CreateIndex handles index creation
-func (h *PostHandler) CreateIndex(c *fiber.Ctx) error {
-	indexes := map[string]interface{}{
-		"body":     "text",
-		"objectId": 1,
-	}
-
-	if err := h.postService.CreateIndex(c.Context(), indexes); err != nil {
-		return errors.HandleServiceError(c, err)
-	}
-
-	return c.Status(http.StatusCreated).JSON(fiber.Map{
-		"message": "Indexes created successfully",
 	})
 }
 

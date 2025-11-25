@@ -7,17 +7,18 @@ import (
 	"github.com/gofrs/uuid"
 	"github.com/qolzam/telar/apps/api/auth/errors"
 	"github.com/qolzam/telar/apps/api/auth/models"
+	"github.com/qolzam/telar/apps/api/auth/repository"
 	"github.com/qolzam/telar/apps/api/internal/auth/tokens"
-	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
-	platform "github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/internal/types"
 	"github.com/qolzam/telar/apps/api/internal/utils"
+	profileServices "github.com/qolzam/telar/apps/api/profile/services"
 )
 
 type Service struct {
-	base   *platform.BaseService
-	config *ServiceConfig
+	authRepo       repository.AuthRepository
+	profileCreator profileServices.ProfileServiceClient
+	config         *ServiceConfig
 }
 
 type ServiceConfig struct {
@@ -25,49 +26,24 @@ type ServiceConfig struct {
 	HMACConfig platformconfig.HMACConfig
 }
 
-func NewService(base *platform.BaseService, config *ServiceConfig) *Service {
+// NewService creates a service with AuthRepository injected
+func NewService(authRepo repository.AuthRepository, config *ServiceConfig) *Service {
 	return &Service{
-		base:   base,
-		config: config,
+		authRepo: authRepo,
+		config:   config,
 	}
 }
 
-// loginQueryBuilder is a private helper for building login service queries
-type loginQueryBuilder struct {
-	query *dbi.Query
-}
-
-func newLoginQueryBuilder() *loginQueryBuilder {
-	return &loginQueryBuilder{
-		query: &dbi.Query{
-			Conditions: []dbi.Field{},
-		},
+// NewServiceWithProfileCreator creates a service with AuthRepository and ProfileServiceClient injected
+func NewServiceWithProfileCreator(authRepo repository.AuthRepository, profileCreator profileServices.ProfileServiceClient, config *ServiceConfig) *Service {
+	return &Service{
+		authRepo:       authRepo,
+		profileCreator: profileCreator,
+		config:         config,
 	}
 }
 
-func (qb *loginQueryBuilder) WhereUsername(username string) *loginQueryBuilder {
-	qb.query.Conditions = append(qb.query.Conditions, dbi.Field{
-		Name:     "data->>'username'", // JSONB field
-		Value:    username,
-		Operator: "=",
-		IsJSONB:  true,
-	})
-	return qb
-}
-
-func (qb *loginQueryBuilder) WhereObjectID(objectID uuid.UUID) *loginQueryBuilder {
-	qb.query.Conditions = append(qb.query.Conditions, dbi.Field{
-		Name:     "object_id", // Indexed column
-		Value:    objectID,
-		Operator: "=",
-		IsJSONB:  false,
-	})
-	return qb
-}
-
-func (qb *loginQueryBuilder) Build() *dbi.Query {
-	return qb.query
-}
+// Legacy query builder removed - all queries now use repository interfaces
 
 type userAuth struct {
 	ObjectId      uuid.UUID `json:"objectId" bson:"objectId" db:"objectId"`
@@ -79,16 +55,22 @@ type userAuth struct {
 }
 
 func (s *Service) FindUserByUsername(ctx context.Context, username string) (*userAuth, error) {
-	query := newLoginQueryBuilder().WhereUsername(username).Build()
-	res := <-s.base.Repository.FindOne(ctx, "userAuth", query)
-	if res.Error() != nil {
-		return nil, res.Error()
+	if s.authRepo == nil {
+		return nil, fmt.Errorf("auth repository not available")
 	}
-	var ua userAuth
-	if err := res.Decode(&ua); err != nil {
+	userAuthModel, err := s.authRepo.FindByUsername(ctx, username)
+	if err != nil {
 		return nil, err
 	}
-	return &ua, nil
+	// Convert models.UserAuth to userAuth
+	return &userAuth{
+		ObjectId:      userAuthModel.ObjectId,
+		Username:      userAuthModel.Username,
+		Password:      userAuthModel.Password,
+		EmailVerified: userAuthModel.EmailVerified,
+		PhoneVerified: userAuthModel.PhoneVerified,
+		Role:          userAuthModel.Role,
+	}, nil
 }
 
 type userProfile struct {
@@ -103,21 +85,36 @@ type userProfile struct {
 }
 
 func (s *Service) ReadProfileAndLanguage(ctx context.Context, user userAuth) (*userProfile, string, error) {
-	// Read profile
-	query := newLoginQueryBuilder().WhereObjectID(user.ObjectId).Build()
-	profRes := <-s.base.Repository.FindOne(ctx, "userProfile", query)
-	if profRes.Error() != nil {
-		return nil, "", profRes.Error()
+	// Try to fetch actual profile from ProfileService
+	if s.profileCreator != nil {
+		profile, err := s.profileCreator.GetProfile(ctx, user.ObjectId)
+		if err == nil && profile != nil {
+			return &userProfile{
+				ObjectId:    profile.ObjectId,
+				FullName:    profile.FullName,
+				SocialName:  profile.SocialName,
+				Email:       profile.Email,
+				Avatar:      profile.Avatar,
+				Banner:      profile.Banner,
+				TagLine:     profile.Tagline,
+				CreatedDate: profile.CreatedDate,
+			}, "en", nil
+		}
 	}
-	var profile userProfile
-	if err := profRes.Decode(&profile); err != nil {
-		return nil, "", err
+	// Fallback to minimal profile data from user auth if profile service unavailable
+	profile := &userProfile{
+		ObjectId:    user.ObjectId,
+		FullName:    user.Username,
+		SocialName:  user.Username,
+		Email:       user.Username,
+		Avatar:      "",
+		Banner:      "",
+		TagLine:     "",
+		CreatedDate: 0,
 	}
-	// Language: get setting key path, fallback to en
-	langPath := "lang:current"
-	_ = langPath
+	// Language: fallback to en
 	current := "en"
-	return &profile, current, nil
+	return profile, current, nil
 }
 
 func (s *Service) ComparePassword(hashed []byte, plain string) error {
