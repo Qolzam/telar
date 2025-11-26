@@ -99,6 +99,6 @@ func NewPostgresRepositoryForTest(ctx context.Context, iso *testutil.IsolatedTes
 		return nil, fmt.Errorf("failed to apply migration: %w", err)
 	}
 
-	return NewPostgresRepository(client), nil
+	return NewPostgresRepositoryWithSchema(client, iso.LegacyConfig.PGSchema), nil
 }
 

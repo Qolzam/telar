@@ -399,13 +399,39 @@ create_test_post() {
         return 0
     fi
     
-    local post_data="{\"postTypeId\":1,\"body\":\"Test post for comments E2E testing at ${TIMESTAMP}\",\"tags\":[\"test\",\"comments\"]}"
-    local response=$(make_request "POST" "${POSTS_BASE}/" "$post_data" "Authorization: Bearer $JWT_TOKEN" "201" "Create test post" "true")
+    # Helper function to create post without counting as test
+    create_post_setup() {
+        local post_data="$1"
+        local response
+        local status_code
+        
+        response=$(curl -s -w "\n%{http_code}" --max-time 10 -X POST "${POSTS_BASE}/" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $JWT_TOKEN" \
+            -d "$post_data" 2>&1)
+        
+        status_code=$(echo "$response" | tail -n1)
+        response_body=$(echo "$response" | sed '$d')
+        
+        if [[ "$status_code" == "201" ]]; then
+            echo "$response_body"
+            return 0
+        else
+            return 1
+        fi
+    }
     
-    local post_id=$(extract_json_field "$response" "objectId")
-    if [[ -n "$post_id" ]]; then
-        TEST_POST_IDS+=("$post_id")
-        log_info "Created test post with ID: $post_id"
+    local post_data="{\"postTypeId\":1,\"body\":\"Test post for comments E2E testing at ${TIMESTAMP}\",\"tags\":[\"test\",\"comments\"]}"
+    local response
+    if response=$(create_post_setup "$post_data"); then
+        local post_id=$(extract_json_field "$response" "objectId")
+        if [[ -n "$post_id" ]]; then
+            TEST_POST_IDS+=("$post_id")
+            log_info "Created test post with ID: $post_id"
+        fi
+    else
+        log_warning "Failed to create test post for comments (may already exist)"
+        return 1
     fi
 }
 

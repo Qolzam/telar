@@ -25,6 +25,9 @@ CREATE TABLE IF NOT EXISTS verifications (
     user_id UUID REFERENCES user_auths(id) ON DELETE CASCADE,
     -- For password reset, user_id might be NULL if user not created yet
     -- In that case, target (email) is used to identify the user
+    -- future_user_id stores the UserId during signup (before user is created)
+    -- This allows CompleteSignup to use it without FK constraint violation
+    future_user_id UUID,
     code VARCHAR(10) NOT NULL,
     target VARCHAR(255) NOT NULL, -- email or phone number
     target_type VARCHAR(50) NOT NULL, -- 'email', 'phone', 'password_reset'
@@ -45,6 +48,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_user_auths_username ON user_auths(username
 CREATE INDEX IF NOT EXISTS idx_user_auths_role ON user_auths(role);
 CREATE INDEX IF NOT EXISTS idx_user_auths_created_at ON user_auths(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_user_auths_created_date ON user_auths(created_date DESC);
+
+-- Add future_user_id column if it doesn't exist (for existing databases)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'verifications' AND column_name = 'future_user_id'
+    ) THEN
+        ALTER TABLE verifications ADD COLUMN future_user_id UUID;
+    END IF;
+END $$;
 
 -- Indexes for verifications
 CREATE INDEX IF NOT EXISTS idx_verifications_user_type ON verifications(user_id, target_type) WHERE user_id IS NOT NULL;

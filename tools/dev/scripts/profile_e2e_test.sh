@@ -440,19 +440,56 @@ setup_test_user() {
 create_test_profiles() {
     log_info "=== Creating Dedicated Test Profiles ==="
     
-    TEST_SOCIAL_PROFILE_ID=$(generate_uuid)
-    local social_profile_data="{\"objectId\":\"${TEST_SOCIAL_PROFILE_ID}\",\"fullName\":\"Social Test User\",\"socialName\":\"${TEST_SOCIAL_NAME}\",\"email\":\"social-${TIMESTAMP}@example.com\"}"
+    # Helper function to create profile without counting as test
+    create_profile_setup() {
+        local profile_id="$1"
+        local full_name="$2"
+        local social_name="$3"
+        local email="$4"
+        
+        local profile_data="{\"objectId\":\"${profile_id}\",\"fullName\":\"${full_name}\",\"email\":\"${email}\"}"
+        if [[ -n "$social_name" ]]; then
+            profile_data="{\"objectId\":\"${profile_id}\",\"fullName\":\"${full_name}\",\"socialName\":\"${social_name}\",\"email\":\"${email}\"}"
+        fi
+        
+        local hmac_headers=$(build_hmac_headers "POST" "/profile/dto" "" "$profile_data")
+        local response
+        local status_code
+        
+        # Build curl command with HMAC headers
+        local curl_cmd="curl -s -w '\n%{http_code}' --max-time 10 -X POST '${PROFILE_BASE}/dto' -H 'Content-Type: application/json'"
+        while IFS= read -r header; do
+            if [[ -n "$header" ]]; then
+                curl_cmd="$curl_cmd -H '$header'"
+            fi
+        done <<< "$hmac_headers"
+        curl_cmd="$curl_cmd -d '$profile_data'"
+        
+        response=$(eval "$curl_cmd" 2>&1)
+        status_code=$(echo "$response" | tail -n1)
+        if [[ "$status_code" == "201" ]]; then
+            return 0
+        else
+            return 1
+        fi
+    }
     
-    local hmac_headers=$(build_hmac_headers "POST" "/profile/dto" "" "$social_profile_data")
-    make_request "POST" "${PROFILE_BASE}/dto" "$social_profile_data" "$hmac_headers" "201" "Create test profile with social name" "false" > /dev/null 2>&1 || log_warning "Failed to create social profile"
+    TEST_SOCIAL_PROFILE_ID=$(generate_uuid)
+    # Use TEST_SOCIAL_NAME so the test can find it later
+    if ! create_profile_setup "$TEST_SOCIAL_PROFILE_ID" "Social Test User" "$TEST_SOCIAL_NAME" "social-${TIMESTAMP}-${RANDOM}@example.com"; then
+        log_warning "Failed to create social profile (may already exist)"
+    fi
     
     TEST_PROFILE_IDS=()
     for i in {1..3}; do
         local profile_id=$(generate_uuid)
         TEST_PROFILE_IDS+=("$profile_id")
-        local profile_data="{\"objectId\":\"${profile_id}\",\"fullName\":\"Batch Test User $i\",\"email\":\"batch${i}-${TIMESTAMP}@example.com\"}"
-        local hmac_headers=$(build_hmac_headers "POST" "/profile/dto" "" "$profile_data")
-        make_request "POST" "${PROFILE_BASE}/dto" "$profile_data" "$hmac_headers" "201" "Create batch test profile $i" "false" > /dev/null 2>&1 || log_warning "Failed to create batch profile $i"
+        # Use nanosecond precision for truly unique emails
+        local unique_suffix="${TIMESTAMP}-$(date +%s%N | cut -b10-19)-${RANDOM}-${i}"
+        local unique_email="batch${i}-${unique_suffix}@example.com"
+        if ! create_profile_setup "$profile_id" "Batch Test User $i" "" "$unique_email"; then
+            log_warning "Failed to create batch profile $i (may already exist)"
+        fi
     done
     
     log_success "Created test profiles: 1 with social name + 3 for batch operations"
@@ -576,8 +613,13 @@ test_hmac_protected_endpoints() {
     local response=$(make_request "GET" "${PROFILE_BASE}/dto/id/${USER_ID}" "" "$hmac_headers" "200" "Read DTO profile with valid HMAC" "true")
     validate_profile_response "$response" "DTO profile" || CRITICAL_FAILURE=true
     
+    # Generate a truly unique profile ID using timestamp + random to avoid conflicts
+    # Keep social_name under 50 chars (validation limit)
+    local short_suffix="${TIMESTAMP}${RANDOM}"
     local new_profile_id=$(generate_uuid)
-    local dto_create_data="{\"objectId\":\"${new_profile_id}\",\"fullName\":\"HMAC Test User\",\"email\":\"hmactest-${TIMESTAMP}@example.com\"}"
+    local unique_email="hmactest-${short_suffix}@example.com"
+    local unique_social_name="hmac${short_suffix:0:46}"  # Max 50 chars: "hmac" + up to 46 chars
+    local dto_create_data="{\"objectId\":\"${new_profile_id}\",\"fullName\":\"HMAC Test User\",\"email\":\"${unique_email}\",\"socialName\":\"${unique_social_name}\"}"
     local hmac_headers=$(build_hmac_headers "POST" "/profile/dto" "" "$dto_create_data")
     make_request "POST" "${PROFILE_BASE}/dto" "$dto_create_data" "$hmac_headers" "201" "Create DTO profile with valid HMAC" "true"
     

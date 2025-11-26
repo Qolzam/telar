@@ -27,6 +27,10 @@ log_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
+log_error() {
+    echo -e "\033[0;31m[ERROR]\033[0m $1"
+}
+
 # Stop servers safely (using the fixed stop script)
 stop_servers_safe() {
     log_info "Stopping servers safely..."

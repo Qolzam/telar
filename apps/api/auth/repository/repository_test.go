@@ -75,6 +75,7 @@ func TestPostgresAuthRepository_Integration(t *testing.T) {
 		CREATE TABLE IF NOT EXISTS verifications (
 			id UUID PRIMARY KEY,
 			user_id UUID REFERENCES user_auths(id) ON DELETE CASCADE,
+			future_user_id UUID,
 			code VARCHAR(10) NOT NULL,
 			target VARCHAR(255) NOT NULL,
 			target_type VARCHAR(50) NOT NULL,

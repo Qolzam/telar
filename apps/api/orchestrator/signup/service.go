@@ -8,9 +8,11 @@ package signup
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
+	"github.com/gofrs/uuid"
 	authModels "github.com/qolzam/telar/apps/api/auth/models"
 	authRepo "github.com/qolzam/telar/apps/api/auth/repository"
 	profileModels "github.com/qolzam/telar/apps/api/profile/models"
@@ -60,11 +62,22 @@ func (s *service) CompleteSignup(ctx context.Context, verification *authModels.U
 		return fmt.Errorf("verification code has expired")
 	}
 
+	// Debug: Log verification details
+	log.Printf("[CompleteSignup] Verification ID: %s, UserId: %s, Target: %s", 
+		verification.ObjectId.String(), verification.UserId.String(), verification.Target)
+
+	// Validate UserId is not Nil (should be populated from future_user_id by repository)
+	if verification.UserId == uuid.Nil {
+		return fmt.Errorf("verification UserId is Nil - cannot create user")
+	}
+
 	// Use authRepo.WithTransaction to start the transaction scope
 	// Crucially, we pass the transaction context `txCtx` to ALL repositories
 	// Note: Verification is already marked as used by verifyUserByCode before this is called
-	return s.authRepo.WithTransaction(ctx, func(txCtx context.Context) error {
+		return s.authRepo.WithTransaction(ctx, func(txCtx context.Context) error {
 		// A. Create Auth User (within transaction)
+		log.Printf("[CompleteSignup] Creating user auth with ObjectId: %s, Username: %s", 
+			verification.UserId.String(), verification.Target)
 		userAuth := &authModels.UserAuth{
 			ObjectId:      verification.UserId,
 			Username:      verification.Target,
@@ -77,8 +90,10 @@ func (s *service) CompleteSignup(ctx context.Context, verification *authModels.U
 		}
 
 		if err := s.authRepo.CreateUser(txCtx, userAuth); err != nil {
+			log.Printf("[CompleteSignup] Failed to create user auth: %v", err)
 			return fmt.Errorf("failed to create user auth: %w", err)
 		}
+		log.Printf("[CompleteSignup] User auth created successfully")
 
 		// C. Create Profile (within transaction)
 		// This works because `profileRepo` methods accept a context.
@@ -124,10 +139,26 @@ func (s *service) CompleteSignup(ctx context.Context, verification *authModels.U
 			UpdatedAt:     time.Now(),
 		}
 
+		log.Printf("[CompleteSignup] Creating profile with ObjectId: %s, FullName: %s, SocialName: %s", 
+			verification.UserId.String(), fullName, socialName)
 		if err := s.profileRepo.Create(txCtx, profile); err != nil {
+			log.Printf("[CompleteSignup] Failed to create user profile: %v", err)
 			return fmt.Errorf("failed to create user profile: %w", err)
 		}
+		log.Printf("[CompleteSignup] Profile created successfully")
 
+		// Update verification record to set user_id now that user exists (within same transaction)
+		// This satisfies the FK constraint and allows future lookups
+		log.Printf("[CompleteSignup] Updating verification user_id: %s", verification.UserId.String())
+		if err := s.verifRepo.UpdateUserID(txCtx, verification.ObjectId, verification.UserId); err != nil {
+			// Log but don't fail - user and profile are already created
+			// The verification record can be updated later if needed
+			log.Printf("[CompleteSignup] Warning: Failed to update verification user_id: %v", err)
+		} else {
+			log.Printf("[CompleteSignup] Verification user_id updated successfully")
+		}
+
+		log.Printf("[CompleteSignup] Signup completed successfully")
 		return nil
 	})
 }

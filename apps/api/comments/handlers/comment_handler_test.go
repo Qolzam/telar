@@ -38,16 +38,6 @@ type MockCommentService struct {
 	validateCommentOwnershipFunc     func(ctx context.Context, commentID uuid.UUID, userID uuid.UUID) error
 	createIndexFunc                  func(ctx context.Context, indexes map[string]interface{}) error
 	deleteByOwnerFunc                func(ctx context.Context, owner uuid.UUID, objectId uuid.UUID) error
-	setFieldFunc                     func(ctx context.Context, objectId uuid.UUID, field string, value interface{}) error
-	incrementFieldFunc               func(ctx context.Context, objectId uuid.UUID, field string, delta int) error
-	updateByOwnerFunc                func(ctx context.Context, objectId uuid.UUID, owner uuid.UUID, fields map[string]interface{}) error
-	updateProfileForOwnerFunc        func(ctx context.Context, owner uuid.UUID, displayName, avatar string) error
-	updateFieldsFunc                 func(ctx context.Context, commentID uuid.UUID, updates map[string]interface{}) error
-	incrementFieldsFunc              func(ctx context.Context, commentID uuid.UUID, increments map[string]interface{}) error
-	updateAndIncrementFieldsFunc     func(ctx context.Context, commentID uuid.UUID, updates map[string]interface{}, increments map[string]interface{}) error
-	updateFieldsWithOwnershipFunc    func(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID, updates map[string]interface{}) error
-	deleteWithOwnershipFunc          func(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID) error
-	incrementFieldsWithOwnershipFunc func(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID, increments map[string]interface{}) error
 
 	// Mock state for testing
 	shouldFail   bool
@@ -185,75 +175,7 @@ func (m *MockCommentService) ValidateCommentOwnership(ctx context.Context, comme
 	return nil
 }
 
-func (m *MockCommentService) SetField(ctx context.Context, objectId uuid.UUID, field string, value interface{}) error {
-	if m.setFieldFunc != nil {
-		return m.setFieldFunc(ctx, objectId, field, value)
-	}
-	return nil
-}
-
-func (m *MockCommentService) IncrementField(ctx context.Context, objectId uuid.UUID, field string, delta int) error {
-	if m.incrementFieldFunc != nil {
-		return m.incrementFieldFunc(ctx, objectId, field, delta)
-	}
-	return nil
-}
-
-func (m *MockCommentService) UpdateByOwner(ctx context.Context, objectId uuid.UUID, owner uuid.UUID, fields map[string]interface{}) error {
-	if m.updateByOwnerFunc != nil {
-		return m.updateByOwnerFunc(ctx, objectId, owner, fields)
-	}
-	return nil
-}
-
-func (m *MockCommentService) UpdateProfileForOwner(ctx context.Context, owner uuid.UUID, displayName, avatar string) error {
-	if m.updateProfileForOwnerFunc != nil {
-		return m.updateProfileForOwnerFunc(ctx, owner, displayName, avatar)
-	}
-	return nil
-}
-
-func (m *MockCommentService) UpdateFields(ctx context.Context, commentID uuid.UUID, updates map[string]interface{}) error {
-	if m.updateFieldsFunc != nil {
-		return m.updateFieldsFunc(ctx, commentID, updates)
-	}
-	return nil
-}
-
-func (m *MockCommentService) IncrementFields(ctx context.Context, commentID uuid.UUID, increments map[string]interface{}) error {
-	if m.incrementFieldsFunc != nil {
-		return m.incrementFieldsFunc(ctx, commentID, increments)
-	}
-	return nil
-}
-
-func (m *MockCommentService) UpdateAndIncrementFields(ctx context.Context, commentID uuid.UUID, updates map[string]interface{}, increments map[string]interface{}) error {
-	if m.updateAndIncrementFieldsFunc != nil {
-		return m.updateAndIncrementFieldsFunc(ctx, commentID, updates, increments)
-	}
-	return nil
-}
-
-func (m *MockCommentService) UpdateFieldsWithOwnership(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID, updates map[string]interface{}) error {
-	if m.updateFieldsWithOwnershipFunc != nil {
-		return m.updateFieldsWithOwnershipFunc(ctx, commentID, ownerID, updates)
-	}
-	return nil
-}
-
-func (m *MockCommentService) DeleteWithOwnership(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID) error {
-	if m.deleteWithOwnershipFunc != nil {
-		return m.deleteWithOwnershipFunc(ctx, commentID, ownerID)
-	}
-	return nil
-}
-
-func (m *MockCommentService) IncrementFieldsWithOwnership(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID, increments map[string]interface{}) error {
-	if m.incrementFieldsWithOwnershipFunc != nil {
-		return m.incrementFieldsWithOwnershipFunc(ctx, commentID, ownerID, increments)
-	}
-	return nil
-}
+// Legacy map-based methods removed from mock - use type-safe methods instead
 
 // Test cases
 

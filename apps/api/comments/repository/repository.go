@@ -38,6 +38,12 @@ type CommentRepository interface {
 	// Returns root comments (parent_comment_id IS NULL) ordered by created_date DESC
 	FindByPostID(ctx context.Context, postID uuid.UUID, limit, offset int) ([]*models.Comment, error)
 
+	// FindByPostIDWithCursor retrieves comments for a specific post with cursor-based pagination
+	// Returns root comments (parent_comment_id IS NULL) ordered by created_date DESC, id DESC
+	// cursor is a base64-encoded string containing created_date and id
+	// Returns comments, nextCursor (empty if no more), and error
+	FindByPostIDWithCursor(ctx context.Context, postID uuid.UUID, cursor string, limit int) ([]*models.Comment, string, error)
+
 	// FindByUserID retrieves comments created by a specific user with pagination
 	FindByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*models.Comment, error)
 

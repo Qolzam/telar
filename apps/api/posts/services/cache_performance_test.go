@@ -60,7 +60,8 @@ func TestPostsServiceCacheIntegration(t *testing.T) {
 	}
 	
 	// Create PostRepository from the client
-	postRepo := repository.NewPostgresRepository(client)
+	// Use schema-aware constructor for test isolation
+	postRepo := repository.NewPostgresRepositoryWithSchema(client, iso.LegacyConfig.PGSchema)
 	
 	// Create posts service with cache
 	postService := NewPostService(postRepo, iso.Config, nil)

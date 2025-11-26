@@ -8,7 +8,10 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofrs/uuid"
@@ -20,23 +23,45 @@ import (
 // postgresCommentRepository implements CommentRepository using raw SQL queries
 type postgresCommentRepository struct {
 	client *postgres.Client
+	schema string // Schema name for search_path isolation
 }
 
 // NewPostgresCommentRepository creates a new PostgreSQL repository for comments
 func NewPostgresCommentRepository(client *postgres.Client) CommentRepository {
 	return &postgresCommentRepository{
 		client: client,
+		schema: "", // Default to empty (uses default schema)
+	}
+}
+
+// NewPostgresCommentRepositoryWithSchema creates a new PostgreSQL repository with explicit schema
+func NewPostgresCommentRepositoryWithSchema(client *postgres.Client, schema string) CommentRepository {
+	return &postgresCommentRepository{
+		client: client,
+		schema: schema,
 	}
 }
 
 // getExecutor returns either the transaction from context or the DB connection
+// If not in a transaction and schema is set, ensures search_path is set before returning executor
 func (r *postgresCommentRepository) getExecutor(ctx context.Context) sqlx.ExtContext {
 	// Check for transaction in context (shared key for cross-package transactions)
 	if txVal := ctx.Value("tx"); txVal != nil {
 		if tx, ok := txVal.(*sqlx.Tx); ok {
+			// Transaction already has search_path set in PostRepository.WithTransaction
 			return tx
 		}
 	}
+	
+	// Not in transaction - ensure search_path is set on connection if schema is specified
+	// This is necessary because connection pooling means each connection needs search_path set
+	if r.schema != "" {
+		setSearchPathSQL := fmt.Sprintf(`SET search_path TO %s`, r.schema)
+		// Execute on the connection to set search_path for subsequent queries
+		// Note: This is per-connection, so it will persist for this connection's lifetime
+		_, _ = r.client.DB().ExecContext(ctx, setSearchPathSQL)
+	}
+	
 	return r.client.DB()
 }
 
@@ -207,6 +232,120 @@ func (r *postgresCommentRepository) FindByPostID(ctx context.Context, postID uui
 	}
 
 	return comments, nil
+}
+
+// FindByPostIDWithCursor retrieves root comments for a specific post with cursor-based pagination
+// Uses keyset pagination with created_date DESC, id DESC for stable ordering
+func (r *postgresCommentRepository) FindByPostIDWithCursor(ctx context.Context, postID uuid.UUID, cursor string, limit int) ([]*models.Comment, string, error) {
+	// Parse cursor if provided
+	var cursorCreatedDate int64
+	var cursorID uuid.UUID
+	hasCursor := false
+	
+	if cursor != "" {
+		// Simple cursor format: base64(created_date:uuid)
+		// Decode cursor
+		decoded, err := base64.URLEncoding.DecodeString(cursor)
+		if err != nil {
+			return nil, "", fmt.Errorf("invalid cursor format: %w", err)
+		}
+		
+		// Parse format: "created_date:uuid"
+		parts := strings.Split(string(decoded), ":")
+		if len(parts) != 2 {
+			return nil, "", fmt.Errorf("invalid cursor format: expected created_date:uuid")
+		}
+		
+		cursorCreatedDate, err = strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			return nil, "", fmt.Errorf("invalid cursor created_date: %w", err)
+		}
+		
+		cursorID, err = uuid.FromString(parts[1])
+		if err != nil {
+			return nil, "", fmt.Errorf("invalid cursor id: %w", err)
+		}
+		
+		hasCursor = true
+	}
+	
+	// Build query with cursor condition
+	query := `
+		SELECT 
+			id, post_id, owner_user_id, parent_comment_id, text, score,
+			owner_display_name, owner_avatar, is_deleted, deleted_date,
+			created_at, updated_at, created_date, last_updated
+		FROM comments 
+		WHERE post_id = $1 AND parent_comment_id IS NULL AND is_deleted = FALSE`
+	
+	args := []interface{}{postID}
+	argIndex := 2
+	
+	if hasCursor {
+		// Keyset pagination: (created_date < cursorCreatedDate) OR (created_date = cursorCreatedDate AND id < cursorID)
+		query += fmt.Sprintf(` AND ((created_date < $%d) OR (created_date = $%d AND id < $%d))`, argIndex, argIndex, argIndex+1)
+		args = append(args, cursorCreatedDate, cursorID)
+		argIndex += 2
+	}
+	
+	query += ` ORDER BY created_date DESC, id DESC LIMIT $` + fmt.Sprintf("%d", argIndex)
+	args = append(args, limit+1) // Fetch one extra to determine if there's a next page
+	
+	var results []struct {
+		ID              uuid.UUID   `db:"id"`
+		PostID          uuid.UUID   `db:"post_id"`
+		OwnerUserID     uuid.UUID   `db:"owner_user_id"`
+		ParentCommentID *uuid.UUID  `db:"parent_comment_id"`
+		Text            string      `db:"text"`
+		Score           int64       `db:"score"`
+		OwnerDisplayName string      `db:"owner_display_name"`
+		OwnerAvatar     string      `db:"owner_avatar"`
+		IsDeleted       bool        `db:"is_deleted"`
+		DeletedDate     int64       `db:"deleted_date"`
+		CreatedAt       time.Time   `db:"created_at"`
+		UpdatedAt       time.Time   `db:"updated_at"`
+		CreatedDate     int64       `db:"created_date"`
+		LastUpdated     int64       `db:"last_updated"`
+	}
+	
+	err := sqlx.SelectContext(ctx, r.getExecutor(ctx), &results, query, args...)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to find comments by post ID with cursor: %w", err)
+	}
+	
+	// Check if there's a next page
+	hasNext := len(results) > limit
+	if hasNext {
+		results = results[:limit] // Remove the extra item
+	}
+	
+	comments := make([]*models.Comment, len(results))
+	for i, result := range results {
+		comments[i] = &models.Comment{
+			ObjectId:         result.ID,
+			PostId:           result.PostID,
+			OwnerUserId:      result.OwnerUserID,
+			ParentCommentId:  result.ParentCommentID,
+			Text:             result.Text,
+			Score:            result.Score,
+			OwnerDisplayName: result.OwnerDisplayName,
+			OwnerAvatar:      result.OwnerAvatar,
+			Deleted:          result.IsDeleted,
+			DeletedDate:      result.DeletedDate,
+			CreatedDate:      result.CreatedDate,
+			LastUpdated:      result.LastUpdated,
+		}
+	}
+	
+	// Generate next cursor from last comment
+	var nextCursor string
+	if hasNext && len(comments) > 0 {
+		lastComment := comments[len(comments)-1]
+		cursorData := fmt.Sprintf("%d:%s", lastComment.CreatedDate, lastComment.ObjectId.String())
+		nextCursor = base64.URLEncoding.EncodeToString([]byte(cursorData))
+	}
+	
+	return comments, nextCursor, nil
 }
 
 // FindByUserID retrieves comments created by a specific user with pagination

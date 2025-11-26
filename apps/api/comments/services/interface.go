@@ -37,20 +37,6 @@ type CommentService interface {
 
 	// Utility operations
 	ValidateCommentOwnership(ctx context.Context, commentID uuid.UUID, userID uuid.UUID) error
-	
-	// Backward compatibility methods (for existing handlers)
-	SetField(ctx context.Context, objectId uuid.UUID, field string, value interface{}) error
-	IncrementField(ctx context.Context, objectId uuid.UUID, field string, delta int) error
-	UpdateByOwner(ctx context.Context, objectId uuid.UUID, owner uuid.UUID, fields map[string]interface{}) error
-	UpdateProfileForOwner(ctx context.Context, owner uuid.UUID, displayName, avatar string) error
-
-	// Field operations for flexible updates
-	UpdateFields(ctx context.Context, commentID uuid.UUID, updates map[string]interface{}) error
-	IncrementFields(ctx context.Context, commentID uuid.UUID, increments map[string]interface{}) error
-	UpdateAndIncrementFields(ctx context.Context, commentID uuid.UUID, updates map[string]interface{}, increments map[string]interface{}) error
-	UpdateFieldsWithOwnership(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID, updates map[string]interface{}) error
-	DeleteWithOwnership(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID) error
-	IncrementFieldsWithOwnership(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID, increments map[string]interface{}) error
 
 	// GetRootCommentCount counts root comments (non-reply comments) for a post
 	GetRootCommentCount(ctx context.Context, postID uuid.UUID) (int64, error)

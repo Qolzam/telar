@@ -86,5 +86,9 @@ type VerificationRepository interface {
 	// UpdateVerificationCode updates the code and expiration for a verification
 	// Used for resending verification emails
 	UpdateVerificationCode(ctx context.Context, verificationID uuid.UUID, newCode string, newExpiresAt int64) error
+
+	// UpdateUserID updates the user_id for a verification record
+	// Used after user is created to satisfy FK constraint
+	UpdateUserID(ctx context.Context, verificationID uuid.UUID, userID uuid.UUID) error
 }
 

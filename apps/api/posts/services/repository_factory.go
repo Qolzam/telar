@@ -8,12 +8,45 @@ package services
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strings"
 
 	"github.com/qolzam/telar/apps/api/internal/database/postgres"
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
 	"github.com/qolzam/telar/apps/api/posts/repository"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 )
+
+// extractSchemaFromDSN extracts the schema name from a PostgreSQL DSN string
+// Returns empty string if no schema is specified (defaults to public schema)
+func extractSchemaFromDSN(dsn string) string {
+	if dsn == "" {
+		return ""
+	}
+
+	// Parse DSN as URL
+	parsedURL, err := url.Parse(dsn)
+	if err != nil {
+		// If DSN is not a URL, try to extract search_path from query string manually
+		if strings.Contains(dsn, "search_path=") {
+			parts := strings.Split(dsn, "search_path=")
+			if len(parts) > 1 {
+				schema := strings.Split(parts[1], "&")[0]
+				schema = strings.Split(schema, "?")[0]
+				return strings.TrimSpace(schema)
+			}
+		}
+		return ""
+	}
+
+	// Extract search_path from query parameters
+	query := parsedURL.Query()
+	if schema := query.Get("search_path"); schema != "" {
+		return schema
+	}
+
+	return ""
+}
 
 // NewPostRepositoryFromConfig creates a PostRepository from platform config
 // This is a helper function for wiring up the new domain-specific repository
@@ -36,6 +69,9 @@ func NewPostRepositoryFromConfig(ctx context.Context, cfg *platformconfig.Config
 		MaxIdleConnections: cfg.Database.Postgres.MaxIdleConns,
 		MaxLifetime:        int(cfg.Database.Postgres.ConnMaxLifetime.Seconds()),
 		ConnectTimeout:     10,
+		// Schema is extracted from DSN or defaults to empty (public schema)
+		// For production, schema should be set via environment variable or DSN
+		Schema: extractSchemaFromDSN(cfg.Database.Postgres.DSN),
 	}
 
 	client, err := postgres.NewClient(ctx, pgConfig, cfg.Database.Postgres.Database)
@@ -51,6 +87,7 @@ func NewPostRepositoryFromConfig(ctx context.Context, cfg *platformconfig.Config
 		}
 	}
 
-	return repository.NewPostgresRepository(client), nil
+	// Use schema-aware constructor to ensure transactions set search_path correctly
+	return repository.NewPostgresRepositoryWithSchema(client, pgConfig.Schema), nil
 }
 

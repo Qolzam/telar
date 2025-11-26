@@ -42,6 +42,14 @@ func (m *MockCommentRepository) FindByPostID(ctx context.Context, postID uuid.UU
 	return args.Get(0).([]*models.Comment), args.Error(1)
 }
 
+func (m *MockCommentRepository) FindByPostIDWithCursor(ctx context.Context, postID uuid.UUID, cursor string, limit int) ([]*models.Comment, string, error) {
+	args := m.Called(ctx, postID, cursor, limit)
+	if args.Get(0) == nil {
+		return nil, args.String(1), args.Error(2)
+	}
+	return args.Get(0).([]*models.Comment), args.String(1), args.Error(2)
+}
+
 func (m *MockCommentRepository) FindByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*models.Comment, error) {
 	args := m.Called(ctx, userID, limit, offset)
 	if args.Get(0) == nil {

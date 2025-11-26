@@ -8,7 +8,6 @@ package postgres
 import (
 	"context"
 	"testing"
-	"time"
 
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
 )

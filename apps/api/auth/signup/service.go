@@ -120,9 +120,12 @@ func (s *Service) InitiateEmailVerification(ctx context.Context, input EmailVeri
 	expiresAt := time.Now().Add(15 * time.Minute).Unix()
 
 	// Store verification record securely
+	// Note: During signup, user_id is NULL in the database (user doesn't exist yet),
+	// but we store the future user ID in the verification record so CompleteSignup can use it.
+	// The repository will handle setting user_id to NULL in the database.
 	verification := &models.UserVerification{
 		ObjectId:        verifyId,
-		UserId:          input.UserId,
+		UserId:          input.UserId, // Store the future user ID (will be NULL in DB until user is created)
 		Code:            code,
 		Target:          input.EmailTo,
 		TargetType:      "email",
@@ -300,9 +303,12 @@ func (s *Service) InitiatePhoneVerification(ctx context.Context, input PhoneVeri
 	expiresAt := time.Now().Add(15 * time.Minute).Unix()
 
 	// Store verification record securely
+	// Note: During signup, user_id is NULL in the database (user doesn't exist yet),
+	// but we store the future user ID in the verification record so CompleteSignup can use it.
+	// The repository will handle setting user_id to NULL in the database.
 	verification := &models.UserVerification{
 		ObjectId:        verifyId,
-		UserId:          input.UserId,
+		UserId:          input.UserId, // Store the future user ID (will be NULL in DB until user is created)
 		Code:            code,
 		Target:          input.PhoneNumber,
 		TargetType:      "phone",

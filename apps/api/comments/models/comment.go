@@ -54,6 +54,7 @@ type CommentQueryFilter struct {
 	CreatedBefore   *time.Time `json:"createdBefore,omitempty"`
 	Limit          int        `json:"limit" validate:"min=1,max=100"`
 	Page           int        `json:"page,omitempty" validate:"min=1"`
+	Cursor         string     `json:"cursor,omitempty"` // Cursor for cursor-based pagination
 	SortField      string     `json:"sortField,omitempty"`
 	SortDirection  string     `json:"sortDirection,omitempty"`
 	SortBy         string     `json:"sortBy,omitempty"`
@@ -80,8 +81,14 @@ type CommentResponse struct {
 // CommentsListResponse represents the response for listing comments
 type CommentsListResponse struct {
 	Comments []CommentResponse `json:"comments"`
-	Count    int               `json:"count"`
-	Page     int               `json:"page,omitempty"`
-	Limit    int               `json:"limit,omitempty"`
-	HasMore  bool              `json:"hasMore,omitempty"`
+	
+	// Cursor-based pagination (preferred)
+	NextCursor string `json:"nextCursor,omitempty"`
+	HasNext    bool   `json:"hasNext"`
+	
+	// Legacy pagination (deprecated but maintained for backward compatibility)
+	Count    int  `json:"count,omitempty"`
+	Page     int  `json:"page,omitempty"`
+	Limit    int  `json:"limit,omitempty"`
+	HasMore  bool `json:"hasMore,omitempty"`
 }

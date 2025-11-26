@@ -1,10 +1,6 @@
 # ====================================================================================
 # Telar Microservices - Test & CI Orchestration Makefile
 #
-# Philosophy:
-# 1. Use variables for common settings (parallelism, timeouts, flags) for consistency.
-# 2. The Makefile manages the ENVIRONMENT (Docker containers, build tags).
-# 3. The Go test suite manages the test LOGIC (running against PostgreSQL).
 # ====================================================================================
 
 .PHONY: all help \
@@ -18,7 +14,7 @@
         test-transactions \
         lint lint-fix \
         run-api run-web run-both run-profile run-profile-standalone run-posts run-comments dev stop-servers restart-servers pre-flight-check logs-api logs-web \
-        test-e2e-auth test-e2e-posts test-e2e-profile test-e2e-comments
+        test-e2e-auth test-e2e-posts test-e2e-profile test-e2e-comments test-e2e-web
 
 # --- Configuration Variables ---
 PARALLEL ?= 8
@@ -309,6 +305,7 @@ help:
 	@echo "  test-e2e-posts    - Run Posts E2E tests with automatic server management."
 	@echo "  test-e2e-comments - Run Comments E2E tests with automatic server management."
 	@echo "  test-e2e-profile  - Run Profile E2E tests with automatic server management."
+	@echo "  test-e2e-web      - Run Web E2E tests (Playwright browser tests) with automatic server management."
 	@echo "  stop-servers      - Stop all running servers."
 	@echo "  restart-servers   - Restart all servers safely (preserves Cursor processes)."
 	@echo "  pre-flight-check  - Check system readiness before server startup."
@@ -369,6 +366,8 @@ restart-servers:
 
 # Target to run the API stack in the background for E2E tests
 run-api-background: up-dbs-dev
+	@echo "Applying database migrations..."
+	@./tools/dev/scripts/migrate.sh || (echo "Migration failed. Check database connection." && exit 1)
 	@echo "Starting API in background..."
 	@ps aux | grep "go run.*cmd/server/main.go\|go run.*cmd/main.go" | grep -v grep | awk '{print $$2}' | xargs kill -9 2>/dev/null || true
 	@sleep 1
@@ -409,6 +408,12 @@ test-e2e-profile: stop-api-background run-api-background
 	@echo "Running Profile E2E tests..."
 	@./tools/dev/scripts/profile_e2e_test.sh || true
 	@$(MAKE) stop-api-background
+
+# Running E2E tests for web application (Playwright browser tests)
+test-e2e-web:
+	@echo "Running Web E2E tests with Playwright..."
+	@echo "This will start servers if not running and test the full user flow in browser"
+	@cd apps/web && pnpm test:e2e
 
 
 pre-flight-check:

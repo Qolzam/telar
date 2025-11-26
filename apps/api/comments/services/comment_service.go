@@ -298,9 +298,48 @@ func (s *commentService) QueryComments(ctx context.Context, filter *models.Comme
     return result, nil
 }
 
-// QueryCommentsWithCursor currently reuses offset pagination.
+// QueryCommentsWithCursor retrieves comments with cursor-based pagination
 func (s *commentService) QueryCommentsWithCursor(ctx context.Context, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error) {
-    return s.QueryComments(ctx, filter)
+    if filter == nil {
+        return nil, fmt.Errorf("filter is required")
+    }
+
+    // Default limit
+    limit := filter.Limit
+    if limit <= 0 {
+        limit = defaultCommentLimit
+    } else if limit > maxCommentLimit {
+        limit = maxCommentLimit
+    }
+
+    // Use cursor pagination for post comments (most common use case)
+    if filter.PostId == nil {
+        // Fall back to offset pagination if no post filter
+        return s.QueryComments(ctx, filter)
+    }
+
+    // Use cursor pagination for post comments
+    cursor := filter.Cursor
+
+    comments, nextCursor, err := s.commentRepo.FindByPostIDWithCursor(ctx, *filter.PostId, cursor, limit)
+    if err != nil {
+        return nil, fmt.Errorf("failed to query comments with cursor: %w", err)
+    }
+
+    // Convert to response format
+    responses := make([]models.CommentResponse, len(comments))
+    for i, comment := range comments {
+        responses[i] = s.convertToCommentResponse(comment)
+    }
+
+    result := &models.CommentsListResponse{
+        Comments:   responses,
+        NextCursor: nextCursor,
+        HasNext:    nextCursor != "",
+        Limit:      limit,
+    }
+
+    return result, nil
 }
 
 // UpdateComment updates a comment's text for the owning user.
@@ -539,242 +578,10 @@ func (s *commentService) convertToCommentResponse(comment *models.Comment) model
     }
 }
 
-// Backward compatibility helpers
-
-func (s *commentService) SetField(ctx context.Context, objectID uuid.UUID, field string, value interface{}) error {
-    updates := map[string]interface{}{field: value}
-    return s.UpdateFields(ctx, objectID, updates)
-}
-
-func (s *commentService) IncrementField(ctx context.Context, objectID uuid.UUID, field string, delta int) error {
-    increments := map[string]interface{}{field: delta}
-    return s.IncrementFields(ctx, objectID, increments)
-}
-
-func (s *commentService) UpdateByOwner(ctx context.Context, objectID uuid.UUID, owner uuid.UUID, fields map[string]interface{}) error {
-    return s.UpdateFieldsWithOwnership(ctx, objectID, owner, fields)
-}
-
-func (s *commentService) UpdateProfileForOwner(ctx context.Context, owner uuid.UUID, displayName, avatar string) error {
-    return s.UpdateCommentProfile(ctx, owner, displayName, avatar)
-}
-
-func (s *commentService) UpdateFields(ctx context.Context, commentID uuid.UUID, updates map[string]interface{}) error {
-    if len(updates) == 0 {
-        return nil
-    }
-
-    // Load existing comment
-    comment, err := s.commentRepo.FindByID(ctx, commentID)
-    if err != nil {
-        if err.Error() == "comment not found" {
-            return commentsErrors.ErrCommentNotFound
-        }
-        return fmt.Errorf("failed to find comment: %w", err)
-    }
-
-    if comment.Deleted {
-        return commentsErrors.ErrCommentNotFound
-    }
-
-    // Apply updates to comment struct
-    if text, ok := updates["text"].(string); ok {
-        comment.Text = text
-    }
-    if displayName, ok := updates["ownerDisplayName"].(string); ok {
-        comment.OwnerDisplayName = displayName
-    }
-    if avatar, ok := updates["ownerAvatar"].(string); ok {
-        comment.OwnerAvatar = avatar
-    }
-
-    comment.LastUpdated = utils.UTCNowUnix()
-
-    if err := s.commentRepo.Update(ctx, comment); err != nil {
-        return fmt.Errorf("failed to update fields: %w", err)
-    }
-
-    s.invalidateAllComments(ctx)
-    return nil
-}
-
-func (s *commentService) IncrementFields(ctx context.Context, commentID uuid.UUID, increments map[string]interface{}) error {
-    if len(increments) == 0 {
-        return nil
-    }
-
-    // Handle score increment (most common case)
-    if scoreDelta, ok := increments["score"].(int); ok {
-        if err := s.commentRepo.IncrementScore(ctx, commentID, scoreDelta); err != nil {
-            return fmt.Errorf("failed to increment score: %w", err)
-        }
-        s.invalidateAllComments(ctx)
-        return nil
-    }
-
-    // For other fields, load, update, and save
-    comment, err := s.commentRepo.FindByID(ctx, commentID)
-    if err != nil {
-        if err.Error() == "comment not found" {
-            return commentsErrors.ErrCommentNotFound
-        }
-        return fmt.Errorf("failed to find comment: %w", err)
-    }
-
-    if comment.Deleted {
-        return commentsErrors.ErrCommentNotFound
-    }
-
-    // Apply increments (only score is supported for atomic increments)
-    // Other fields would need to be handled differently
-    comment.LastUpdated = utils.UTCNowUnix()
-
-    if err := s.commentRepo.Update(ctx, comment); err != nil {
-        return fmt.Errorf("failed to update comment: %w", err)
-    }
-
-    s.invalidateAllComments(ctx)
-    return nil
-}
-
-func (s *commentService) UpdateAndIncrementFields(ctx context.Context, commentID uuid.UUID, updates map[string]interface{}, increments map[string]interface{}) error {
-    if len(updates) == 0 && len(increments) == 0 {
-        return nil
-    }
-
-    // Load existing comment
-    comment, err := s.commentRepo.FindByID(ctx, commentID)
-    if err != nil {
-        if err.Error() == "comment not found" {
-            return commentsErrors.ErrCommentNotFound
-        }
-        return fmt.Errorf("failed to find comment: %w", err)
-    }
-
-    if comment.Deleted {
-        return commentsErrors.ErrCommentNotFound
-    }
-
-    // Apply updates
-    if text, ok := updates["text"].(string); ok {
-        comment.Text = text
-    }
-    if displayName, ok := updates["ownerDisplayName"].(string); ok {
-        comment.OwnerDisplayName = displayName
-    }
-    if avatar, ok := updates["ownerAvatar"].(string); ok {
-        comment.OwnerAvatar = avatar
-    }
-
-    // Apply increments (score is handled atomically, others need manual update)
-    if scoreDelta, ok := increments["score"].(int); ok {
-        comment.Score += int64(scoreDelta)
-    }
-
-    comment.LastUpdated = utils.UTCNowUnix()
-
-    // Update comment
-    if err := s.commentRepo.Update(ctx, comment); err != nil {
-        return fmt.Errorf("failed to update and increment fields: %w", err)
-    }
-
-    s.invalidateAllComments(ctx)
-    return nil
-}
-
-func (s *commentService) UpdateFieldsWithOwnership(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID, updates map[string]interface{}) error {
-    if len(updates) == 0 {
-        return nil
-    }
-
-    // Verify ownership
-    comment, err := s.fetchOwnedComment(ctx, commentID, ownerID)
-    if err != nil {
-        return err
-    }
-
-    // Apply updates
-    if text, ok := updates["text"].(string); ok {
-        comment.Text = text
-    }
-    if displayName, ok := updates["ownerDisplayName"].(string); ok {
-        comment.OwnerDisplayName = displayName
-    }
-    if avatar, ok := updates["ownerAvatar"].(string); ok {
-        comment.OwnerAvatar = avatar
-    }
-
-    comment.LastUpdated = utils.UTCNowUnix()
-
-    if err := s.commentRepo.Update(ctx, comment); err != nil {
-        return fmt.Errorf("failed to update fields with ownership: %w", err)
-    }
-
-    s.invalidateUserComments(ctx, ownerID)
-    s.invalidateAllComments(ctx)
-    return nil
-}
-
-func (s *commentService) DeleteWithOwnership(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID) error {
-    // Verify ownership and get comment info
-    comment, err := s.fetchOwnedComment(ctx, commentID, ownerID)
-    if err != nil {
-        return err
-    }
-
-    // Check if root comment
-    isRootComment := comment.ParentCommentId == nil || *comment.ParentCommentId == uuid.Nil
-
-    // Use transaction for atomic deletion
-    if isRootComment {
-        err = s.postRepo.WithTransaction(ctx, func(txCtx context.Context) error {
-            if err := s.commentRepo.Delete(txCtx, commentID); err != nil {
-                return fmt.Errorf("failed to delete comment: %w", err)
-            }
-            if err := s.postRepo.IncrementCommentCount(txCtx, comment.PostId, -1); err != nil {
-                return fmt.Errorf("failed to decrement comment count: %w", err)
-            }
-            return nil
-        })
-        if err != nil {
-            return fmt.Errorf("failed to delete with ownership atomically: %w", err)
-        }
-    } else {
-        if err := s.commentRepo.Delete(ctx, commentID); err != nil {
-            return fmt.Errorf("failed to delete with ownership: %w", err)
-        }
-    }
-
-    s.invalidateUserComments(ctx, ownerID)
-    s.invalidateAllComments(ctx)
-    return nil
-}
-
-func (s *commentService) IncrementFieldsWithOwnership(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID, increments map[string]interface{}) error {
-    if len(increments) == 0 {
-        return nil
-    }
-
-    // Verify ownership
-    _, err := s.fetchOwnedComment(ctx, commentID, ownerID)
-    if err != nil {
-        return err
-    }
-
-    // Handle score increment (most common case)
-    if scoreDelta, ok := increments["score"].(int); ok {
-        if err := s.commentRepo.IncrementScore(ctx, commentID, scoreDelta); err != nil {
-            return fmt.Errorf("failed to increment score: %w", err)
-        }
-        s.invalidateUserComments(ctx, ownerID)
-        s.invalidateAllComments(ctx)
-        return nil
-    }
-
-    // For other fields, would need to load, update, and save
-    // This is a less common case, so we'll handle it generically
-    return fmt.Errorf("only score increment is supported for atomic operations")
-}
+// Legacy map-based update methods removed - use type-safe methods instead:
+// - UpdateComment (for text updates)
+// - IncrementScore (for score increments)
+// - UpdateCommentProfile (for profile updates)
 
 // getCommentCount is deprecated - use repository.Count directly
 // This method is no longer used and kept for backward compatibility only

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -74,9 +75,24 @@ func main() {
 	refEmail := cfg.Email.RefEmail
 	refEmailPass := cfg.Email.RefEmailPass
 
+	// Split comma-separated origins into a slice for Fiber CORS middleware
+	originList := strings.Split(webDomain, ",")
+	for i, origin := range originList {
+		originList[i] = strings.TrimSpace(origin)
+	}
+
+	// Create a map for fast origin lookup
+	allowedOrigins := make(map[string]bool)
+	for _, origin := range originList {
+		allowedOrigins[origin] = true
+	}
+
 	// CORS Configuration for Browser Direct Access
+	// Use AllowOriginsFunc to properly handle multiple origins
 	app.Use(cors.New(cors.Config{
-		AllowOrigins:     webDomain,
+		AllowOriginsFunc: func(origin string) bool {
+			return allowedOrigins[origin]
+		},
 		AllowCredentials: true,
 		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
 		AllowMethods:     "GET, POST, PUT, DELETE, PATCH, OPTIONS",

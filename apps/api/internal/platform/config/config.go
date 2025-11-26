@@ -194,7 +194,7 @@ func LoadFromEnv() (*Config, error) {
 			BaseRoute:       getEnvOrDefault("BASE_ROUTE", "/api"),
 			Gateway:         getEnvOrDefault("GATEWAY", "http://localhost:8080"),
 			InternalGateway: getEnvOrDefault("INTERNAL_GATEWAY", "http://localhost:8080"),
-			WebDomain:       getEnvOrDefault("WEB_DOMAIN", "http://localhost:3000,http://localhost:3001"),
+			WebDomain:       getEnvOrDefault("WEB_DOMAIN", "http://localhost:3000"),
 			Debug:           getEnvAsBool("DEBUG", false),
 		},
 		Database: DatabaseConfig{
@@ -235,7 +235,7 @@ func LoadFromEnv() (*Config, error) {
 			Origin:           getEnvOrDefault("ORIGIN", ""),
 		},
 		App: AppConfig{
-			WebDomain:      getEnvOrDefault("WEB_DOMAIN", "http://localhost:3000,http://localhost:3001"),
+			WebDomain:      getEnvOrDefault("WEB_DOMAIN", "http://localhost:3000"),
 			OrgName:        getEnvOrDefault("ORG_NAME", "Telar"),
 			Name:           getEnvOrDefault("APP_NAME", "Telar"),
 			OrgAvatar:      getEnvOrDefault("ORG_AVATAR", ""),
@@ -382,7 +382,7 @@ func LoadFromMap(envMap map[string]string) (*Config, error) {
 			BaseRoute:       get("BASE_ROUTE", "/api"),
 			Gateway:         get("GATEWAY", "http://localhost:8080"),
 			InternalGateway: get("INTERNAL_GATEWAY", "http://localhost:8080"),
-			WebDomain:       get("WEB_DOMAIN", "http://localhost:3000,http://localhost:3001"),
+			WebDomain:       get("WEB_DOMAIN", "http://localhost:3000"),
 			Debug:           getBool("DEBUG", false),
 		},
 		Database: DatabaseConfig{
@@ -423,7 +423,7 @@ func LoadFromMap(envMap map[string]string) (*Config, error) {
 			Origin:           get("ORIGIN", ""),
 		},
 		App: AppConfig{
-			WebDomain:      get("WEB_DOMAIN", "http://localhost:3000,http://localhost:3001"),
+			WebDomain:      get("WEB_DOMAIN", "http://localhost:3000"),
 			OrgName:        get("ORG_NAME", "Telar"),
 			Name:           get("APP_NAME", "Telar"),
 			OrgAvatar:      get("ORG_AVATAR", ""),

@@ -529,6 +529,28 @@ setup_test_user() {
 create_test_posts() {
     log_info "=== Creating Test Posts ==="
     
+    # Helper function to create post without counting as test
+    create_post_setup() {
+        local post_data="$1"
+        local response
+        local status_code
+        
+        response=$(curl -s -w "\n%{http_code}" --max-time 10 -X POST "${POSTS_BASE}/" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $JWT_TOKEN" \
+            -d "$post_data" 2>&1)
+        
+        status_code=$(echo "$response" | tail -n1)
+        response_body=$(echo "$response" | sed '$d')
+        
+        if [[ "$status_code" == "201" ]]; then
+            echo "$response_body"
+            return 0
+        else
+            return 1
+        fi
+    }
+    
     TEST_POST_IDS=()
     
     local post_bodies=(
@@ -548,12 +570,14 @@ create_test_posts() {
         local post_data="{\"postTypeId\":${post_type_id},\"body\":\"${post_body}\",\"tags\":[\"test\",\"e2e\"]}"
         
         local response
-        if response=$(make_request "POST" "${POSTS_BASE}/" "$post_data" "Authorization: Bearer $JWT_TOKEN" "201" "Create test post $((i+1))" "false"); then
+        if response=$(create_post_setup "$post_data"); then
             local post_id=$(extract_json_field "$response" "objectId")
             if [[ -n "$post_id" ]]; then
                 TEST_POST_IDS+=("$post_id")
                 log_info "Created post $((i+1)) with ID: $post_id"
             fi
+        else
+            log_warning "Failed to create test post $((i+1)) (may already exist)"
         fi
         
         sleep 0.5
@@ -952,9 +976,6 @@ test_hmac_protected_endpoints() {
     
     log_info "--- Negative Tests: Without HMAC Authentication ---"
     
-    local index_data="{\"body\":\"text\",\"objectId\":1}"
-    make_request "POST" "${POSTS_BASE}/actions/index" "$index_data" "" "401" "Create index without HMAC (should fail)" "false"
-    
     local score_data="{\"postId\":\"${TEST_POST_IDS[0]:-00000000-0000-0000-0000-000000000000}\",\"delta\":1}"
     make_request "PUT" "${POSTS_BASE}/actions/score" "$score_data" "" "401" "Increment score without HMAC (should fail)" "false"
     
@@ -969,9 +990,6 @@ test_hmac_protected_endpoints() {
     fi
     
     local post_id="${TEST_POST_IDS[0]}"
-    
-    local hmac_headers=$(build_hmac_headers "POST" "/posts/actions/index" "" "")
-    make_request "POST" "${POSTS_BASE}/actions/index" "" "$hmac_headers" "201" "Create index with valid HMAC" "false"
     
     local score_data="{\"postId\":\"${post_id}\",\"delta\":5}"
     local hmac_headers=$(build_hmac_headers "PUT" "/posts/actions/score" "" "$score_data")

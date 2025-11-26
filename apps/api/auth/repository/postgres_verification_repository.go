@@ -55,18 +55,19 @@ func (r *postgresVerificationRepository) SaveVerification(ctx context.Context, v
 
 	query := `
 		INSERT INTO verifications (
-			id, user_id, code, target, target_type, counter,
+			id, user_id, future_user_id, code, target, target_type, counter,
 			created_date, last_updated, remote_ip_address, is_verified,
 			hashed_password, expires_at, used, full_name
 		) VALUES (
-			:id, :user_id, :code, :target, :target_type, :counter,
+			:id, :user_id, :future_user_id, :code, :target, :target_type, :counter,
 			:created_date, :last_updated, :remote_ip_address, :is_verified,
 			:hashed_password, :expires_at, :used, :full_name
 		)`
 
 	insertData := struct {
 		ID             uuid.UUID  `db:"id"`
-		UserID         *uuid.UUID `db:"user_id"` // Nullable
+		UserID         *uuid.UUID `db:"user_id"` // Nullable - set after user is created
+		FutureUserID   *uuid.UUID `db:"future_user_id"` // Stores UserId during signup (no FK constraint)
 		Code           string     `db:"code"`
 		Target         string     `db:"target"`
 		TargetType     string     `db:"target_type"`
@@ -95,13 +96,31 @@ func (r *postgresVerificationRepository) SaveVerification(ctx context.Context, v
 		FullName:       verification.FullName,
 	}
 
-	// Handle nullable user_id
-	if verification.UserId != uuid.Nil {
-		insertData.UserID = &verification.UserId
+	// Handle nullable user_id and future_user_id
+	// During signup, user_id is NULL (user doesn't exist yet), but we store the future user ID
+	// in future_user_id (no FK constraint) so CompleteSignup can use it
+	if verification.UserId != uuid.Nil && verification.UserId != [16]byte{} {
+		// Check if this is a signup flow (hashed_password is set)
+		if len(verification.HashedPassword) > 0 {
+			// Signup flow: store UserId in future_user_id, set user_id to NULL
+			insertData.FutureUserID = &verification.UserId
+			insertData.UserID = nil
+		} else {
+			// Other flows: user exists, can set user_id
+			insertData.UserID = &verification.UserId
+			insertData.FutureUserID = nil
+		}
+	} else {
+		insertData.UserID = nil
+		insertData.FutureUserID = nil
 	}
 
 	_, err := sqlx.NamedExecContext(ctx, r.getExecutor(ctx), query, insertData)
 	if err != nil {
+		log.Printf("[SaveVerification] Database error: %v", err)
+		log.Printf("[SaveVerification] Query: %s", query)
+		log.Printf("[SaveVerification] Data: ID=%s, Code=%s, Target=%s, TargetType=%s, ExpiresAt=%d", 
+			insertData.ID.String(), insertData.Code, insertData.Target, insertData.TargetType, insertData.ExpiresAt)
 		return fmt.Errorf("failed to save verification (ID: %s): %w", verification.ObjectId.String(), err)
 	}
 
@@ -112,7 +131,7 @@ func (r *postgresVerificationRepository) SaveVerification(ctx context.Context, v
 func (r *postgresVerificationRepository) FindByID(ctx context.Context, verificationID uuid.UUID) (*models.UserVerification, error) {
 	query := `
 		SELECT 
-			id, user_id, code, target, target_type, counter,
+			id, user_id, future_user_id, code, target, target_type, counter,
 			created_date, last_updated, remote_ip_address, is_verified,
 			hashed_password, expires_at, used, full_name
 		FROM verifications 
@@ -121,6 +140,7 @@ func (r *postgresVerificationRepository) FindByID(ctx context.Context, verificat
 	var result struct {
 		ID             uuid.UUID      `db:"id"`
 		UserID         *uuid.UUID     `db:"user_id"`
+		FutureUserID   *uuid.UUID     `db:"future_user_id"` // Stores UserId during signup
 		Code           string         `db:"code"`
 		Target         string         `db:"target"`
 		TargetType     string         `db:"target_type"`
@@ -157,6 +177,7 @@ func (r *postgresVerificationRepository) FindByID(ctx context.Context, verificat
 		return nil, fmt.Errorf("failed to find verification by ID: %w", err)
 	}
 	log.Printf("[FindByID] Successfully found verification ID: %s", verificationID.String())
+	log.Printf("[FindByID] user_id: %v, future_user_id: %v", result.UserID, result.FutureUserID)
 
 	verification := &models.UserVerification{
 		ObjectId:        result.ID,
@@ -172,8 +193,16 @@ func (r *postgresVerificationRepository) FindByID(ctx context.Context, verificat
 		Used:            result.Used,
 	}
 
+	// Use future_user_id if user_id is NULL (signup flow)
+	// Otherwise use user_id (user already exists)
 	if result.UserID != nil {
 		verification.UserId = *result.UserID
+		log.Printf("[FindByID] Using user_id: %s", verification.UserId.String())
+	} else if result.FutureUserID != nil {
+		verification.UserId = *result.FutureUserID
+		log.Printf("[FindByID] Using future_user_id: %s", verification.UserId.String())
+	} else {
+		log.Printf("[FindByID] WARNING: Both user_id and future_user_id are NULL!")
 	}
 	if result.RemoteIPAddr.Valid {
 		verification.RemoteIpAddress = result.RemoteIPAddr.String
@@ -189,7 +218,7 @@ func (r *postgresVerificationRepository) FindByID(ctx context.Context, verificat
 func (r *postgresVerificationRepository) FindVerification(ctx context.Context, code string, verificationType string) (*models.UserVerification, error) {
 	query := `
 		SELECT 
-			id, user_id, code, target, target_type, counter,
+			id, user_id, future_user_id, code, target, target_type, counter,
 			created_date, last_updated, remote_ip_address, is_verified,
 			hashed_password, expires_at, used, full_name
 		FROM verifications 
@@ -200,6 +229,7 @@ func (r *postgresVerificationRepository) FindVerification(ctx context.Context, c
 	var result struct {
 		ID             uuid.UUID   `db:"id"`
 		UserID         *uuid.UUID  `db:"user_id"` // Nullable
+		FutureUserID   *uuid.UUID  `db:"future_user_id"` // Stores UserId during signup
 		Code           string      `db:"code"`
 		Target         string      `db:"target"`
 		TargetType     string      `db:"target_type"`
@@ -237,8 +267,12 @@ func (r *postgresVerificationRepository) FindVerification(ctx context.Context, c
 	}
 
 	// Handle nullable fields
+	// Use future_user_id if user_id is NULL (signup flow)
+	// Otherwise use user_id (user already exists)
 	if result.UserID != nil {
 		verification.UserId = *result.UserID
+	} else if result.FutureUserID != nil {
+		verification.UserId = *result.FutureUserID
 	}
 	if result.RemoteIPAddr.Valid {
 		verification.RemoteIpAddress = result.RemoteIPAddr.String
@@ -254,7 +288,7 @@ func (r *postgresVerificationRepository) FindVerification(ctx context.Context, c
 func (r *postgresVerificationRepository) FindVerificationByUser(ctx context.Context, userID uuid.UUID, verificationType string) (*models.UserVerification, error) {
 	query := `
 		SELECT 
-			id, user_id, code, target, target_type, counter,
+			id, user_id, future_user_id, code, target, target_type, counter,
 			created_date, last_updated, remote_ip_address, is_verified,
 			hashed_password, expires_at, used, full_name
 		FROM verifications 
@@ -265,6 +299,7 @@ func (r *postgresVerificationRepository) FindVerificationByUser(ctx context.Cont
 	var result struct {
 		ID             uuid.UUID   `db:"id"`
 		UserID         *uuid.UUID  `db:"user_id"`
+		FutureUserID   *uuid.UUID  `db:"future_user_id"` // Stores UserId during signup
 		Code           string      `db:"code"`
 		Target         string      `db:"target"`
 		TargetType     string      `db:"target_type"`
@@ -301,8 +336,12 @@ func (r *postgresVerificationRepository) FindVerificationByUser(ctx context.Cont
 		Used:            result.Used,
 	}
 
+	// Use future_user_id if user_id is NULL (signup flow)
+	// Otherwise use user_id (user already exists)
 	if result.UserID != nil {
 		verification.UserId = *result.UserID
+	} else if result.FutureUserID != nil {
+		verification.UserId = *result.FutureUserID
 	}
 	if result.RemoteIPAddr.Valid {
 		verification.RemoteIpAddress = result.RemoteIPAddr.String
@@ -318,7 +357,7 @@ func (r *postgresVerificationRepository) FindVerificationByUser(ctx context.Cont
 func (r *postgresVerificationRepository) FindVerificationByTarget(ctx context.Context, target string, verificationType string) (*models.UserVerification, error) {
 	query := `
 		SELECT 
-			id, user_id, code, target, target_type, counter,
+			id, user_id, future_user_id, code, target, target_type, counter,
 			created_date, last_updated, remote_ip_address, is_verified,
 			hashed_password, expires_at, used, full_name
 		FROM verifications 
@@ -329,6 +368,7 @@ func (r *postgresVerificationRepository) FindVerificationByTarget(ctx context.Co
 	var result struct {
 		ID             uuid.UUID   `db:"id"`
 		UserID         *uuid.UUID  `db:"user_id"`
+		FutureUserID   *uuid.UUID  `db:"future_user_id"` // Stores UserId during signup
 		Code           string      `db:"code"`
 		Target         string      `db:"target"`
 		TargetType     string      `db:"target_type"`
@@ -398,7 +438,7 @@ func (r *postgresVerificationRepository) FindByHashedPassword(ctx context.Contex
 	
 	query := `
 		SELECT 
-			id, user_id, code, target, target_type, counter,
+			id, user_id, future_user_id, code, target, target_type, counter,
 			created_date, last_updated, remote_ip_address, is_verified,
 			hashed_password, expires_at, used, full_name
 		FROM verifications 
@@ -411,6 +451,7 @@ func (r *postgresVerificationRepository) FindByHashedPassword(ctx context.Contex
 	var result struct {
 		ID             uuid.UUID      `db:"id"`
 		UserID         *uuid.UUID     `db:"user_id"`
+		FutureUserID   *uuid.UUID     `db:"future_user_id"` // Stores UserId during signup
 		Code           string         `db:"code"`
 		Target         string         `db:"target"`
 		TargetType     string         `db:"target_type"`
@@ -450,8 +491,12 @@ func (r *postgresVerificationRepository) FindByHashedPassword(ctx context.Contex
 		Used:            result.Used,
 	}
 
+	// Use future_user_id if user_id is NULL (signup flow)
+	// Otherwise use user_id (user already exists)
 	if result.UserID != nil {
 		verification.UserId = *result.UserID
+	} else if result.FutureUserID != nil {
+		verification.UserId = *result.FutureUserID
 	}
 	if result.RemoteIPAddr.Valid {
 		verification.RemoteIpAddress = result.RemoteIPAddr.String
@@ -534,6 +579,27 @@ func (r *postgresVerificationRepository) UpdateVerificationCode(ctx context.Cont
 		return fmt.Errorf("verification not found")
 	}
 
+	return nil
+}
+
+// UpdateUserID updates the user_id for a verification record
+func (r *postgresVerificationRepository) UpdateUserID(ctx context.Context, verificationID uuid.UUID, userID uuid.UUID) error {
+	query := `UPDATE verifications SET user_id = $1 WHERE id = $2`
+	
+	result, err := r.getExecutor(ctx).ExecContext(ctx, query, userID, verificationID)
+	if err != nil {
+		return fmt.Errorf("failed to update verification user_id: %w", err)
+	}
+	
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	
+	if rowsAffected == 0 {
+		return fmt.Errorf("verification record not found")
+	}
+	
 	return nil
 }
 

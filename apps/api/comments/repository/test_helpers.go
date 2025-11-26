@@ -115,6 +115,6 @@ func NewPostgresCommentRepositoryForTest(ctx context.Context, iso *testutil.Isol
 		return nil, fmt.Errorf("failed to apply comments migration: %w", err)
 	}
 
-	return NewPostgresCommentRepository(client), nil
+	return NewPostgresCommentRepositoryWithSchema(client, iso.LegacyConfig.PGSchema), nil
 }
 

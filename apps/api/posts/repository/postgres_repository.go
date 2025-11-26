@@ -21,12 +21,22 @@ import (
 // postgresRepository implements PostRepository using raw SQL queries
 type postgresRepository struct {
 	client *postgres.Client
+	schema string // Schema name for search_path isolation
 }
 
 // NewPostgresRepository creates a new PostgreSQL repository for posts
 func NewPostgresRepository(client *postgres.Client) PostRepository {
 	return &postgresRepository{
 		client: client,
+		schema: "", // Default to empty (uses default schema)
+	}
+}
+
+// NewPostgresRepositoryWithSchema creates a new PostgreSQL repository with explicit schema
+func NewPostgresRepositoryWithSchema(client *postgres.Client, schema string) PostRepository {
+	return &postgresRepository{
+		client: client,
+		schema: schema,
 	}
 }
 
@@ -48,18 +58,18 @@ func (r *postgresRepository) Create(ctx context.Context, post *models.Post) erro
 
 	query := `
 		INSERT INTO posts (
-			id, owner_user_id, post_type_id, body, score, view_count, 
-			comment_count, is_deleted, deleted_date, created_at, updated_at,
-			created_date, last_updated, tags, url_key, owner_display_name,
-			owner_avatar, image, image_full_path, video, thumbnail,
-			disable_comments, disable_sharing, permission, version, metadata
-		) VALUES (
-			:id, :owner_user_id, :post_type_id, :body, :score, :view_count,
-			:comment_count, :is_deleted, :deleted_date, :created_at, :updated_at,
-			:created_date, :last_updated, :tags, :url_key, :owner_display_name,
-			:owner_avatar, :image, :image_full_path, :video, :thumbnail,
-			:disable_comments, :disable_sharing, :permission, :version, :metadata
-		)`
+		id, owner_user_id, post_type_id, body, score, view_count, 
+		comment_count, is_deleted, deleted_date, created_at, updated_at,
+		created_date, last_updated, tags, url_key, owner_display_name,
+		owner_avatar, image, image_full_path, video, thumbnail,
+		disable_comments, disable_sharing, permission, version, metadata
+	) VALUES (
+		:id, :owner_user_id, :post_type_id, :body, :score, :view_count,
+		:comment_count, :is_deleted, :deleted_date, :created_at, :updated_at,
+		:created_date, :last_updated, :tags, :url_key, :owner_display_name,
+		:owner_avatar, :image, :image_full_path, :video, :thumbnail,
+		:disable_comments, :disable_sharing, :permission, :version, :metadata
+	)`
 
 	// Set timestamps if not set
 	if post.CreatedAt.IsZero() {
@@ -132,8 +142,12 @@ func (r *postgresRepository) Create(ctx context.Context, post *models.Post) erro
 		Metadata:        metadata,
 	}
 
-	_, err := sqlx.NamedExecContext(ctx, r.getExecutor(ctx), query, insertData)
-	return err
+	executor := r.getExecutor(ctx)
+	_, err := sqlx.NamedExecContext(ctx, executor, query, insertData)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // FindByID retrieves a post by its ID
@@ -334,7 +348,7 @@ func (r *postgresRepository) IncrementViewCount(ctx context.Context, postID uuid
 func (r *postgresRepository) IncrementCommentCount(ctx context.Context, postID uuid.UUID, delta int) error {
 	query := `UPDATE posts SET comment_count = comment_count + $1, updated_at = NOW(), last_updated = EXTRACT(EPOCH FROM NOW())::BIGINT WHERE id = $2 AND is_deleted = FALSE`
 
-	result, err := r.client.DB().ExecContext(ctx, query, delta, postID)
+	result, err := r.getExecutor(ctx).ExecContext(ctx, query, delta, postID)
 	if err != nil {
 		return fmt.Errorf("failed to increment comment count: %w", err)
 	}
@@ -738,6 +752,21 @@ func (r *postgresRepository) WithTransaction(ctx context.Context, fn func(contex
 	tx, err := r.client.DB().BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	// Set search_path for this transaction if schema is specified
+	// This is critical for schema isolation in tests and multi-tenant scenarios
+	if r.schema != "" {
+		setSearchPathSQL := fmt.Sprintf(`SET search_path TO %s`, r.schema)
+		// Schema is set correctly - debug log removed for production
+		_, err = tx.ExecContext(ctx, setSearchPathSQL)
+		if err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to set search_path in transaction (schema=%s): %w", r.schema, err)
+		}
+	} else {
+		// DEBUG: Log when schema is empty (this should not happen in isolated tests)
+		fmt.Printf("[PostRepository.WithTransaction] ERROR: schema is empty, transaction will use default search_path\n")
 	}
 
 	// Inject transaction into context using shared key

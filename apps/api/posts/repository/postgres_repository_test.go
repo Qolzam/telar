@@ -100,8 +100,8 @@ func TestPostgresRepository_Integration(t *testing.T) {
 	_, err = client.DB().ExecContext(ctx, migrationSQL)
 	require.NoError(t, err, "Failed to apply migration")
 
-	// 6. Initialize Repository
-	repo := NewPostgresRepository(client)
+	// 6. Initialize Repository with schema
+	repo := NewPostgresRepositoryWithSchema(client, iso.LegacyConfig.PGSchema)
 
 	// 7. Test Create
 	t.Run("Create", func(t *testing.T) {
