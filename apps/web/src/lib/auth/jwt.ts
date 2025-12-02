@@ -1,5 +1,6 @@
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 import type { TokenClaim, JWKS } from '@telar/sdk';
+import { COOKIE_CONFIG } from './cookies';
 
 const getAuthApiUrl = () => {
   const url = process.env.INTERNAL_API_URL || 'http://localhost:8080';
@@ -73,7 +74,7 @@ export function isTokenExpired(claim: TokenClaim): boolean {
  */
 export function extractTokenFromCookies(
   cookieHeader: string | null,
-  cookieName: string = 'session'
+  cookieName: string = COOKIE_CONFIG.SESSION_NAME
 ): string | null {
   if (!cookieHeader) return null;
 

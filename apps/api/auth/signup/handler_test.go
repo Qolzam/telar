@@ -8,6 +8,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"strings"
 
+	"github.com/qolzam/telar/apps/api/internal/recaptcha"
 	"github.com/qolzam/telar/apps/api/internal/testutil"
 	"github.com/qolzam/telar/apps/api/internal/types"
 )
@@ -42,9 +43,10 @@ func TestSignup_Handle_ValidationErrors(t *testing.T) {
 	suite := testutil.Setup(t)
 	priv := suite.GetTestJWTConfig().PrivateKey
 	rec := "dummy-recaptcha-key"
+	verifier, _ := recaptcha.NewGoogleVerifier(rec)
 
 	app := fiber.New()
-	h := NewHandler(&Service{}, rec, priv)
+	h := NewHandler(&Service{}, verifier, priv)
 	app.Post("/signup", h.Handle)
 
 	req := httptest.NewRequest(http.MethodPost, "/signup", strings.NewReader("email=a@b.c&newPassword=weak&verifyType=email"))
@@ -61,8 +63,9 @@ func TestSignup_Handle_Post_Email_And_Phone_SSR(t *testing.T) {
 	suite := testutil.Setup(t)
 	priv := suite.GetTestJWTConfig().PrivateKey
 	key := "dummy-key"
+	verifier, _ := recaptcha.NewGoogleVerifier(key)
 
-	h := NewHandler(&Service{}, key, priv)
+	h := NewHandler(&Service{}, verifier, priv)
 	app.Post("/signup", h.Handle)
 
 	// Email verify type path

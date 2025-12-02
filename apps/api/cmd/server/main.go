@@ -21,13 +21,19 @@ import (
 	"github.com/qolzam/telar/apps/api/comments"
 	commentHandlers "github.com/qolzam/telar/apps/api/comments/handlers"
 	commentServices "github.com/qolzam/telar/apps/api/comments/services"
-	platform "github.com/qolzam/telar/apps/api/internal/platform"
+	platform 	"github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	platformemail "github.com/qolzam/telar/apps/api/internal/platform/email"
+	"github.com/qolzam/telar/apps/api/internal/recaptcha"
+	"github.com/qolzam/telar/apps/api/internal/testutil"
 	"github.com/qolzam/telar/apps/api/posts"
 	"github.com/qolzam/telar/apps/api/posts/handlers"
 	postsServices "github.com/qolzam/telar/apps/api/posts/services"
 	sharedInterfaces "github.com/qolzam/telar/apps/api/shared/interfaces"
+	"github.com/qolzam/telar/apps/api/votes"
+	votesHandlers "github.com/qolzam/telar/apps/api/votes/handlers"
+	votesRepository "github.com/qolzam/telar/apps/api/votes/repository"
+	votesServices "github.com/qolzam/telar/apps/api/votes/services"
 	"github.com/qolzam/telar/apps/api/profile"
 	profileServices "github.com/qolzam/telar/apps/api/profile/services"
 	authRepository "github.com/qolzam/telar/apps/api/auth/repository"
@@ -160,7 +166,32 @@ func main() {
 			signupService = signupService.WithEmailSender(sender)
 		}
 	}
-	signupHandler := signupUC.NewHandler(signupService, "", privateKey)
+	
+	// SECURITY: Fail Closed - Enforce Recaptcha configuration
+	recaptchaKey := cfg.Security.RecaptchaKey
+	recaptchaDisabled := cfg.Security.RecaptchaDisabled
+	
+	var recaptchaVerifier recaptcha.Verifier
+	var errRecaptcha error
+	
+	if recaptchaKey == "" {
+		if !recaptchaDisabled {
+			// CRITICAL: Fail Closed. Do not allow server to start insecurely.
+			log.Fatalf("SECURITY ERROR: RECAPTCHA_KEY is missing. Configure it or set RECAPTCHA_DISABLED=true in config.")
+		}
+		// Explicitly Disabled (Dev/Test Mode)
+		log.Printf("SECURITY WARNING: Recaptcha is explicitly disabled via configuration. Using FakeVerifier.")
+		recaptchaVerifier = &testutil.FakeRecaptchaVerifier{ShouldSucceed: true}
+	} else {
+		// Production Mode
+		recaptchaVerifier, errRecaptcha = recaptcha.NewGoogleVerifier(recaptchaKey)
+		if errRecaptcha != nil {
+			log.Fatalf("Failed to initialize Google Recaptcha: %v", errRecaptcha)
+		}
+	}
+	
+	// Inject verifier into handler
+	signupHandler := signupUC.NewHandler(signupService, recaptchaVerifier, privateKey)
 
 	loginServiceConfig := &loginUC.ServiceConfig{
 		JWTConfig: platformconfig.JWTConfig{
@@ -193,6 +224,7 @@ func main() {
 	adminRepo := adminRepository.NewPostgresAdminRepository(pgClient)
 	postRepo := postsRepository.NewPostgresRepository(pgClient)
 	commentRepo := commentRepository.NewPostgresCommentRepository(pgClient)
+	voteRepo := votesRepository.NewPostgresVoteRepository(pgClient)
 
 	// Initialize Profile service with repository (now that repositories are available)
 	profileService = profileServices.NewProfileService(profileRepo, cfg)
@@ -401,7 +433,7 @@ func main() {
 		
 		// Create temporary service instances to get adapters
 		tempCommentsService := commentServices.NewCommentService(commentRepo, postRepo, cfg, nil)
-		tempPostsService := postsServices.NewPostService(postRepo, cfg, nil)
+		tempPostsService := postsServices.NewPostService(postRepo, voteRepo, cfg, nil, commentRepo)
 		
 		// Create direct call adapters
 		commentCounter = comments.NewDirectCallCounter(tempCommentsService)
@@ -411,7 +443,7 @@ func main() {
 
 	// Re-initialize services with cross-service dependencies
 	commentsService = commentServices.NewCommentService(commentRepo, postRepo, cfg, postStatsUpdater)
-	postsService = postsServices.NewPostService(postRepo, cfg, commentCounter)
+	postsService = postsServices.NewPostService(postRepo, voteRepo, cfg, commentCounter, commentRepo)
 
 	// Index creation is now handled by SQL migrations
 	log.Println("✅ Posts service initialized (indexes managed via SQL migrations)")
@@ -432,6 +464,18 @@ func main() {
 
 	comments.RegisterRoutes(app, commentRoutes, cfg)
 
-	log.Printf("Starting Telar API Server (Auth + Profile + Posts + Comments) on port 8080")
+	// Initialize votes service
+	votesService := votesServices.NewVoteService(voteRepo, postRepo)
+	log.Println("✅ Votes service initialized")
+
+	votesHandler := votesHandlers.NewVoteHandler(votesService, cfg.JWT, cfg.HMAC)
+
+	votesHandlers := &votes.VotesHandlers{
+		VoteHandler: votesHandler,
+	}
+
+	votes.RegisterRoutes(app, votesHandlers, cfg)
+
+	log.Printf("Starting Telar API Server (Auth + Profile + Posts + Comments + Votes) on port 8080")
 	log.Fatal(app.Listen(":8080"))
 }

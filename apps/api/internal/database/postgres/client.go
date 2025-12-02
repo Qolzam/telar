@@ -73,6 +73,11 @@ func buildConnectionString(config *dbi.PostgreSQLConfig, databaseName string) st
 		parts = append(parts, fmt.Sprintf("connect_timeout=%d", config.ConnectTimeout))
 	}
 
+	// Add search_path if schema is specified (for isolated test schemas)
+	if config.Schema != "" {
+		parts = append(parts, fmt.Sprintf("search_path=%s", config.Schema))
+	}
+
 	return strings.Join(parts, " ")
 }
 

@@ -676,6 +676,90 @@ test_integration_flow() {
     log_success "✓ Complete integration flow executed successfully"
 }
 
+test_comment_likes() {
+    log_info "=== Testing Comment Likes (Toggle Like/Unlike) ==="
+    
+    if [[ -z "$JWT_TOKEN" ]] || [[ ${#TEST_POST_IDS[@]} -eq 0 ]]; then
+        log_warning "Insufficient test data for comment likes test"
+        return 0
+    fi
+    
+    local post_id="${TEST_POST_IDS[0]}"
+    
+    log_info "--- Step 1: Create Comment for Like Test ---"
+    local comment_data="{\"postId\":\"${post_id}\",\"text\":\"Comment for like testing at ${TIMESTAMP}\"}"
+    local create_response=$(make_request "POST" "${COMMENTS_BASE}/" "$comment_data" "Authorization: Bearer $JWT_TOKEN" "201" "Create comment for like test" "true")
+    local comment_id=$(extract_json_field "$create_response" "objectId")
+    
+    if [[ -z "$comment_id" ]]; then
+        log_error "Failed to create comment for like test"
+        return 1
+    fi
+    
+    log_info "--- Step 2: Like Comment (POST /comments/:id/like) ---"
+    local like_response=$(make_request "POST" "${COMMENTS_BASE}/${comment_id}/like" "" "Authorization: Bearer $JWT_TOKEN" "200" "Like comment" "true")
+    
+    # DEBUG: Log raw JSON response for debugging (full length)
+    log_info "Raw Like Response JSON (full): ${like_response}"
+    log_info "Response length: ${#like_response} characters"
+    
+    # Use jq if available, otherwise use grep
+    if command -v jq >/dev/null 2>&1; then
+        local score_after_like=$(echo "$like_response" | jq -r '.score // empty')
+        local is_liked_after_like=$(echo "$like_response" | jq -r '.isLiked // empty')
+        log_info "Extracted via jq - score: '${score_after_like}', isLiked: '${is_liked_after_like}'"
+    else
+        local score_after_like=$(extract_json_field "$like_response" "score")
+        local is_liked_after_like=$(extract_json_field "$like_response" "isLiked")
+        log_info "Extracted via grep - score: '${score_after_like}', isLiked: '${is_liked_after_like}'"
+    fi
+    
+    if [[ "$score_after_like" == "1" ]] && [[ "$is_liked_after_like" == "true" ]]; then
+        log_success "✓ Comment liked successfully - score: ${score_after_like}, isLiked: ${is_liked_after_like}"
+    else
+        log_error "Like failed - expected score=1, isLiked=true, got score=${score_after_like}, isLiked=${is_liked_after_like}"
+        return 1
+    fi
+    
+    log_info "--- Step 3: Verify Like (GET /comments/:id) ---"
+    local get_response=$(make_request "GET" "${COMMENTS_BASE}/${comment_id}" "" "Authorization: Bearer $JWT_TOKEN" "200" "Get comment to verify like" "true")
+    local verify_score=$(extract_json_field "$get_response" "score")
+    local verify_is_liked=$(extract_json_field "$get_response" "isLiked")
+    
+    if [[ "$verify_score" == "1" ]] && [[ "$verify_is_liked" == "true" ]]; then
+        log_success "✓ Like verified - score: ${verify_score}, isLiked: ${verify_is_liked}"
+    else
+        log_error "Verification failed - expected score=1, isLiked=true, got score=${verify_score}, isLiked=${verify_is_liked}"
+        return 1
+    fi
+    
+    log_info "--- Step 4: Toggle Like (Unlike) - POST /comments/:id/like again ---"
+    local unlike_response=$(make_request "POST" "${COMMENTS_BASE}/${comment_id}/like" "" "Authorization: Bearer $JWT_TOKEN" "200" "Unlike comment (toggle)" "true")
+    local score_after_unlike=$(extract_json_field "$unlike_response" "score")
+    local is_liked_after_unlike=$(extract_json_field "$unlike_response" "isLiked")
+    
+    if [[ "$score_after_unlike" == "0" ]] && [[ "$is_liked_after_unlike" == "false" ]]; then
+        log_success "✓ Comment unliked successfully - score: ${score_after_unlike}, isLiked: ${is_liked_after_unlike}"
+    else
+        log_error "Unlike failed - expected score=0, isLiked=false, got score=${score_after_unlike}, isLiked=${is_liked_after_unlike}"
+        return 1
+    fi
+    
+    log_info "--- Step 5: Verify Unlike (GET /comments/:id) ---"
+    local final_get_response=$(make_request "GET" "${COMMENTS_BASE}/${comment_id}" "" "Authorization: Bearer $JWT_TOKEN" "200" "Get comment to verify unlike" "true")
+    local final_score=$(extract_json_field "$final_get_response" "score")
+    local final_is_liked=$(extract_json_field "$final_get_response" "isLiked")
+    
+    if [[ "$final_score" == "0" ]] && [[ "$final_is_liked" == "false" ]]; then
+        log_success "✓ Unlike verified - score: ${final_score}, isLiked: ${final_is_liked}"
+    else
+        log_error "Final verification failed - expected score=0, isLiked=false, got score=${final_score}, isLiked=${final_is_liked}"
+        return 1
+    fi
+    
+    log_success "✓ Comment likes test completed successfully"
+}
+
 cleanup_test_data() {
     if [[ "$CLEANUP_ON_SUCCESS" != "true" ]] || [[ "$CRITICAL_FAILURE" == "true" ]]; then
         log_info "Skipping cleanup (CLEANUP_ON_SUCCESS=$CLEANUP_ON_SUCCESS, CRITICAL_FAILURE=$CRITICAL_FAILURE)"
@@ -796,7 +880,11 @@ main() {
     test_integration_flow
     echo
     
-    log_info "=== PHASE 5: Delete Operations ==="
+    log_info "=== PHASE 5: Comment Likes (Voting) ==="
+    test_comment_likes
+    echo
+    
+    log_info "=== PHASE 6: Delete Operations ==="
     test_delete_comment
     echo
     

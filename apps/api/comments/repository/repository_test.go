@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -226,7 +227,11 @@ func TestPostgresCommentRepository_Integration(t *testing.T) {
 
 		err := commentRepo.Create(ctx, comment)
 		require.Error(t, err, "Should fail with foreign key constraint violation")
-		require.Contains(t, err.Error(), "foreign key", "Error should mention foreign key")
+		// The repository now returns a specific error message for invalid post ID
+		require.True(t, 
+			strings.Contains(err.Error(), "post does not exist") ||
+			strings.Contains(err.Error(), "foreign key"),
+			"Error should mention post does not exist or foreign key, got: %s", err.Error())
 	})
 
 	// 12. Test Foreign Key Constraint - Invalid User ID
@@ -249,7 +254,11 @@ func TestPostgresCommentRepository_Integration(t *testing.T) {
 
 		err := commentRepo.Create(ctx, comment)
 		require.Error(t, err, "Should fail with foreign key constraint violation")
-		require.Contains(t, err.Error(), "foreign key", "Error should mention foreign key")
+		// The repository now returns a specific error message for invalid user ID
+		require.True(t, 
+			strings.Contains(err.Error(), "user does not exist") ||
+			strings.Contains(err.Error(), "foreign key"),
+			"Error should mention user does not exist or foreign key, got: %s", err.Error())
 	})
 
 	// 13. Test Create Root Comment

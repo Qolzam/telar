@@ -15,9 +15,11 @@ import (
 	passwordUC "github.com/qolzam/telar/apps/api/auth/password"
 	signupUC "github.com/qolzam/telar/apps/api/auth/signup"
 	verifyUC "github.com/qolzam/telar/apps/api/auth/verification"
-	platform "github.com/qolzam/telar/apps/api/internal/platform"
+	platform 	"github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	platformemail "github.com/qolzam/telar/apps/api/internal/platform/email"
+	"github.com/qolzam/telar/apps/api/internal/recaptcha"
+	"github.com/qolzam/telar/apps/api/internal/testutil"
 	"github.com/qolzam/telar/apps/api/profile"
 	profileServices "github.com/qolzam/telar/apps/api/profile/services"
 	authRepository "github.com/qolzam/telar/apps/api/auth/repository"
@@ -126,7 +128,28 @@ func main() {
 			signupService = signupService.WithEmailSender(sender)
 		}
 	}
-	signupHandler := signupUC.NewHandler(signupService, "", privateKey)
+	
+	// SECURITY: Fail Closed - Enforce Recaptcha configuration
+	recaptchaKey := cfg.Security.RecaptchaKey
+	recaptchaDisabled := cfg.Security.RecaptchaDisabled
+	
+	var recaptchaVerifier recaptcha.Verifier
+	var errRecaptcha error
+	
+	if recaptchaKey == "" {
+		if !recaptchaDisabled {
+			log.Fatalf("SECURITY ERROR: RECAPTCHA_KEY is missing. Configure it or set RECAPTCHA_DISABLED=true in config.")
+		}
+		log.Printf("SECURITY WARNING: Recaptcha is explicitly disabled via configuration. Using FakeVerifier.")
+		recaptchaVerifier = &testutil.FakeRecaptchaVerifier{ShouldSucceed: true}
+	} else {
+		recaptchaVerifier, errRecaptcha = recaptcha.NewGoogleVerifier(recaptchaKey)
+		if errRecaptcha != nil {
+			log.Fatalf("Failed to initialize Google Recaptcha: %v", errRecaptcha)
+		}
+	}
+	
+	signupHandler := signupUC.NewHandler(signupService, recaptchaVerifier, privateKey)
 
 	loginServiceConfig := &loginUC.ServiceConfig{
 		JWTConfig: platformconfig.JWTConfig{

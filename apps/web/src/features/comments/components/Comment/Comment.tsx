@@ -11,17 +11,15 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import ThumbUpOutlinedIcon from '@mui/icons-material/ThumbUpOutlined';
-import ThumbUpIcon from '@mui/icons-material/ThumbUp';
-import ThumbDownOutlinedIcon from '@mui/icons-material/ThumbDownOutlined';
-import ThumbDownIcon from '@mui/icons-material/ThumbDown';
+import FavoriteIcon from '@mui/icons-material/Favorite';
+import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import MessageIcon from '@mui/icons-material/Message';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import { formatDistanceToNow } from 'date-fns';
 import type { Comment as CommentModel } from '@telar/sdk';
-import { useLikeCommentMutation, useUpdateCommentMutation, useCommentRepliesQuery } from '../../client';
-import { useState, useEffect } from 'react';
+import { useToggleLikeCommentMutation, useUpdateCommentMutation, useCommentRepliesQuery } from '../../client';
+import { useState } from 'react';
 import { CreateCommentForm } from '../CreateCommentForm';
 import { ConfirmDeleteDialog } from '../ConfirmDeleteDialog';
 import { useSession } from '@/features/auth/client';
@@ -38,7 +36,7 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
   const createdAt = new Date(comment.createdDate);
   const canModify = currentUserId && currentUserId === comment.ownerUserId;
   const { user } = useSession();
-  const likeMutation = useLikeCommentMutation(comment.postId);
+  const toggleLikeMutation = useToggleLikeCommentMutation(comment.postId);
   const updateMutation = useUpdateCommentMutation(comment.postId);
   
   // Use session user's avatar if this is the current user's comment, otherwise use comment.ownerAvatar
@@ -55,17 +53,13 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
   const menuOpen = Boolean(menuEl);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [repliesExpanded, setRepliesExpanded] = useState(false);
-  const [isLiked, setIsLiked] = useState(false);
-  const [isDisliked, setIsDisliked] = useState(false);
-  const [optimisticScore, setOptimisticScore] = useState(comment.score || 0);
   const { data: replyPages, fetchNextPage, hasNextPage, refetch, isFetching } =
     useCommentRepliesQuery(comment.objectId, 10);
-  const lazyReplies = (replyPages?.pages ?? []).flat();
+  // Extract replies from CommentsListResponse pages
+  const lazyReplies = (replyPages?.pages ?? []).flatMap((page) => page.comments || []);
 
-  // Update optimistic score when comment score changes
-  useEffect(() => {
-    setOptimisticScore(comment.score || 0);
-  }, [comment.score]);
+  // Use isLiked from API response (enriched by backend)
+  const isLiked = comment.isLiked || false;
 
   const handleSave = async () => {
     await updateMutation.mutateAsync({ objectId: comment.objectId, text: draft });
@@ -73,56 +67,12 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
   };
 
   const handleLikeToggle = async () => {
-    // Toggle like state optimistically
-    const newLikedState = !isLiked;
-    const newDislikedState = false; // Liking removes dislike
-    
-    setIsLiked(newLikedState);
-    setIsDisliked(newDislikedState);
-    
-    // Calculate score change: if was disliked, need to add 2 (remove dislike + add like)
-    // If was liked, remove 1. If was neither, add 1.
-    const scoreDelta = isDisliked ? 2 : isLiked ? -1 : 1;
-    setOptimisticScore((prev) => prev + scoreDelta);
-    
     try {
-      const delta = isDisliked ? 2 : isLiked ? -1 : 1;
-      await likeMutation.mutateAsync({
-        commentId: comment.objectId,
-        delta,
-      });
+      // The mutation handles optimistic updates automatically
+      await toggleLikeMutation.mutateAsync(comment.objectId);
     } catch (error) {
-      // Revert on error
-      setIsLiked(!newLikedState);
-      setIsDisliked(isDisliked);
-      setOptimisticScore((prev) => prev - scoreDelta);
-    }
-  };
-
-  const handleDislikeToggle = async () => {
-    // Toggle dislike state optimistically
-    const newDislikedState = !isDisliked;
-    const newLikedState = false; // Disliking removes like
-    
-    setIsDisliked(newDislikedState);
-    setIsLiked(newLikedState);
-    
-    // Calculate score change: if was liked, need to remove 2 (remove like + add dislike)
-    // If was disliked, add 1. If was neither, remove 1.
-    const scoreDelta = isLiked ? -2 : isDisliked ? 1 : -1;
-    setOptimisticScore((prev) => prev + scoreDelta);
-    
-    try {
-      const delta = isLiked ? -2 : isDisliked ? 1 : -1;
-      await likeMutation.mutateAsync({
-        commentId: comment.objectId,
-        delta,
-      });
-    } catch (error) {
-      // Revert on error
-      setIsDisliked(!newDislikedState);
-      setIsLiked(isLiked);
-      setOptimisticScore((prev) => prev - scoreDelta);
+      // Error handling is done in the mutation's onError callback
+      console.error('Failed to toggle like:', error);
     }
   };
 
@@ -256,12 +206,12 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
         <Box sx={{ display: 'flex', alignItems: 'center', gap: '16px', mt: '8px' }}>
           <Button
             onClick={handleLikeToggle}
-            disabled={likeMutation.isPending}
+            disabled={toggleLikeMutation.isPending}
             sx={{
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              color: '#475569',
+              color: isLiked ? '#EF4444' : '#475569',
               textTransform: 'none',
               minWidth: 'auto',
               padding: '0',
@@ -272,16 +222,16 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
               letterSpacing: '-0.084px',
               '&:hover': {
                 backgroundColor: 'transparent',
-                color: '#1E293B',
+                color: isLiked ? '#DC2626' : '#1E293B',
               },
             }}
           >
             {isLiked ? (
-              <ThumbUpIcon sx={{ fontSize: 18, color: '#475569' }} />
+              <FavoriteIcon sx={{ fontSize: 18, color: '#EF4444' }} />
             ) : (
-              <ThumbUpOutlinedIcon sx={{ fontSize: 18, color: '#475569' }} />
+              <FavoriteBorderIcon sx={{ fontSize: 18, color: '#475569' }} />
             )}
-            {(optimisticScore > 0 || comment.score > 0) && (
+            {comment.score > 0 && (
               <Typography 
                 component="span" 
                 sx={{ 
@@ -293,52 +243,8 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
                   color: '#1E293B',
                 }}
               >
-                {optimisticScore > 0 ? optimisticScore : comment.score}
+                {comment.score}
               </Typography>
-            )}
-          </Button>
-
-          <Button
-            onClick={handleDislikeToggle}
-            disabled={likeMutation.isPending}
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              color: '#475569',
-              textTransform: 'none',
-              minWidth: 'auto',
-              padding: '0',
-              fontFamily: 'PlusJakartaSans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-              fontSize: '14px',
-              fontWeight: 600,
-              lineHeight: '20px',
-              letterSpacing: '-0.084px',
-              '&:hover': {
-                backgroundColor: 'transparent',
-                color: '#1E293B',
-              },
-            }}
-          >
-            {isDisliked ? (
-              <ThumbDownIcon sx={{ fontSize: 18, color: '#475569' }} />
-            ) : (
-              <ThumbDownOutlinedIcon sx={{ fontSize: 18, color: '#475569' }} />
-            )}
-            {optimisticScore < 0 && (
-              <Typography 
-                component="span" 
-                sx={{ 
-                  fontFamily: 'PlusJakartaSans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-                  fontSize: '14px',
-                  fontWeight: 600,
-                  lineHeight: '20px',
-                  letterSpacing: '-0.084px',
-                  color: '#1E293B',
-                }}
-              >
-                {Math.abs(optimisticScore)}
-          </Typography>
             )}
           </Button>
 

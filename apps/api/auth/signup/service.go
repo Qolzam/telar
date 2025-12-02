@@ -336,8 +336,8 @@ func (s *Service) InitiatePhoneVerification(ctx context.Context, input PhoneVeri
 		return nil, err
 	}
 
-	// TODO: Implement SMS sending service for phone verification
-	// For now, verification code is stored in database for manual testing
+	// Phone verification code is stored in database for manual testing
+	// SMS sending service implementation pending (see TEL-XXX for feature request)
 
 	// Log successful phone signup initiation for security monitoring
 	security.LogSecurityEvent(security.SecurityEvent{

@@ -90,12 +90,16 @@ done
 # - profile (002): depends on user_auths (FK constraint)
 # - admin (004): depends on user_auths (FK constraint)
 # - comments (005): depends on posts and user_auths (FK constraints)
+# - votes (006): depends on posts and user_auths (FK constraints)
+# - comment_votes (007): depends on comments and user_auths (FK constraints)
 MIGRATIONS=(
     "${API_DIR}/posts/migrations/001_create_posts_table.sql"
     "${API_DIR}/auth/migrations/003_create_auth_tables.sql"
     "${API_DIR}/profile/migrations/002_create_profiles_table.sql"
     "${API_DIR}/auth/migrations/004_create_admin_tables.sql"
     "${API_DIR}/comments/migrations/005_create_comments_table.sql"
+    "${API_DIR}/votes/migrations/006_create_votes_table.sql"
+    "${API_DIR}/comments/migrations/007_create_comment_votes.sql"
 )
 
 # Apply migrations in order

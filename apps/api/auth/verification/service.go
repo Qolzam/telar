@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -452,9 +451,6 @@ func (s *Service) VerifySignup(ctx context.Context, params VerifySignupParams) (
 		ObjectId: &params.VerificationId,
 	})
 	if err != nil {
-		// Log the full error for debugging (including schema/connection issues)
-		log.Printf("[VerifySignup] Failed to find verification ID %s: %v", params.VerificationId.String(), err)
-		// Preserve original error message for debugging
 		return nil, authErrors.NewUserNotFoundError(fmt.Sprintf("verification record not found: %v", err))
 	}
 

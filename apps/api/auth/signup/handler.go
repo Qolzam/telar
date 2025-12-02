@@ -22,14 +22,17 @@ type HandlerConfig struct {
 	PrivateKey   string
 }
 
-func NewHandler(s *Service, recaptchaKey, privateKey string) *Handler {
-	// Backward compatibility: construct a Google verifier from key
-	verifier, _ := recap.NewGoogleVerifier(recaptchaKey)
+// NewHandler creates a handler with an explicit recaptcha verifier
+// SECURITY: Verifier must not be nil. main.go guarantees this via Fail Closed policy.
+func NewHandler(s *Service, verifier recap.Verifier, privateKey string) *Handler {
+	if verifier == nil {
+		panic("NewHandler: recaptcha.Verifier cannot be nil")
+	}
 	return &Handler{
 		svc:               s,
 		recaptchaVerifier: verifier,
 		config: &HandlerConfig{
-			RecaptchaKey: recaptchaKey,
+			RecaptchaKey: "", // Not used when verifier is injected
 			PrivateKey:   privateKey,
 		},
 	}
@@ -81,16 +84,15 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		return errors.HandleValidationError(c, "Password is not strong enough!")
 	}
 	// Recaptcha validation via injected verifier
+	// SECURITY: Verifier is guaranteed to be non-nil by NewHandler
 	remoteIP := c.IP()
 	_ = remoteIP // kept for potential IP-based policies
-	if h.recaptchaVerifier != nil {
-		success, err := h.recaptchaVerifier.Verify(c.Context(), model.Recaptcha)
-		if err != nil {
-			return errors.HandleSystemError(c, "Error happened in verifying captcha!")
-		}
-		if !success {
-			return errors.HandleValidationError(c, "Recaptcha is not valid!")
-		}
+	success, err := h.recaptchaVerifier.Verify(c.Context(), model.Recaptcha)
+	if err != nil {
+		return errors.HandleSystemError(c, "Error happened in verifying captcha!")
+	}
+	if !success {
+		return errors.HandleValidationError(c, "Recaptcha is not valid!")
 	}
 	newUserId := uuid.Must(uuid.NewV4())
 

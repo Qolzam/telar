@@ -50,15 +50,8 @@ CREATE INDEX IF NOT EXISTS idx_user_auths_created_at ON user_auths(created_at DE
 CREATE INDEX IF NOT EXISTS idx_user_auths_created_date ON user_auths(created_date DESC);
 
 -- Add future_user_id column if it doesn't exist (for existing databases)
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns 
-        WHERE table_name = 'verifications' AND column_name = 'future_user_id'
-    ) THEN
-        ALTER TABLE verifications ADD COLUMN future_user_id UUID;
-    END IF;
-END $$;
+-- Using IF NOT EXISTS syntax which is more reliable than DO block
+ALTER TABLE verifications ADD COLUMN IF NOT EXISTS future_user_id UUID;
 
 -- Indexes for verifications
 CREATE INDEX IF NOT EXISTS idx_verifications_user_type ON verifications(user_id, target_type) WHERE user_id IS NOT NULL;

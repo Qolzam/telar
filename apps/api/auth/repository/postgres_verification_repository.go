@@ -10,7 +10,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"time"
 
 	uuid "github.com/gofrs/uuid"
@@ -117,10 +116,6 @@ func (r *postgresVerificationRepository) SaveVerification(ctx context.Context, v
 
 	_, err := sqlx.NamedExecContext(ctx, r.getExecutor(ctx), query, insertData)
 	if err != nil {
-		log.Printf("[SaveVerification] Database error: %v", err)
-		log.Printf("[SaveVerification] Query: %s", query)
-		log.Printf("[SaveVerification] Data: ID=%s, Code=%s, Target=%s, TargetType=%s, ExpiresAt=%d", 
-			insertData.ID.String(), insertData.Code, insertData.Target, insertData.TargetType, insertData.ExpiresAt)
 		return fmt.Errorf("failed to save verification (ID: %s): %w", verification.ObjectId.String(), err)
 	}
 
@@ -157,27 +152,13 @@ func (r *postgresVerificationRepository) FindByID(ctx context.Context, verificat
 
 	executor := r.getExecutor(ctx)
 	
-	// Debug: Log the query and parameters
-	log.Printf("[FindByID] Query: %s, ID: %s", query, verificationID.String())
-	
 	err := sqlx.GetContext(ctx, executor, &result, query, verificationID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			// Debug: Check if table exists and has any records, and if this specific ID exists
-			var count int
-			var specificCount int
-			countQuery := `SELECT COUNT(*) FROM verifications`
-			specificQuery := `SELECT COUNT(*) FROM verifications WHERE id = $1`
-			countErr := sqlx.GetContext(ctx, executor, &count, countQuery)
-			specificErr := sqlx.GetContext(ctx, executor, &specificCount, specificQuery, verificationID)
-			log.Printf("[FindByID] No rows found. Total records: %d (err: %v), Records with ID: %d (err: %v)", count, countErr, specificCount, specificErr)
-			return nil, fmt.Errorf("verification not found (ID: %s, total records: %d, records with this ID: %d)", verificationID.String(), count, specificCount)
+			return nil, fmt.Errorf("verification not found (ID: %s)", verificationID.String())
 		}
-		log.Printf("[FindByID] Query error: %v", err)
 		return nil, fmt.Errorf("failed to find verification by ID: %w", err)
 	}
-	log.Printf("[FindByID] Successfully found verification ID: %s", verificationID.String())
-	log.Printf("[FindByID] user_id: %v, future_user_id: %v", result.UserID, result.FutureUserID)
 
 	verification := &models.UserVerification{
 		ObjectId:        result.ID,
@@ -197,12 +178,8 @@ func (r *postgresVerificationRepository) FindByID(ctx context.Context, verificat
 	// Otherwise use user_id (user already exists)
 	if result.UserID != nil {
 		verification.UserId = *result.UserID
-		log.Printf("[FindByID] Using user_id: %s", verification.UserId.String())
 	} else if result.FutureUserID != nil {
 		verification.UserId = *result.FutureUserID
-		log.Printf("[FindByID] Using future_user_id: %s", verification.UserId.String())
-	} else {
-		log.Printf("[FindByID] WARNING: Both user_id and future_user_id are NULL!")
 	}
 	if result.RemoteIPAddr.Valid {
 		verification.RemoteIpAddress = result.RemoteIPAddr.String
@@ -422,13 +399,10 @@ func (r *postgresVerificationRepository) FindVerificationByTarget(ctx context.Co
 func (r *postgresVerificationRepository) FindByHashedPassword(ctx context.Context, hashedPassword string) (*models.UserVerification, error) {
 	// The hashedPassword is stored as []byte(hexString) in bytea column
 	// Compare by converting stored bytea to hex string and comparing with input hex string
-	log.Printf("[FindByHashedPassword] Looking for hash: %s (length: %d)", hashedPassword, len(hashedPassword))
-	
 	// The stored hashed_password is 32 bytes (decoded hash bytes)
 	// Compare by encoding bytea to hex in SQL and matching with input hex string
 	// This avoids N+1 queries and handles the comparison in the database
 	executor := r.getExecutor(ctx)
-	log.Printf("[FindByHashedPassword] Looking for hash: %s", hashedPassword)
 	
 	// Decode the hex string to bytes for bytea comparison
 	hashedPasswordBytes, err := hex.DecodeString(hashedPassword)
@@ -469,13 +443,10 @@ func (r *postgresVerificationRepository) FindByHashedPassword(ctx context.Contex
 	err = sqlx.GetContext(ctx, executor, &result, query, hashedPasswordBytes)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			log.Printf("[FindByHashedPassword] No verification found with hash: %s", hashedPassword)
 			return nil, fmt.Errorf("verification not found")
 		}
-		log.Printf("[FindByHashedPassword] Query error: %v", err)
 		return nil, fmt.Errorf("failed to find verification by hashed password: %w", err)
 	}
-	log.Printf("[FindByHashedPassword] Found verification ID: %s", result.ID.String())
 
 	verification := &models.UserVerification{
 		ObjectId:        result.ID,

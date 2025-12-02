@@ -16,6 +16,7 @@ import (
 	"github.com/qolzam/telar/apps/api/internal/types"
 	"github.com/qolzam/telar/apps/api/posts/models"
 	"github.com/qolzam/telar/apps/api/posts/repository"
+	votesRepository "github.com/qolzam/telar/apps/api/votes/repository"
 )
 
 // TestPostsServiceCacheIntegration tests cache integration with actual posts service
@@ -63,8 +64,11 @@ func TestPostsServiceCacheIntegration(t *testing.T) {
 	// Use schema-aware constructor for test isolation
 	postRepo := repository.NewPostgresRepositoryWithSchema(client, iso.LegacyConfig.PGSchema)
 	
-	// Create posts service with cache
-	postService := NewPostService(postRepo, iso.Config, nil)
+	// Create VoteRepository for vote enrichment
+	voteRepo := votesRepository.NewPostgresVoteRepository(client)
+	
+	// Create posts service with cache (commentRepo is nil for this test)
+	postService := NewPostService(postRepo, voteRepo, iso.Config, nil, nil)
 	
 	// Test user context
 	userID := uuid.Must(uuid.NewV4())

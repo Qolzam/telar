@@ -302,6 +302,7 @@ export interface Post {
   commentCounter: number;
   viewCount: number;
   votes: Record<string, string>;
+  voteType: 0 | 1 | 2; // 0=None, 1=Up, 2=Down (New field from Backend)
   tags: string[];
   postTypeId: PostType;
   permission: UserPermissionType;
@@ -356,6 +357,7 @@ export interface Comment {
   postId: string;
   parentCommentId?: string;
   replyCount?: number;
+  isLiked: boolean; // New field - indicates if current user has liked this comment
   text: string;
   deleted: boolean;
   deletedDate?: number;
@@ -378,6 +380,21 @@ export interface CommentQueryFilter {
   postId?: string;
   page?: number;
   limit?: number;
+  cursor?: string; // Cursor for cursor-based pagination
+}
+
+/**
+ * Comments list response with cursor pagination
+ */
+export interface CommentsListResponse {
+  comments: Comment[];
+  nextCursor?: string;
+  hasNext?: boolean;
+  // Legacy pagination (deprecated but maintained for backward compatibility)
+  count?: number;
+  page?: number;
+  limit?: number;
+  hasMore?: boolean;
 }
 
 // ============================================================================
@@ -437,6 +454,26 @@ export interface CreatePostRequest {
 export interface CreatePostResponse {
   objectId: string;
   message?: string;
+}
+
+/**
+ * Update post request payload
+ * @see Go: apps/api/posts/models/post.go - UpdatePostRequest
+ */
+export interface UpdatePostRequest {
+  objectId: string;
+  body?: string;
+  image?: string;
+  imageFullPath?: string;
+  video?: string;
+  thumbnail?: string;
+  tags?: string[];
+  album?: PostAlbum;
+  disableComments?: boolean;
+  disableSharing?: boolean;
+  accessUserList?: string[];
+  permission?: string;
+  version?: string;
 }
 
 /**

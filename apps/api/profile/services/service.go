@@ -399,7 +399,7 @@ func (s *profileService) UpdateProfileFields(ctx context.Context, userID uuid.UU
 		return fmt.Errorf("failed to update profile: %w", err)
 	}
 
-	return nil
+		return nil
 }
 
 // DeleteProfile deletes a profile (hard delete)
@@ -432,8 +432,8 @@ func (s *profileService) ValidateProfileOwnership(ctx context.Context, userID uu
 		return profileErrors.ErrProfileOwnershipRequired
 	}
 
-	return nil
-}
+		return nil
+	}
 
 // SetField sets a single field on a profile
 func (s *profileService) SetField(ctx context.Context, userID uuid.UUID, field string, value interface{}) error {

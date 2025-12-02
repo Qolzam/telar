@@ -10,6 +10,7 @@ import type {
   Post,
   CreatePostRequest,
   CreatePostResponse,
+  UpdatePostRequest,
   PostsResponse,
   CursorQueryParams,
 } from './types';
@@ -32,6 +33,14 @@ export interface IPostsApi {
    * Get a single post by id
    */
   getById(postId: string): Promise<Post>;
+  /**
+   * Update an existing post
+   */
+  updatePost(data: UpdatePostRequest): Promise<void>;
+  /**
+   * Delete a post (soft delete)
+   */
+  deletePost(postId: string): Promise<void>;
 }
 
 /**
@@ -53,6 +62,14 @@ export const postsApi = (client: ApiClient): IPostsApi => ({
 
   getById: async (postId: string): Promise<Post> => {
     return client.get<Post>(`/posts/${postId}`);
+  },
+
+  updatePost: async (data: UpdatePostRequest): Promise<void> => {
+    await client.put<void>('/posts', data);
+  },
+
+  deletePost: async (postId: string): Promise<void> => {
+    await client.delete<void>(`/posts/${postId}`);
   },
 });
 

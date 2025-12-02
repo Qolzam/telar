@@ -16,6 +16,7 @@ import (
 
 	"github.com/gofrs/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"github.com/qolzam/telar/apps/api/comments/models"
 	"github.com/qolzam/telar/apps/api/internal/database/postgres"
 )
@@ -122,6 +123,15 @@ func (r *postgresCommentRepository) Create(ctx context.Context, comment *models.
 
 	_, err := sqlx.NamedExecContext(ctx, r.getExecutor(ctx), query, insertData)
 	if err != nil {
+		// Check for Foreign Key Violation
+		if pgErr, ok := err.(*pq.Error); ok && pgErr.Code == "23503" { // foreign_key_violation
+			if strings.Contains(pgErr.Detail, "owner_user_id") {
+				return fmt.Errorf("user does not exist (stale token): %w", sql.ErrNoRows)
+			}
+			if strings.Contains(pgErr.Detail, "post_id") {
+				return fmt.Errorf("post does not exist: %w", sql.ErrNoRows)
+			}
+		}
 		return fmt.Errorf("failed to create comment: %w", err)
 	}
 
@@ -458,6 +468,118 @@ func (r *postgresCommentRepository) FindReplies(ctx context.Context, parentID uu
 	return comments, nil
 }
 
+// FindRepliesWithCursor retrieves replies to a specific comment with cursor-based pagination
+// Uses keyset pagination with created_date ASC, id ASC for stable ordering (replies are chronological)
+func (r *postgresCommentRepository) FindRepliesWithCursor(ctx context.Context, parentID uuid.UUID, cursor string, limit int) ([]*models.Comment, string, error) {
+	// Parse cursor if provided
+	var cursorCreatedDate int64
+	var cursorID uuid.UUID
+	hasCursor := false
+	
+	if cursor != "" {
+		// Simple cursor format: base64(created_date:uuid)
+		decoded, err := base64.URLEncoding.DecodeString(cursor)
+		if err != nil {
+			return nil, "", fmt.Errorf("invalid cursor format: %w", err)
+		}
+		
+		parts := strings.Split(string(decoded), ":")
+		if len(parts) != 2 {
+			return nil, "", fmt.Errorf("invalid cursor format: expected created_date:uuid")
+		}
+		
+		cursorCreatedDate, err = strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			return nil, "", fmt.Errorf("invalid cursor created_date: %w", err)
+		}
+		
+		cursorID, err = uuid.FromString(parts[1])
+		if err != nil {
+			return nil, "", fmt.Errorf("invalid cursor id: %w", err)
+		}
+		
+		hasCursor = true
+	}
+	
+	// Build query with cursor condition (ASC order for chronological replies)
+	query := `
+		SELECT 
+			id, post_id, owner_user_id, parent_comment_id, text, score,
+			owner_display_name, owner_avatar, is_deleted, deleted_date,
+			created_at, updated_at, created_date, last_updated
+		FROM comments 
+		WHERE parent_comment_id = $1 AND is_deleted = FALSE`
+	
+	args := []interface{}{parentID}
+	argIndex := 2
+	
+	if hasCursor {
+		// Keyset pagination: (created_date > cursorCreatedDate) OR (created_date = cursorCreatedDate AND id > cursorID)
+		query += fmt.Sprintf(` AND ((created_date > $%d) OR (created_date = $%d AND id > $%d))`, argIndex, argIndex, argIndex+1)
+		args = append(args, cursorCreatedDate, cursorID)
+		argIndex += 2
+	}
+	
+	query += ` ORDER BY created_date ASC, id ASC LIMIT $` + fmt.Sprintf("%d", argIndex)
+	args = append(args, limit+1) // Fetch one extra to determine if there's a next page
+	
+	var results []struct {
+		ID              uuid.UUID   `db:"id"`
+		PostID          uuid.UUID   `db:"post_id"`
+		OwnerUserID     uuid.UUID   `db:"owner_user_id"`
+		ParentCommentID *uuid.UUID  `db:"parent_comment_id"`
+		Text            string      `db:"text"`
+		Score           int64       `db:"score"`
+		OwnerDisplayName string      `db:"owner_display_name"`
+		OwnerAvatar     string      `db:"owner_avatar"`
+		IsDeleted       bool        `db:"is_deleted"`
+		DeletedDate     int64       `db:"deleted_date"`
+		CreatedAt       time.Time   `db:"created_at"`
+		UpdatedAt       time.Time   `db:"updated_at"`
+		CreatedDate     int64       `db:"created_date"`
+		LastUpdated     int64       `db:"last_updated"`
+	}
+	
+	err := sqlx.SelectContext(ctx, r.getExecutor(ctx), &results, query, args...)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to find replies with cursor: %w", err)
+	}
+	
+	// Check if there's a next page
+	hasNext := len(results) > limit
+	if hasNext {
+		results = results[:limit] // Remove the extra item
+	}
+	
+	comments := make([]*models.Comment, len(results))
+	for i, result := range results {
+		comments[i] = &models.Comment{
+			ObjectId:         result.ID,
+			PostId:           result.PostID,
+			OwnerUserId:      result.OwnerUserID,
+			ParentCommentId:  result.ParentCommentID,
+			Text:             result.Text,
+			Score:            result.Score,
+			OwnerDisplayName: result.OwnerDisplayName,
+			OwnerAvatar:      result.OwnerAvatar,
+			Deleted:          result.IsDeleted,
+			DeletedDate:      result.DeletedDate,
+			CreatedDate:      result.CreatedDate,
+			LastUpdated:      result.LastUpdated,
+		}
+	}
+	
+	// Generate next cursor from last reply
+	var nextCursor string
+	if hasNext && len(comments) > 0 {
+		lastReply := comments[len(comments)-1]
+		cursorData := fmt.Sprintf("%d:%s", lastReply.CreatedDate, lastReply.ObjectId.String())
+		nextCursor = base64.URLEncoding.EncodeToString([]byte(cursorData))
+	}
+	
+	return comments, nextCursor, nil
+}
+
 // CountByPostID counts root comments (not replies) for a post
 func (r *postgresCommentRepository) CountByPostID(ctx context.Context, postID uuid.UUID) (int64, error) {
 	query := `SELECT COUNT(*) FROM comments WHERE post_id = $1 AND parent_comment_id IS NULL AND is_deleted = FALSE`
@@ -762,3 +884,148 @@ func (r *postgresCommentRepository) DeleteByPostID(ctx context.Context, postID u
 	return nil
 }
 
+
+// CountRepliesBulk counts replies for multiple comments in a single query
+// Returns a map of parentCommentID -> replyCount
+// This avoids N+1 queries when loading comment lists
+func (r *postgresCommentRepository) CountRepliesBulk(ctx context.Context, parentIDs []uuid.UUID) (map[uuid.UUID]int64, error) {
+	if len(parentIDs) == 0 {
+		return make(map[uuid.UUID]int64), nil
+	}
+
+	query := `
+		SELECT parent_comment_id, COUNT(*) as reply_count
+		FROM comments
+		WHERE parent_comment_id = ANY($1::uuid[]) AND is_deleted = FALSE
+		GROUP BY parent_comment_id
+	`
+
+	type replyCountResult struct {
+		ParentCommentID uuid.UUID `db:"parent_comment_id"`
+		ReplyCount      int64     `db:"reply_count"`
+	}
+
+	var results []replyCountResult
+	// Convert []uuid.UUID to pq.Array for PostgreSQL ANY operator
+	parentIDsArray := make([]string, len(parentIDs))
+	for i, id := range parentIDs {
+		parentIDsArray[i] = id.String()
+	}
+	err := sqlx.SelectContext(ctx, r.getExecutor(ctx), &results, query, pq.Array(parentIDsArray))
+	if err != nil {
+		return nil, fmt.Errorf("failed to count replies in bulk: %w", err)
+	}
+
+	// Build map for O(1) lookup
+	replyCountMap := make(map[uuid.UUID]int64, len(results))
+	for _, result := range results {
+		replyCountMap[result.ParentCommentID] = result.ReplyCount
+	}
+
+	// Ensure all requested IDs are in the map (with 0 if no replies)
+	for _, id := range parentIDs {
+		if _, exists := replyCountMap[id]; !exists {
+			replyCountMap[id] = 0
+		}
+	}
+
+	return replyCountMap, nil
+}
+
+// AddVote attempts to add a vote (like) for a comment
+// Returns true if a new row was inserted, false if it already existed
+func (r *postgresCommentRepository) AddVote(ctx context.Context, commentID, userID uuid.UUID) (bool, error) {
+	query := `
+		INSERT INTO comment_votes (comment_id, owner_user_id, created_at)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (comment_id, owner_user_id) DO NOTHING
+	`
+
+	result, err := r.getExecutor(ctx).ExecContext(ctx, query, commentID, userID)
+	if err != nil {
+		return false, fmt.Errorf("failed to add vote: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	return rowsAffected > 0, nil
+}
+
+// RemoveVote removes a vote (like) for a comment
+// Returns true if a row was deleted, false if no vote existed
+func (r *postgresCommentRepository) RemoveVote(ctx context.Context, commentID, userID uuid.UUID) (bool, error) {
+	query := `DELETE FROM comment_votes WHERE comment_id = $1 AND owner_user_id = $2`
+
+	result, err := r.getExecutor(ctx).ExecContext(ctx, query, commentID, userID)
+	if err != nil {
+		return false, fmt.Errorf("failed to remove vote: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	return rowsAffected > 0, nil
+}
+
+// GetUserVotesForComments bulk checks which comments the user has liked
+// Returns a map of CommentID -> bool (true if user liked it)
+func (r *postgresCommentRepository) GetUserVotesForComments(ctx context.Context, commentIDs []uuid.UUID, userID uuid.UUID) (map[uuid.UUID]bool, error) {
+	if len(commentIDs) == 0 {
+		return make(map[uuid.UUID]bool), nil
+	}
+
+	// Convert []uuid.UUID to pq.Array for PostgreSQL ANY operator
+	commentIDsArray := make([]string, len(commentIDs))
+	for i, id := range commentIDs {
+		commentIDsArray[i] = id.String()
+	}
+
+	query := `SELECT comment_id FROM comment_votes WHERE owner_user_id = $1 AND comment_id = ANY($2::uuid[])`
+
+	var votedCommentIDs []uuid.UUID
+	err := sqlx.SelectContext(ctx, r.getExecutor(ctx), &votedCommentIDs, query, userID, pq.Array(commentIDsArray))
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return make(map[uuid.UUID]bool), nil
+		}
+		return nil, fmt.Errorf("failed to get user votes: %w", err)
+	}
+
+	// Build map for O(1) lookup
+	voteMap := make(map[uuid.UUID]bool, len(votedCommentIDs))
+	for _, id := range votedCommentIDs {
+		voteMap[id] = true
+	}
+
+	return voteMap, nil
+}
+
+// WithTransaction executes a function within a database transaction
+func (r *postgresCommentRepository) WithTransaction(ctx context.Context, fn func(context.Context) error) error {
+	tx, err := r.client.DB().BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		} else if err != nil {
+			tx.Rollback()
+		} else {
+			err = tx.Commit()
+		}
+	}()
+
+	// Create a new context with the transaction
+	txCtx := context.WithValue(ctx, "tx", tx)
+	err = fn(txCtx)
+
+	return err
+}

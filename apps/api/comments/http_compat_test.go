@@ -18,6 +18,7 @@ import (
 	"github.com/qolzam/telar/apps/api/comments/handlers"
 	commentRepository "github.com/qolzam/telar/apps/api/comments/repository"
 	"github.com/qolzam/telar/apps/api/comments/services"
+	commentModels "github.com/qolzam/telar/apps/api/comments/models"
 	postsRepository "github.com/qolzam/telar/apps/api/posts/repository"
 	authRepository "github.com/qolzam/telar/apps/api/auth/repository"
 	authModels "github.com/qolzam/telar/apps/api/auth/models"
@@ -495,18 +496,18 @@ func testGetCommentsByPost(t *testing.T, app *fiber.App, secret string, uid stri
 		t.Fatalf("Expected status 200, got %d, response body: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	var comments []commentResponse
-	if err := json.NewDecoder(resp.Body).Decode(&comments); err != nil {
+	var response commentModels.CommentsListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		t.Fatalf("Failed to decode get comments response: %v", err)
 	}
 
 	// Validate we got the expected number of comments
-	if len(comments) != len(commentTexts) {
-		t.Errorf("Expected %d comments, got %d", len(commentTexts), len(comments))
+	if len(response.Comments) != len(commentTexts) {
+		t.Errorf("Expected %d comments, got %d", len(commentTexts), len(response.Comments))
 	}
 
 	// Validate each comment belongs to the correct post
-	for _, comment := range comments {
+	for _, comment := range response.Comments {
 		if comment.PostId != postId {
 			t.Errorf("Expected postId %s, got %s", postId, comment.PostId)
 		}

@@ -82,7 +82,16 @@ export const ENDPOINTS = {
     GET_REPLIES: (commentId: string) => `/comments/${commentId}/replies`,
     DELETE: (commentId: string, postId: string) =>
       `/comments/id/${commentId}/post/${postId}`,
-    SCORE: '/comments/score',
+    TOGGLE_LIKE: (commentId: string) => `/comments/${commentId}/like`,
+    SCORE: '/comments/score', // Legacy endpoint (deprecated)
+  },
+
+  /**
+   * Votes endpoints (direct Go API calls)
+   * Mirrors Go API routes in apps/api/votes/routes.go
+   */
+  VOTES: {
+    VOTE: '/votes', // POST /votes with { postId, typeId }
   },
 } as const;
 

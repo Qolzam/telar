@@ -70,12 +70,13 @@ type CommentResponse struct {
 	OwnerAvatar      string `json:"ownerAvatar"`
 	PostId           string `json:"postId"`
 	ParentCommentId  *string `json:"parentCommentId,omitempty"`
-	ReplyCount       int    `json:"replyCount,omitempty"`
+	ReplyCount       int    `json:"replyCount"`
 	Text             string `json:"text"`
 	Deleted          bool   `json:"deleted"`
 	DeletedDate      int64  `json:"deletedDate,omitempty"`
 	CreatedDate      int64  `json:"createdDate"`
 	LastUpdated      int64  `json:"lastUpdated,omitempty"`
+	IsLiked          bool   `json:"isLiked"` // Whether the current user has liked this comment
 }
 
 // CommentsListResponse represents the response for listing comments

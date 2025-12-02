@@ -66,6 +66,14 @@ func (m *MockCommentRepository) FindReplies(ctx context.Context, parentID uuid.U
 	return args.Get(0).([]*models.Comment), args.Error(1)
 }
 
+func (m *MockCommentRepository) FindRepliesWithCursor(ctx context.Context, parentID uuid.UUID, cursor string, limit int) ([]*models.Comment, string, error) {
+	args := m.Called(ctx, parentID, cursor, limit)
+	if args.Get(0) == nil {
+		return nil, args.String(1), args.Error(2)
+	}
+	return args.Get(0).([]*models.Comment), args.String(1), args.Error(2)
+}
+
 func (m *MockCommentRepository) CountByPostID(ctx context.Context, postID uuid.UUID) (int64, error) {
 	args := m.Called(ctx, postID)
 	return args.Get(0).(int64), args.Error(1)
@@ -74,6 +82,14 @@ func (m *MockCommentRepository) CountByPostID(ctx context.Context, postID uuid.U
 func (m *MockCommentRepository) CountReplies(ctx context.Context, parentID uuid.UUID) (int64, error) {
 	args := m.Called(ctx, parentID)
 	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *MockCommentRepository) CountRepliesBulk(ctx context.Context, parentIDs []uuid.UUID) (map[uuid.UUID]int64, error) {
+	args := m.Called(ctx, parentIDs)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[uuid.UUID]int64), args.Error(1)
 }
 
 func (m *MockCommentRepository) Find(ctx context.Context, filter commentRepository.CommentFilter, limit, offset int) ([]*models.Comment, error) {
@@ -111,6 +127,35 @@ func (m *MockCommentRepository) Delete(ctx context.Context, commentID uuid.UUID)
 
 func (m *MockCommentRepository) DeleteByPostID(ctx context.Context, postID uuid.UUID) error {
 	args := m.Called(ctx, postID)
+	return args.Error(0)
+}
+
+func (m *MockCommentRepository) AddVote(ctx context.Context, commentID, userID uuid.UUID) (bool, error) {
+	args := m.Called(ctx, commentID, userID)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockCommentRepository) RemoveVote(ctx context.Context, commentID, userID uuid.UUID) (bool, error) {
+	args := m.Called(ctx, commentID, userID)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockCommentRepository) GetUserVotesForComments(ctx context.Context, commentIDs []uuid.UUID, userID uuid.UUID) (map[uuid.UUID]bool, error) {
+	args := m.Called(ctx, commentIDs, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[uuid.UUID]bool), args.Error(1)
+}
+
+func (m *MockCommentRepository) WithTransaction(ctx context.Context, fn func(context.Context) error) error {
+	args := m.Called(ctx, fn)
+	// Execute the function within the mock
+	if fn != nil {
+		if err := fn(ctx); err != nil {
+			return err
+		}
+	}
 	return args.Error(0)
 }
 

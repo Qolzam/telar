@@ -313,7 +313,7 @@ func TestUpdateComment_UnauthorizedUser_ReturnsError(t *testing.T) {
 
 	// Assert
 	assert.Error(t, err)
-	assert.Equal(t, commentsErrors.ErrCommentNotFound, err)
+	assert.Equal(t, commentsErrors.ErrCommentOwnershipRequired, err)
 
 	mockCommentRepo.AssertExpectations(t)
 }
@@ -444,7 +444,7 @@ func TestDeleteComment_UnauthorizedUser_ReturnsError(t *testing.T) {
 
 	// Assert
 	assert.Error(t, err)
-	assert.Equal(t, commentsErrors.ErrCommentNotFound, err)
+	assert.Equal(t, commentsErrors.ErrCommentOwnershipRequired, err)
 
 	mockCommentRepo.AssertExpectations(t)
 }
@@ -507,6 +507,10 @@ func TestGetReplyCount_Success(t *testing.T) {
 
 	mockCommentRepo.AssertExpectations(t)
 }
+
+// Note: Concurrent atomicity testing for ToggleLike is handled by the integration test
+// in repository/comment_votes_test.go, which tests against the real database (thread-safe).
+// Unit tests with mocks are not suitable for concurrent testing when the race detector is enabled.
 
 // Test UpdateCommentProfile
 func TestUpdateCommentProfile_ValidParameters_Success(t *testing.T) {

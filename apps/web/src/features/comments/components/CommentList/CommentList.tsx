@@ -27,7 +27,8 @@ export function CommentList({ postId, currentUserId, onCommentCountChange }: Com
   const [snackbarOpen, setSnackbarOpen] = React.useState(false);
   const [snackbarMsg, setSnackbarMsg] = React.useState('');
 
-  const comments = (data?.pages ?? []).flat();
+  // Extract comments from CommentsListResponse pages
+  const comments = (data?.pages ?? []).flatMap((page) => page.comments || []);
   
   // Calculate total comment count (root comments + all replies using replyCount from API)
   // This matches the calculation in PostCard to ensure consistency

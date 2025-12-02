@@ -12,6 +12,8 @@ import (
 	"github.com/qolzam/telar/apps/api/posts/handlers"
 	postsRepository "github.com/qolzam/telar/apps/api/posts/repository"
 	postsServices "github.com/qolzam/telar/apps/api/posts/services"
+	votesRepository "github.com/qolzam/telar/apps/api/votes/repository"
+	commentRepository "github.com/qolzam/telar/apps/api/comments/repository"
 )
 
 func main() {
@@ -41,11 +43,13 @@ func main() {
 		log.Fatalf("Failed to create postgres client: %v", err)
 	}
 
-	// Create repository
+	// Create repositories
 	postRepo := postsRepository.NewPostgresRepository(pgClient)
+	voteRepo := votesRepository.NewPostgresVoteRepository(pgClient)
+	commentRepo := commentRepository.NewPostgresCommentRepository(pgClient)
 
 	// Create post service with repository
-	postsService := postsServices.NewPostService(postRepo, cfg, nil)
+	postsService := postsServices.NewPostService(postRepo, voteRepo, cfg, nil, commentRepo)
 
 	postsHandler := handlers.NewPostHandler(postsService, cfg.JWT, cfg.HMAC)
 
@@ -58,4 +62,6 @@ func main() {
 	log.Printf("Starting Posts Service on port 8082")
 	log.Fatal(app.Listen(":8082"))
 }
+
+
 

@@ -2,14 +2,17 @@
 
 import { useState } from 'react';
 import React from 'react';
-import { Avatar, Card, CardHeader, CardContent, CardActions, IconButton, Typography, Box, Button } from '@mui/material';
-import { ThumbUp, ChatBubbleOutlineTwoTone, Share, BookmarkBorder, MoreVert } from '@mui/icons-material';
+import { Avatar, Card, CardHeader, CardContent, CardActions, IconButton, Typography, Box, Button, Stack, Dialog, DialogTitle, DialogContent, DialogActions, TextField } from '@mui/material';
+import { ChatBubbleOutlineTwoTone, Share, BookmarkBorder } from '@mui/icons-material';
 import type { Post } from '@telar/sdk';
 import { formatDistanceToNow } from 'date-fns';
 import { CommentList } from '@/features/comments';
 import { useSession } from '@/features/auth/client';
 import { useQueryClient } from '@tanstack/react-query';
 import { postsKeys } from '../../client';
+import { VoteButtons } from './VoteButtons';
+import { PostMenu } from './PostMenu';
+import { useUpdatePostMutation, useDeletePostMutation } from '../../client';
 
 interface PostCardProps {
   post: Post;
@@ -19,8 +22,15 @@ export function PostCard({ post }: PostCardProps) {
   // createdDate is in milliseconds (from UTCNowUnix() which returns UnixNano / 1,000,000)
   const formattedDate = formatDistanceToNow(new Date(post.createdDate), { addSuffix: true });
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editBody, setEditBody] = useState(post.body);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const queryClient = useQueryClient();
   const { user } = useSession();
+  const updatePost = useUpdatePostMutation();
+  const deletePost = useDeletePostMutation();
+  
+  const isOwner = user?.id === post.ownerUserId;
   
   // Use session user's avatar if this is the current user's post, otherwise use post.ownerAvatar
   const displayAvatar = user?.id === post.ownerUserId && user?.avatar 
@@ -96,15 +106,16 @@ export function PostCard({ post }: PostCardProps) {
           </Typography>
         }
         action={
-          <IconButton 
-            aria-label="more options"
-            sx={{ 
-              color: '#CBD5E1',
-              '&:hover': { color: '#94A3B8' }
-            }}
-          >
-            <MoreVert />
-          </IconButton>
+          isOwner ? (
+            <PostMenu
+              postId={post.objectId}
+              onEdit={() => {
+                setIsEditing(true);
+                setEditBody(post.body);
+              }}
+              onDelete={() => setDeleteDialogOpen(true)}
+            />
+          ) : null
         }
         sx={{
           px: '20px',
@@ -116,26 +127,69 @@ export function PostCard({ post }: PostCardProps) {
         }}
       />
       <CardContent sx={{ px: '20px', py: '16px' }}>
-        <Typography
-          sx={{
-            fontFamily: 'PlusJakartaSans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-            fontSize: '14px',
-            fontWeight: 400,
-            lineHeight: '22.4px',
-            color: '#1E293B',
-            whiteSpace: 'pre-wrap'
-          }}
-        >
-          {contentParts.map((part) =>
-            part.isHashtag ? (
-              <span key={part.key} style={{ color: '#4F46E5' }}>
-                {part.text}
-              </span>
-            ) : (
-              <span key={part.key}>{part.text}</span>
-            )
-          )}
-        </Typography>
+        {isEditing ? (
+          <Stack spacing={2}>
+            <TextField
+              multiline
+              fullWidth
+              rows={4}
+              value={editBody}
+              onChange={(e) => setEditBody(e.target.value)}
+              disabled={updatePost.isPending}
+            />
+            <Stack direction="row" spacing={1} justifyContent="flex-end">
+              <Button
+                size="small"
+                onClick={() => {
+                  setIsEditing(false);
+                  setEditBody(post.body);
+                }}
+                disabled={updatePost.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="small"
+                variant="contained"
+                onClick={async () => {
+                  try {
+                    await updatePost.mutateAsync({
+                      objectId: post.objectId,
+                      body: editBody.trim(),
+                    });
+                    setIsEditing(false);
+                  } catch (error) {
+                    console.error('Failed to update post:', error);
+                  }
+                }}
+                disabled={!editBody.trim() || updatePost.isPending}
+              >
+                {updatePost.isPending ? 'Saving...' : 'Save'}
+              </Button>
+            </Stack>
+          </Stack>
+        ) : (
+          <Typography
+            sx={{
+              fontFamily: 'PlusJakartaSans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+              fontSize: '14px',
+              fontWeight: 400,
+              lineHeight: '22.4px',
+              color: '#1E293B',
+              whiteSpace: 'pre-wrap'
+            }}
+          >
+            {contentParts.map((part) =>
+              part.isHashtag ? (
+                <span key={part.key} style={{ color: '#4F46E5' }}>
+                  {part.text}
+                </span>
+              ) : (
+                <span key={part.key}>{part.text}</span>
+              )
+            )}
+          </Typography>
+        )}
         {post.imageFullPath && (
           <Box
             component="img"
@@ -164,36 +218,8 @@ export function PostCard({ post }: PostCardProps) {
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
-          {/* Like Section */}
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <IconButton 
-              aria-label="like"
-              sx={{ 
-                color: '#94A3B8',
-                padding: 0,
-                width: '20px',
-                height: '20px',
-                minWidth: 'auto',
-                '&:hover': { color: '#1E293B', backgroundColor: 'transparent' }
-              }}
-            >
-              <ThumbUp sx={{ fontSize: '18px' }} />
-            </IconButton>
-            {post.score > 0 && (
-              <Typography
-                sx={{
-                  fontFamily: 'PlusJakartaSans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-                  fontSize: '14px',
-                  fontWeight: 500,
-                  lineHeight: '20px',
-                  letterSpacing: '-0.084px',
-                  color: '#1E293B'
-                }}
-              >
-                {post.score} {post.score === 1 ? 'Like' : 'Likes'}
-              </Typography>
-            )}
-          </Box>
+          {/* Vote Section (Up/Down) */}
+          <VoteButtons post={post} />
           
           {/* Comment Section */}
           <Box 
@@ -285,6 +311,29 @@ export function PostCard({ post }: PostCardProps) {
           />
         </Box>
       )}
+      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
+        <DialogTitle>Delete Post</DialogTitle>
+        <DialogContent>
+          Are you sure you want to delete this post? This action cannot be undone.
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+          <Button
+            onClick={async () => {
+              try {
+                await deletePost.mutateAsync(post.objectId);
+                setDeleteDialogOpen(false);
+              } catch (error) {
+                console.error('Failed to delete post:', error);
+              }
+            }}
+            color="error"
+            disabled={deletePost.isPending}
+          >
+            {deletePost.isPending ? 'Deleting...' : 'Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Card>
   );
 }

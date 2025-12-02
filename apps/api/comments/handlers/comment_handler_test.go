@@ -29,6 +29,7 @@ type MockCommentService struct {
 	getCommentsByUserFunc            func(ctx context.Context, userID uuid.UUID, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error)
 	queryCommentsFunc                func(ctx context.Context, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error)
 	queryCommentsWithCursorFunc      func(ctx context.Context, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error)
+	queryRepliesWithCursorFunc       func(ctx context.Context, parentID uuid.UUID, cursor string, limit int) (*models.CommentsListResponse, error)
 	updateCommentFunc                func(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) error
 	updateCommentProfileFunc         func(ctx context.Context, userID uuid.UUID, displayName, avatar string) error
 	incrementScoreFunc               func(ctx context.Context, commentID uuid.UUID, delta int, user *types.UserContext) error
@@ -78,7 +79,7 @@ func (m *MockCommentService) GetCommentsByPost(ctx context.Context, postID uuid.
 	if m.shouldFail {
 		return nil, m.failureError
 	}
-	return nil, nil
+	return &models.CommentsListResponse{Comments: []models.CommentResponse{}, HasNext: false}, nil
 }
 
 func (m *MockCommentService) GetCommentsByUser(ctx context.Context, userID uuid.UUID, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error) {
@@ -90,6 +91,10 @@ func (m *MockCommentService) GetCommentsByUser(ctx context.Context, userID uuid.
 
 func (m *MockCommentService) GetReplyCount(ctx context.Context, parentID uuid.UUID) (int64, error) {
 	return 0, nil
+}
+
+func (m *MockCommentService) GetReplyCountsBulk(ctx context.Context, parentIDs []uuid.UUID) (map[uuid.UUID]int64, error) {
+	return make(map[uuid.UUID]int64), nil
 }
 
 func (m *MockCommentService) GetRootCommentCount(ctx context.Context, postID uuid.UUID) (int64, error) {
@@ -107,7 +112,14 @@ func (m *MockCommentService) QueryCommentsWithCursor(ctx context.Context, filter
 	if m.queryCommentsWithCursorFunc != nil {
 		return m.queryCommentsWithCursorFunc(ctx, filter)
 	}
-	return nil, nil
+	return &models.CommentsListResponse{Comments: []models.CommentResponse{}, HasNext: false}, nil
+}
+
+func (m *MockCommentService) QueryRepliesWithCursor(ctx context.Context, parentID uuid.UUID, cursor string, limit int) (*models.CommentsListResponse, error) {
+	if m.queryRepliesWithCursorFunc != nil {
+		return m.queryRepliesWithCursorFunc(ctx, parentID, cursor, limit)
+	}
+	return &models.CommentsListResponse{Comments: []models.CommentResponse{}, HasNext: false}, nil
 }
 
 func (m *MockCommentService) UpdateComment(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) error {
@@ -173,6 +185,14 @@ func (m *MockCommentService) ValidateCommentOwnership(ctx context.Context, comme
 		return m.failureError
 	}
 	return nil
+}
+
+func (m *MockCommentService) ToggleLike(ctx context.Context, commentID uuid.UUID, userID uuid.UUID) (*models.Comment, int64, bool, error) {
+	return nil, 0, false, nil
+}
+
+func (m *MockCommentService) GetUserVotesForComments(ctx context.Context, commentIDs []uuid.UUID, userID uuid.UUID) (map[uuid.UUID]bool, error) {
+	return make(map[uuid.UUID]bool), nil
 }
 
 // Legacy map-based methods removed from mock - use type-safe methods instead
@@ -686,8 +706,10 @@ func TestCommentHandler_GetCommentsByPost_Success(t *testing.T) {
 	}
 
 	mockService := &MockCommentService{
-		getCommentsByPostFunc: func(ctx context.Context, pID uuid.UUID, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error) {
-			assert.Equal(t, postID, pID)
+		queryCommentsWithCursorFunc: func(ctx context.Context, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error) {
+			assert.NotNil(t, filter)
+			assert.NotNil(t, filter.PostId)
+			assert.Equal(t, postID, *filter.PostId)
 			return expectedComments, nil
 		},
 	}
@@ -710,10 +732,10 @@ func TestCommentHandler_GetCommentsByPost_Success(t *testing.T) {
 	// Verify response
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var response []models.CommentResponse
+	var response models.CommentsListResponse
 	err = json.NewDecoder(resp.Body).Decode(&response)
 	require.NoError(t, err)
-	assert.Equal(t, 2, len(response))
+	assert.Equal(t, 2, len(response.Comments))
 }
 
 func TestCommentHandler_GetCommentsByPost_WithPagination(t *testing.T) {

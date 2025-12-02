@@ -25,8 +25,8 @@ import (
 	signupUC "github.com/qolzam/telar/apps/api/auth/signup"
 	verifyUC "github.com/qolzam/telar/apps/api/auth/verification"
 	"github.com/qolzam/telar/apps/api/auth/models"
-	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
 	"github.com/qolzam/telar/apps/api/internal/database/postgres"
+	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
 	"github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/internal/testutil"
@@ -40,6 +40,108 @@ import (
 	profileServices "github.com/qolzam/telar/apps/api/profile/services"
 	"github.com/stretchr/testify/require"
 )
+
+// applyAuthAndProfileMigrations applies auth and profile migrations to the isolated test schema
+func applyAuthAndProfileMigrations(t *testing.T, ctx context.Context, pgClient *postgres.Client) {
+	t.Helper()
+	
+	authMigrationSQL := `
+		CREATE TABLE IF NOT EXISTS user_auths (
+			id UUID PRIMARY KEY,
+			username VARCHAR(255) UNIQUE NOT NULL,
+			password_hash BYTEA NOT NULL,
+			role VARCHAR(50) DEFAULT 'user',
+			email_verified BOOLEAN DEFAULT FALSE,
+			phone_verified BOOLEAN DEFAULT FALSE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			created_date BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			last_updated BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_user_auths_username ON user_auths(username);
+		CREATE INDEX IF NOT EXISTS idx_user_auths_role ON user_auths(role);
+		CREATE INDEX IF NOT EXISTS idx_user_auths_created_at ON user_auths(created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_user_auths_created_date ON user_auths(created_date DESC);
+		
+		CREATE TABLE IF NOT EXISTS verifications (
+			id UUID PRIMARY KEY,
+			user_id UUID REFERENCES user_auths(id) ON DELETE CASCADE,
+			future_user_id UUID,
+			code VARCHAR(10) NOT NULL,
+			target VARCHAR(255) NOT NULL,
+			target_type VARCHAR(50) NOT NULL,
+			counter BIGINT DEFAULT 1,
+			created_date BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			last_updated BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			remote_ip_address VARCHAR(45),
+			is_verified BOOLEAN DEFAULT FALSE,
+			hashed_password BYTEA,
+			expires_at BIGINT NOT NULL,
+			used BOOLEAN DEFAULT FALSE,
+			full_name VARCHAR(255)
+		);
+		
+		-- Add future_user_id column if it doesn't exist (for existing tables)
+		DO $$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM information_schema.columns 
+				WHERE table_schema = current_schema()
+				AND table_name = 'verifications' AND column_name = 'future_user_id'
+			) THEN
+				ALTER TABLE verifications ADD COLUMN future_user_id UUID;
+			END IF;
+		END $$;
+		
+		CREATE INDEX IF NOT EXISTS idx_verifications_user_type ON verifications(user_id, target_type) WHERE user_id IS NOT NULL;
+		CREATE INDEX IF NOT EXISTS idx_verifications_code ON verifications(code) WHERE used = FALSE;
+		CREATE INDEX IF NOT EXISTS idx_verifications_target ON verifications(target, target_type) WHERE user_id IS NULL;
+		CREATE INDEX IF NOT EXISTS idx_verifications_expires_at ON verifications(expires_at) WHERE used = FALSE;
+		CREATE INDEX IF NOT EXISTS idx_verifications_created_at ON verifications(created_date DESC);
+	`
+	_, err := pgClient.DB().ExecContext(ctx, authMigrationSQL)
+	require.NoError(t, err, "Failed to apply auth migration to isolated test schema")
+	
+	profileMigrationSQL := `
+		CREATE TABLE IF NOT EXISTS profiles (
+			user_id UUID PRIMARY KEY REFERENCES user_auths(id) ON DELETE CASCADE,
+			full_name VARCHAR(255),
+			social_name VARCHAR(255),
+			email VARCHAR(255),
+			avatar VARCHAR(512),
+			banner VARCHAR(512),
+			tagline VARCHAR(500),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			created_date BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			last_updated BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			last_seen BIGINT DEFAULT 0,
+			birthday BIGINT DEFAULT 0,
+			web_url VARCHAR(512),
+			company_name VARCHAR(255),
+			country VARCHAR(100),
+			address TEXT,
+			phone VARCHAR(50),
+			vote_count BIGINT DEFAULT 0,
+			share_count BIGINT DEFAULT 0,
+			follow_count BIGINT DEFAULT 0,
+			follower_count BIGINT DEFAULT 0,
+			post_count BIGINT DEFAULT 0,
+			facebook_id VARCHAR(255),
+			instagram_id VARCHAR(255),
+			twitter_id VARCHAR(255),
+			linkedin_id VARCHAR(255),
+			access_user_list TEXT[],
+			permission VARCHAR(50) DEFAULT 'Public'
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_social_name ON profiles(social_name) WHERE social_name IS NOT NULL;
+		CREATE INDEX IF NOT EXISTS idx_profiles_email ON profiles(email) WHERE email IS NOT NULL;
+		CREATE INDEX IF NOT EXISTS idx_profiles_created_at ON profiles(created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_profiles_created_date ON profiles(created_date DESC);
+	`
+	_, err = pgClient.DB().ExecContext(ctx, profileMigrationSQL)
+	require.NoError(t, err, "Failed to apply profile migration to isolated test schema")
+}
 
 func newAuthApp(t *testing.T, base *platform.BaseService, cfg *platformconfig.Config, schema string) (*fiber.App, string, string) {
 	pubPEM, privPEM := testutil.GenerateECDSAKeyPairPEM(t)
@@ -142,8 +244,8 @@ func newAuthApp(t *testing.T, base *platform.BaseService, cfg *platformconfig.Co
 	profileCreator := profile.NewDirectCallAdapter(profileServiceForAuth)
 	
 	signupService := signupUC.NewService(verifRepoForSignup, signupServiceConfig)
-	signupHandler := signupUC.NewHandler(signupService, "test-recaptcha-key", privPEM)
-	signupHandler = signupHandler.WithRecaptcha(&testutil.FakeRecaptchaVerifier{ShouldSucceed: true})
+	fakeVerifier := &testutil.FakeRecaptchaVerifier{ShouldSucceed: true}
+	signupHandler := signupUC.NewHandler(signupService, fakeVerifier, privPEM)
 
 	// Create login service with new constructor
 	loginServiceConfig := &loginUC.ServiceConfig{
@@ -316,6 +418,123 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 	baseConfig := suite.Config()
 	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, baseConfig)
 	ctx := context.Background()
+	
+	// Apply migrations to isolated test schema (required for schema-per-test isolation)
+	pgConfig := iso.LegacyConfig.ToServiceConfig(dbi.DatabaseTypePostgreSQL).PostgreSQLConfig
+	pgConfig.Schema = iso.LegacyConfig.PGSchema
+	pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
+	require.NoError(t, err, "Failed to create postgres client")
+	defer pgClient.Close()
+	
+	// Create schema if it doesn't exist
+	schemaSQL := fmt.Sprintf(`CREATE SCHEMA IF NOT EXISTS %s`, iso.LegacyConfig.PGSchema)
+	_, err = pgClient.DB().ExecContext(ctx, schemaSQL)
+	require.NoError(t, err, "Failed to create schema")
+	
+	// Set search_path to the isolated schema
+	setSearchPathSQL := fmt.Sprintf(`SET search_path TO %s`, iso.LegacyConfig.PGSchema)
+	_, err = pgClient.DB().ExecContext(ctx, setSearchPathSQL)
+	require.NoError(t, err, "Failed to set search_path")
+	
+	// Apply Auth Schema Migration (including future_user_id column)
+	migrationSQL := `
+		CREATE TABLE IF NOT EXISTS user_auths (
+			id UUID PRIMARY KEY,
+			username VARCHAR(255) UNIQUE NOT NULL,
+			password_hash BYTEA NOT NULL,
+			role VARCHAR(50) DEFAULT 'user',
+			email_verified BOOLEAN DEFAULT FALSE,
+			phone_verified BOOLEAN DEFAULT FALSE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			created_date BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			last_updated BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_user_auths_username ON user_auths(username);
+		CREATE INDEX IF NOT EXISTS idx_user_auths_role ON user_auths(role);
+		CREATE INDEX IF NOT EXISTS idx_user_auths_created_at ON user_auths(created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_user_auths_created_date ON user_auths(created_date DESC);
+		
+		CREATE TABLE IF NOT EXISTS verifications (
+			id UUID PRIMARY KEY,
+			user_id UUID REFERENCES user_auths(id) ON DELETE CASCADE,
+			future_user_id UUID,
+			code VARCHAR(10) NOT NULL,
+			target VARCHAR(255) NOT NULL,
+			target_type VARCHAR(50) NOT NULL,
+			counter BIGINT DEFAULT 1,
+			created_date BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			last_updated BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			remote_ip_address VARCHAR(45),
+			is_verified BOOLEAN DEFAULT FALSE,
+			hashed_password BYTEA,
+			expires_at BIGINT NOT NULL,
+			used BOOLEAN DEFAULT FALSE,
+			full_name VARCHAR(255)
+		);
+		
+		-- Add future_user_id column if it doesn't exist (for existing tables)
+		DO $$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM information_schema.columns 
+				WHERE table_schema = current_schema()
+				AND table_name = 'verifications' AND column_name = 'future_user_id'
+			) THEN
+				ALTER TABLE verifications ADD COLUMN future_user_id UUID;
+			END IF;
+		END $$;
+		
+		CREATE INDEX IF NOT EXISTS idx_verifications_user_type ON verifications(user_id, target_type) WHERE user_id IS NOT NULL;
+		CREATE INDEX IF NOT EXISTS idx_verifications_code ON verifications(code) WHERE used = FALSE;
+		CREATE INDEX IF NOT EXISTS idx_verifications_target ON verifications(target, target_type) WHERE user_id IS NULL;
+		CREATE INDEX IF NOT EXISTS idx_verifications_expires_at ON verifications(expires_at) WHERE used = FALSE;
+		CREATE INDEX IF NOT EXISTS idx_verifications_created_at ON verifications(created_date DESC);
+	`
+	_, err = pgClient.DB().ExecContext(ctx, migrationSQL)
+	require.NoError(t, err, "Failed to apply auth migration to isolated test schema")
+	
+	// Apply Profile Schema Migration (required for signup flow)
+	profileMigrationSQL := `
+		CREATE TABLE IF NOT EXISTS profiles (
+			user_id UUID PRIMARY KEY REFERENCES user_auths(id) ON DELETE CASCADE,
+			full_name VARCHAR(255),
+			social_name VARCHAR(255),
+			email VARCHAR(255),
+			avatar VARCHAR(512),
+			banner VARCHAR(512),
+			tagline VARCHAR(500),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			created_date BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			last_updated BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			last_seen BIGINT DEFAULT 0,
+			birthday BIGINT DEFAULT 0,
+			web_url VARCHAR(512),
+			company_name VARCHAR(255),
+			country VARCHAR(100),
+			address TEXT,
+			phone VARCHAR(50),
+			vote_count BIGINT DEFAULT 0,
+			share_count BIGINT DEFAULT 0,
+			follow_count BIGINT DEFAULT 0,
+			follower_count BIGINT DEFAULT 0,
+			post_count BIGINT DEFAULT 0,
+			facebook_id VARCHAR(255),
+			instagram_id VARCHAR(255),
+			twitter_id VARCHAR(255),
+			linkedin_id VARCHAR(255),
+			access_user_list TEXT[],
+			permission VARCHAR(50) DEFAULT 'Public'
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_social_name ON profiles(social_name) WHERE social_name IS NOT NULL;
+		CREATE INDEX IF NOT EXISTS idx_profiles_email ON profiles(email) WHERE email IS NOT NULL;
+		CREATE INDEX IF NOT EXISTS idx_profiles_created_at ON profiles(created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_profiles_created_date ON profiles(created_date DESC);
+	`
+	_, err = pgClient.DB().ExecContext(ctx, profileMigrationSQL)
+	require.NoError(t, err, "Failed to apply profile migration to isolated test schema")
+	
 	base, err := platform.NewBaseService(ctx, iso.Config)
 	require.NoError(t, err)
 	app, pubPEM, privPEM := newAuthApp(t, base, iso.Config, iso.LegacyConfig.PGSchema)

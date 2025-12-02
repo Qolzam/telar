@@ -210,6 +210,7 @@ type PostResponse struct {
 	ObjectId         string            `json:"objectId"`
 	PostTypeId       int               `json:"postTypeId"`
 	Score            int64             `json:"score"`
+	VoteType         int               `json:"voteType"` // 0=None, 1=Up, 2=Down (current user's vote)
 	Votes            map[string]string `json:"votes"`
 	ViewCount        int64             `json:"viewCount"`
 	Body             string            `json:"body"`

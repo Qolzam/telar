@@ -15,6 +15,7 @@ import (
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/internal/types"
+	commentMocks "github.com/qolzam/telar/apps/api/comments/services/mocks"
 	"github.com/qolzam/telar/apps/api/posts/models"
 )
 
@@ -434,9 +435,13 @@ func setupTestService() (*postService, *MockPostRepository) {
 		},
 	}
 	
+	// Create mock comment repository (required for SoftDeletePost)
+	mockCommentRepo := &commentMocks.MockCommentRepository{}
+	
 	svc := &postService{
-		repo:   mockRepo,
-		config: cfg,
+		repo:        mockRepo,
+		commentRepo: mockCommentRepo,
+		config:      cfg,
 	}
 	return svc, mockRepo
 }
@@ -897,13 +902,21 @@ func TestSoftDeletePost_ValidOwnership_Success(t *testing.T) {
 	// Setup mock expectations for findPostForOwnershipCheck (no deleted filter)
 	mockRepo.On("FindByID", ctx, testPost.ObjectId).Return(testPost, nil)
 	
-	// Setup mock expectations for UpdateFields (called by SoftDeletePost) - it loads post again, then updates
-	mockRepo.On("FindByID", ctx, testPost.ObjectId).Return(testPost, nil)
-	updatedPost := *testPost
-	updatedPost.Deleted = true
-	updatedPost.DeletedDate = time.Now().Unix()
-	mockRepo.On("Update", ctx, mock.MatchedBy(func(p *models.Post) bool {
-		return p.ObjectId == testPost.ObjectId && p.Deleted == true && p.DeletedDate > 0
+	// Setup mock for comment repository (cascade soft-delete)
+	mockCommentRepo := service.commentRepo.(*commentMocks.MockCommentRepository)
+	mockCommentRepo.On("DeleteByPostID", mock.Anything, testPost.ObjectId).Return(nil)
+	
+	// Setup transaction mock - WithTransaction calls the function with a transaction context
+	// The mock implementation already executes the function, so we just need to return nil
+	mockRepo.On("WithTransaction", ctx, mock.AnythingOfType("func(context.Context) error")).Return(nil)
+	
+	// Setup mock for FindByID (called by UpdateFields to load the post before updating)
+	// This is called WITHIN the transaction, so use mock.Anything for context
+	mockRepo.On("FindByID", mock.Anything, testPost.ObjectId).Return(testPost, nil)
+	
+	// Setup mock for Update (called by UpdateFields within transaction)
+	mockRepo.On("Update", mock.Anything, mock.MatchedBy(func(p *models.Post) bool {
+		return p.ObjectId == testPost.ObjectId && p.Deleted == true
 	})).Return(nil)
 
 	// Execute

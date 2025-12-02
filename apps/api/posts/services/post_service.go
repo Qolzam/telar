@@ -19,6 +19,8 @@ import (
 	sharedInterfaces "github.com/qolzam/telar/apps/api/shared/interfaces"
 	postsErrors "github.com/qolzam/telar/apps/api/posts/errors"
 	"github.com/qolzam/telar/apps/api/posts/models"
+	votesRepository "github.com/qolzam/telar/apps/api/votes/repository"
+	commentRepository "github.com/qolzam/telar/apps/api/comments/repository"
 )
 
 // postQueryBuilder has been removed as part of the architectural migration.
@@ -28,9 +30,11 @@ import (
 // postService implements the PostService interface
 type postService struct {
 	repo           repository.PostRepository // New domain-specific repository (primary)
+	voteRepo       votesRepository.VoteRepository // For enriching posts with voteType
 	cacheService   *cache.GenericCacheService
 	config         *platformconfig.Config
 	commentCounter sharedInterfaces.CommentCounter // For counting comments
+	commentRepo    commentRepository.CommentRepository // For cascade soft-delete of comments (optional, nil in tests)
 }
 
 // Ensure postService implements sharedInterfaces.PostStatsUpdater interface
@@ -50,7 +54,7 @@ func (s *postService) incrementCommentCountInternal(ctx context.Context, postID 
 			return fmt.Errorf("failed to get post: %w", err)
 		}
 		if post.OwnerUserId != ownerID {
-			return postsErrors.ErrPostNotFound
+			return postsErrors.ErrPostOwnershipRequired
 		}
 	}
 
@@ -81,7 +85,8 @@ func (s *postService) incrementCommentCountForService(ctx context.Context, postI
 }
 
 // NewPostService creates a new instance of the post service
-func NewPostService(repo repository.PostRepository, cfg *platformconfig.Config, commentCounter sharedInterfaces.CommentCounter) PostService {
+// commentRepo is optional (can be nil for tests), but required for cascade soft-delete in production
+func NewPostService(repo repository.PostRepository, voteRepo votesRepository.VoteRepository, cfg *platformconfig.Config, commentCounter sharedInterfaces.CommentCounter, commentRepo commentRepository.CommentRepository) PostService {
 	enableCache := true
 	if cfg != nil {
 		enableCache = cfg.Cache.Enabled
@@ -94,9 +99,11 @@ func NewPostService(repo repository.PostRepository, cfg *platformconfig.Config, 
 
 	return &postService{
 		repo:           repo,
+		voteRepo:       voteRepo,
 		cacheService:   cacheService,
 		config:         cfg,
 		commentCounter: commentCounter,
+		commentRepo:    commentRepo,
 	}
 }
 
@@ -460,7 +467,7 @@ func (s *postService) UpdatePost(ctx context.Context, postID uuid.UUID, req *mod
 
 	// Verify ownership
 	if post.OwnerUserId != user.UserID {
-		return postsErrors.ErrPostNotFound // Return not found for security
+		return postsErrors.ErrPostOwnershipRequired
 	}
 
 	// Update fields on the struct
@@ -634,7 +641,7 @@ func (s *postService) findPostForOwnershipCheck(ctx context.Context, postID uuid
 
 	// Check ownership
 	if post.OwnerUserId != userID {
-		return nil, postsErrors.ErrPostNotFound
+		return nil, postsErrors.ErrPostOwnershipRequired
 	}
 
 	return post, nil
@@ -652,7 +659,7 @@ func (s *postService) ValidatePostOwnership(ctx context.Context, postID uuid.UUI
 
 	// Check ownership
 	if post.OwnerUserId != userID {
-		return postsErrors.ErrPostNotFound
+		return postsErrors.ErrPostOwnershipRequired
 	}
 
 	return nil
@@ -778,10 +785,11 @@ func (s *postService) ConvertPostToResponse(ctx context.Context, post *models.Po
 		}
 	}
 	
-	return models.PostResponse{
+	response := models.PostResponse{
 		ObjectId:         post.ObjectId.String(),
 		PostTypeId:       post.PostTypeId,
 		Score:            post.Score,
+		VoteType:         0, // Default to 0 (None) - will be enriched if user context available
 		Votes:            post.Votes,
 		ViewCount:        post.ViewCount,
 		Body:             post.Body,
@@ -805,6 +813,14 @@ func (s *postService) ConvertPostToResponse(ctx context.Context, post *models.Po
 		Permission:       post.Permission,
 		Version:          post.Version,
 	}
+
+	// Enrich with vote type if user context is available
+	// Note: User context must be set in context by middleware before calling service
+	if userCtx, ok := ctx.Value(types.UserCtxName).(types.UserContext); ok {
+		s.enrichSinglePostWithVoteType(ctx, &response, userCtx.UserID)
+	}
+
+	return response
 }
 
 // QueryPosts queries posts based on filter criteria
@@ -864,13 +880,74 @@ func (s *postService) QueryPosts(ctx context.Context, filter *models.PostQueryFi
 		postResponses[i] = s.ConvertPostToResponse(ctx, post)
 	}
 
-	return &models.PostsListResponse{
+	result := &models.PostsListResponse{
 		Posts:      postResponses,
 		TotalCount: totalCount,
 		Page:       page,
 		Limit:      limit,
 		HasMore:    int64(page*limit) < totalCount,
-	}, nil
+	}
+
+	// Enrich with vote types if user context is available and voteRepo is set
+	if userCtx, ok := ctx.Value(types.UserCtxName).(types.UserContext); ok {
+		s.enrichPostsWithVoteType(ctx, result.Posts, userCtx.UserID)
+	}
+
+	return result, nil
+}
+
+// enrichSinglePostWithVoteType enriches a single post with vote type
+func (s *postService) enrichSinglePostWithVoteType(ctx context.Context, response *models.PostResponse, userID uuid.UUID) {
+	if s.voteRepo == nil {
+		return
+	}
+
+	postID, err := uuid.FromString(response.ObjectId)
+	if err != nil {
+		return
+	}
+
+	voteMap, err := s.voteRepo.GetVotesForPosts(ctx, []uuid.UUID{postID}, userID)
+	if err == nil {
+		response.VoteType = voteMap[postID]
+	}
+}
+
+// enrichPostsWithVoteType bulk-enriches posts with current user's vote type
+// This avoids N+1 queries by fetching all votes in a single query
+// This method belongs in the service layer to keep handlers thin and testable
+func (s *postService) enrichPostsWithVoteType(ctx context.Context, posts []models.PostResponse, userID uuid.UUID) {
+	if s.voteRepo == nil || len(posts) == 0 {
+		return
+	}
+
+	// Extract post IDs
+	postIDs := make([]uuid.UUID, 0, len(posts))
+	for i := range posts {
+		id, err := uuid.FromString(posts[i].ObjectId)
+		if err == nil {
+			postIDs = append(postIDs, id)
+		}
+	}
+
+	if len(postIDs) == 0 {
+		return
+	}
+
+	// Bulk-load user votes (single query using ANY operator)
+	voteMap, err := s.voteRepo.GetVotesForPosts(ctx, postIDs, userID)
+	if err != nil {
+		// Graceful degradation: if vote service fails, posts still return with voteType=0
+		return
+	}
+
+	// Set VoteType for each post
+	for i := range posts {
+		id, err := uuid.FromString(posts[i].ObjectId)
+		if err == nil {
+			posts[i].VoteType = voteMap[id]
+		}
+	}
 }
 
 // QueryPostsWithCursor retrieves posts with cursor-based pagination
@@ -1024,7 +1101,7 @@ func (s *postService) DeletePost(ctx context.Context, postID uuid.UUID, user *ty
 
 	// Verify ownership
 	if post.OwnerUserId != user.UserID {
-		return postsErrors.ErrPostNotFound // Return not found for security
+		return postsErrors.ErrPostOwnershipRequired
 	}
 
 	// Delete the post (soft delete - sets is_deleted = TRUE)
@@ -1044,6 +1121,7 @@ func (s *postService) DeletePost(ctx context.Context, postID uuid.UUID, user *ty
 // SoftDeletePost marks a post as deleted (idempotent operation).
 // If the post is already soft-deleted, it returns success immediately.
 // This ensures DELETE operations are idempotent per REST best practices.
+// Cascade soft-deletes all associated comments in the same transaction.
 func (s *postService) SoftDeletePost(ctx context.Context, postID uuid.UUID, user *types.UserContext) error {
 	// 1. Use the new helper to find the post, even if it's already deleted.
 	post, err := s.findPostForOwnershipCheck(ctx, postID, user.UserID)
@@ -1064,14 +1142,27 @@ func (s *postService) SoftDeletePost(ctx context.Context, postID uuid.UUID, user
 		return nil
 	}
 
-	// 3. If the post exists and is not yet deleted, perform the update.
-	updates := map[string]interface{}{
-		"deleted":     true,
-		"deletedDate": time.Now().Unix(),
-	}
+	// 3. Perform cascade soft-delete in a transaction (post + comments)
+	err = s.repo.WithTransaction(ctx, func(txCtx context.Context) error {
+		// 3a. Soft-delete the post
+		updates := map[string]interface{}{
+			"deleted":     true,
+			"deletedDate": time.Now().Unix(),
+		}
+		if err := s.UpdateFields(txCtx, postID, updates); err != nil {
+			return fmt.Errorf("failed to soft-delete post: %w", err)
+		}
 
-	if err := s.UpdateFields(ctx, postID, updates); err != nil {
-		return err // Return the update error if it occurs.
+		// 3b. Cascade soft-delete all comments for this post (write-time propagation)
+		if err := s.commentRepo.DeleteByPostID(txCtx, postID); err != nil {
+			return fmt.Errorf("failed to cascade soft-delete comments: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return err
 	}
 
 	// 4. Invalidate caches.

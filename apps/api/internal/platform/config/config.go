@@ -80,9 +80,10 @@ type EmailConfig struct {
 
 // SecurityConfig holds security-related configuration
 type SecurityConfig struct {
-	RecaptchaSiteKey string `json:"recaptchaSiteKey"`
-	RecaptchaKey     string `json:"recaptchaKey"`
-	Origin           string `json:"origin"`
+	RecaptchaSiteKey  string `json:"recaptchaSiteKey"`
+	RecaptchaKey      string `json:"recaptchaKey"`
+	RecaptchaDisabled bool   `json:"recaptchaDisabled"`
+	Origin            string `json:"origin"`
 }
 
 // AppConfig holds application-related configuration
@@ -230,9 +231,10 @@ func LoadFromEnv() (*Config, error) {
 			RefEmailPass: getEnvOrDefault("REF_EMAIL_PASS", ""),
 		},
 		Security: SecurityConfig{
-			RecaptchaSiteKey: getEnvOrDefault("RECAPTCHA_SITE_KEY", ""),
-			RecaptchaKey:     getEnvOrDefault("RECAPTCHA_KEY", ""),
-			Origin:           getEnvOrDefault("ORIGIN", ""),
+			RecaptchaSiteKey:  getEnvOrDefault("RECAPTCHA_SITE_KEY", ""),
+			RecaptchaKey:      getEnvOrDefault("RECAPTCHA_KEY", ""),
+			RecaptchaDisabled: getEnvAsBool("RECAPTCHA_DISABLED", false),
+			Origin:            getEnvOrDefault("ORIGIN", ""),
 		},
 		App: AppConfig{
 			WebDomain:      getEnvOrDefault("WEB_DOMAIN", "http://localhost:3000"),
@@ -418,9 +420,10 @@ func LoadFromMap(envMap map[string]string) (*Config, error) {
 			RefEmailPass: get("REF_EMAIL_PASS", ""),
 		},
 		Security: SecurityConfig{
-			RecaptchaSiteKey: get("RECAPTCHA_SITE_KEY", ""),
-			RecaptchaKey:     get("RECAPTCHA_KEY", ""),
-			Origin:           get("ORIGIN", ""),
+			RecaptchaSiteKey:  get("RECAPTCHA_SITE_KEY", ""),
+			RecaptchaKey:      get("RECAPTCHA_KEY", ""),
+			RecaptchaDisabled: getBool("RECAPTCHA_DISABLED", false),
+			Origin:            get("ORIGIN", ""),
 		},
 		App: AppConfig{
 			WebDomain:      get("WEB_DOMAIN", "http://localhost:3000"),

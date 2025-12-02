@@ -16,6 +16,8 @@ var (
 	ErrCommentAlreadyExists     = errors.New("comment already exists")
 	ErrCommentOwnershipRequired = errors.New("comment ownership required")
 	ErrInvalidUserContext       = errors.New("invalid user context")
+	ErrUserNotFound             = errors.New("user does not exist")
+	ErrPostNotFound             = errors.New("post does not exist")
 
 	// Request and validation errors
 	ErrInvalidRequest       = errors.New("invalid request")
@@ -113,6 +115,18 @@ func HandleServiceError(c *fiber.Ctx, err error) error {
 		return c.Status(http.StatusUnauthorized).JSON(ErrorResponse{
 			Code:    CodeUnauthorized,
 			Message: "Unauthorized access",
+			Details: err.Error(),
+		})
+	case errors.Is(err, ErrUserNotFound):
+		return c.Status(http.StatusUnauthorized).JSON(ErrorResponse{
+			Code:    CodeUnauthorized,
+			Message: "User not found (stale authentication token)",
+			Details: err.Error(),
+		})
+	case errors.Is(err, ErrPostNotFound):
+		return c.Status(http.StatusNotFound).JSON(ErrorResponse{
+			Code:    CodeCommentNotFound,
+			Message: "Post not found",
 			Details: err.Error(),
 		})
 	case errors.Is(err, ErrCommentAlreadyExists):

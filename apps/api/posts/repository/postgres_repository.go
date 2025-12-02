@@ -764,9 +764,6 @@ func (r *postgresRepository) WithTransaction(ctx context.Context, fn func(contex
 			tx.Rollback()
 			return fmt.Errorf("failed to set search_path in transaction (schema=%s): %w", r.schema, err)
 		}
-	} else {
-		// DEBUG: Log when schema is empty (this should not happen in isolated tests)
-		fmt.Printf("[PostRepository.WithTransaction] ERROR: schema is empty, transaction will use default search_path\n")
 	}
 
 	// Inject transaction into context using shared key

@@ -44,13 +44,17 @@ func RegisterRoutes(app *fiber.App, handlers *CommentsHandlers, cfg *platformcon
 
 	// --- User-Facing Routes: Use DUAL AUTH middleware (JWT + Cookie + HMAC fallback) ---
 	// All routes support both HMACAuth and JWTAuth as per comments.yaml API specification
+	// IMPORTANT: More specific routes must come before generic ones (Fiber matches in order)
 	group.Post("/", dualAuthMiddleware, handlers.CommentHandler.CreateComment)
 	group.Put("/", dualAuthMiddleware, handlers.CommentHandler.UpdateComment)
 	group.Get("/", dualAuthMiddleware, handlers.CommentHandler.GetCommentsByPost)
-	group.Get("/:commentId/replies", dualAuthMiddleware, handlers.CommentHandler.GetReplies)
 	group.Put("/score", dualAuthMiddleware, handlers.CommentHandler.IncrementScore)
 	group.Put("/profile", dualAuthMiddleware, handlers.CommentHandler.UpdateCommentProfile)
-	group.Get("/:commentId", dualAuthMiddleware, handlers.CommentHandler.GetComment)
-	group.Delete("/id/:commentId/post/:postId", dualAuthMiddleware, handlers.CommentHandler.DeleteComment)
 	group.Delete("/post/:postId", dualAuthMiddleware, handlers.CommentHandler.DeleteCommentsByPost)
+	// Specific routes with path parameters must come before generic :commentId route
+	group.Get("/:commentId/replies", dualAuthMiddleware, handlers.CommentHandler.GetReplies)
+	group.Post("/:commentId/like", dualAuthMiddleware, handlers.CommentHandler.ToggleLike)
+	group.Delete("/id/:commentId/post/:postId", dualAuthMiddleware, handlers.CommentHandler.DeleteComment)
+	// Generic :commentId route must come last
+	group.Get("/:commentId", dualAuthMiddleware, handlers.CommentHandler.GetComment)
 }

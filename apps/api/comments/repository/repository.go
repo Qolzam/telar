@@ -50,6 +50,12 @@ type CommentRepository interface {
 	// FindReplies retrieves replies to a specific comment with pagination
 	FindReplies(ctx context.Context, parentID uuid.UUID, limit, offset int) ([]*models.Comment, error)
 
+	// FindRepliesWithCursor retrieves replies to a specific comment with cursor-based pagination
+	// Returns replies ordered by created_date ASC, id ASC for stable ordering
+	// cursor is a base64-encoded string containing created_date and id
+	// Returns replies, nextCursor (empty if no more), and error
+	FindRepliesWithCursor(ctx context.Context, parentID uuid.UUID, cursor string, limit int) ([]*models.Comment, string, error)
+
 	// CountByPostID counts root comments (not replies) for a post
 	// This is used for the denormalized comment_count on posts
 	CountByPostID(ctx context.Context, postID uuid.UUID) (int64, error)
@@ -77,5 +83,26 @@ type CommentRepository interface {
 
 	// DeleteByPostID soft deletes all comments for a post (batch operation)
 	DeleteByPostID(ctx context.Context, postID uuid.UUID) error
+
+	// AddVote attempts to add a vote (like) for a comment
+	// Returns true if a new row was inserted, false if it already existed
+	AddVote(ctx context.Context, commentID, userID uuid.UUID) (bool, error)
+
+	// RemoveVote removes a vote (like) for a comment
+	// Returns true if a row was deleted, false if no vote existed
+	RemoveVote(ctx context.Context, commentID, userID uuid.UUID) (bool, error)
+
+	// GetUserVotesForComments bulk checks which comments the user has liked
+	// Returns a map of CommentID -> bool (true if user liked it)
+	GetUserVotesForComments(ctx context.Context, commentIDs []uuid.UUID, userID uuid.UUID) (map[uuid.UUID]bool, error)
+
+	// CountRepliesBulk counts replies for multiple comments in a single query
+	// Returns a map of parentCommentID -> replyCount
+	// This avoids N+1 queries when loading comment lists
+	CountRepliesBulk(ctx context.Context, parentIDs []uuid.UUID) (map[uuid.UUID]int64, error)
+
+	// WithTransaction executes a function within a transaction
+	// This is needed for atomic vote operations that update both comment_votes and comments.score
+	WithTransaction(ctx context.Context, fn func(context.Context) error) error
 }
 

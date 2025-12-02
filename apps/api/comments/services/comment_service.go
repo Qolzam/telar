@@ -2,7 +2,9 @@ package services
 
 import (
     "context"
+    "errors"
     "fmt"
+    "strings"
     "time"
 
     "github.com/gofrs/uuid"
@@ -127,6 +129,7 @@ func (s *commentService) CreateComment(ctx context.Context, req *models.CreateCo
         return nil, fmt.Errorf("user context is required")
     }
 
+
     commentID, err := uuid.NewV4()
     if err != nil {
         return nil, fmt.Errorf("failed to generate comment ID: %w", err)
@@ -157,6 +160,13 @@ func (s *commentService) CreateComment(ctx context.Context, req *models.CreateCo
         err = s.postRepo.WithTransaction(ctx, func(txCtx context.Context) error {
             // Create comment within transaction
             if err := s.commentRepo.Create(txCtx, comment); err != nil {
+                // Check for foreign key violations (user or post not found)
+                if strings.Contains(err.Error(), "user does not exist") {
+                    return commentsErrors.ErrUserNotFound
+                }
+                if strings.Contains(err.Error(), "post does not exist") {
+                    return commentsErrors.ErrPostNotFound
+                }
                 return fmt.Errorf("failed to create comment: %w", err)
             }
 
@@ -168,11 +178,22 @@ func (s *commentService) CreateComment(ctx context.Context, req *models.CreateCo
             return nil
         })
         if err != nil {
+            // Check if the error is already a domain error (ErrUserNotFound, ErrPostNotFound)
+            if errors.Is(err, commentsErrors.ErrUserNotFound) || errors.Is(err, commentsErrors.ErrPostNotFound) {
+                return nil, err
+            }
             return nil, fmt.Errorf("failed to create comment atomically: %w", err)
         }
     } else {
         // For replies, no count update needed - just create the comment
         if err := s.commentRepo.Create(ctx, comment); err != nil {
+            // Check for foreign key violations (user or post not found)
+            if strings.Contains(err.Error(), "user does not exist") {
+                return nil, commentsErrors.ErrUserNotFound
+            }
+            if strings.Contains(err.Error(), "post does not exist") {
+                return nil, commentsErrors.ErrPostNotFound
+            }
             return nil, fmt.Errorf("failed to create comment: %w", err)
         }
     }
@@ -204,7 +225,7 @@ func (s *commentService) GetComment(ctx context.Context, commentID uuid.UUID) (*
         return nil, fmt.Errorf("failed to find comment: %w", err)
     }
 
-    // Filter out deleted comments
+    // Filter out deleted comments (cascade soft-delete is handled at write-time)
     if comment.Deleted {
         return nil, commentsErrors.ErrCommentNotFound
     }
@@ -281,9 +302,10 @@ func (s *commentService) QueryComments(ctx context.Context, filter *models.Comme
     }
 
     // Convert to response format
+    // Note: IsLiked will be set to false by default, caller should bulk-load votes if needed
     responses := make([]models.CommentResponse, len(comments))
     for i, comment := range comments {
-        responses[i] = s.convertToCommentResponse(comment)
+        responses[i] = s.convertToCommentResponse(comment, false)
     }
 
     result := &models.CommentsListResponse{
@@ -327,9 +349,42 @@ func (s *commentService) QueryCommentsWithCursor(ctx context.Context, filter *mo
     }
 
     // Convert to response format
+    // Note: IsLiked will be set to false by default, caller should bulk-load votes if needed
     responses := make([]models.CommentResponse, len(comments))
     for i, comment := range comments {
-        responses[i] = s.convertToCommentResponse(comment)
+        responses[i] = s.convertToCommentResponse(comment, false)
+    }
+
+    result := &models.CommentsListResponse{
+        Comments:   responses,
+        NextCursor: nextCursor,
+        HasNext:    nextCursor != "",
+        Limit:      limit,
+    }
+
+    return result, nil
+}
+
+// QueryRepliesWithCursor retrieves replies to a specific comment with cursor-based pagination
+func (s *commentService) QueryRepliesWithCursor(ctx context.Context, parentID uuid.UUID, cursor string, limit int) (*models.CommentsListResponse, error) {
+    // Default limit
+    if limit <= 0 {
+        limit = defaultCommentLimit
+    } else if limit > maxCommentLimit {
+        limit = maxCommentLimit
+    }
+
+    // Use cursor pagination for replies
+    replies, nextCursor, err := s.commentRepo.FindRepliesWithCursor(ctx, parentID, cursor, limit)
+    if err != nil {
+        return nil, fmt.Errorf("failed to query replies with cursor: %w", err)
+    }
+
+    // Convert to response format
+    // Note: IsLiked will be set to false by default, caller should bulk-load votes if needed
+    responses := make([]models.CommentResponse, len(replies))
+    for i, reply := range replies {
+        responses[i] = s.convertToCommentResponse(reply, false)
     }
 
     result := &models.CommentsListResponse{
@@ -365,7 +420,7 @@ func (s *commentService) UpdateComment(ctx context.Context, commentID uuid.UUID,
     }
 
     if comment.OwnerUserId != user.UserID {
-        return commentsErrors.ErrCommentNotFound
+        return commentsErrors.ErrCommentOwnershipRequired
     }
 
     // Update comment
@@ -429,7 +484,7 @@ func (s *commentService) DeleteComment(ctx context.Context, commentID uuid.UUID,
     }
 
     if comment.OwnerUserId != user.UserID {
-        return commentsErrors.ErrCommentNotFound
+        return commentsErrors.ErrCommentOwnershipRequired
     }
 
     if postID != uuid.Nil && comment.PostId != postID {
@@ -562,7 +617,7 @@ func (s *commentService) ValidateCommentOwnership(ctx context.Context, commentID
     return err
 }
 
-func (s *commentService) convertToCommentResponse(comment *models.Comment) models.CommentResponse {
+func (s *commentService) convertToCommentResponse(comment *models.Comment, isLiked bool) models.CommentResponse {
     return models.CommentResponse{
         ObjectId:         comment.ObjectId.String(),
         Score:            comment.Score,
@@ -575,6 +630,7 @@ func (s *commentService) convertToCommentResponse(comment *models.Comment) model
         DeletedDate:      comment.DeletedDate,
         CreatedDate:      comment.CreatedDate,
         LastUpdated:      comment.LastUpdated,
+        IsLiked:          isLiked,
     }
 }
 
@@ -601,6 +657,74 @@ func sanitizePagination(filter *models.CommentQueryFilter) {
 // GetReplyCount returns the number of replies for a parent comment
 func (s *commentService) GetReplyCount(ctx context.Context, parentID uuid.UUID) (int64, error) {
     return s.commentRepo.CountReplies(ctx, parentID)
+}
+
+// GetReplyCountsBulk returns reply counts for multiple comments in a single query
+// Returns a map of parentCommentID -> replyCount
+// This avoids N+1 queries when loading comment lists
+func (s *commentService) GetReplyCountsBulk(ctx context.Context, parentIDs []uuid.UUID) (map[uuid.UUID]int64, error) {
+    return s.commentRepo.CountRepliesBulk(ctx, parentIDs)
+}
+
+// ToggleLike toggles a user's like on a comment
+// This is an atomic operation that updates both comment_votes and comments.score
+// Returns (comment, newScore, isLiked, error) for efficient response without re-fetching
+// The comment object is returned from the transaction to avoid a second database query
+func (s *commentService) ToggleLike(ctx context.Context, commentID, userID uuid.UUID) (*models.Comment, int64, bool, error) {
+    var comment *models.Comment
+    var newScore int64
+    var isLiked bool
+    
+    err := s.commentRepo.WithTransaction(ctx, func(txCtx context.Context) error {
+        // Get current comment before toggle (we'll return this to avoid re-fetching)
+        var err error
+        comment, err = s.commentRepo.FindByID(txCtx, commentID)
+        if err != nil {
+            return fmt.Errorf("failed to get comment: %w", err)
+        }
+        
+        // 1. Try to insert a vote
+        created, err := s.commentRepo.AddVote(txCtx, commentID, userID)
+        if err != nil {
+            return fmt.Errorf("failed to add vote: %w", err)
+        }
+
+        if created {
+            // Vote was added -> Increment Score
+            isLiked = true
+            if err := s.commentRepo.IncrementScore(txCtx, commentID, 1); err != nil {
+                return err
+            }
+            newScore = comment.Score + 1
+            comment.Score = newScore // Update the comment object with new score
+        } else {
+            // Vote existed -> Remove it (Toggle logic) -> Decrement Score
+            deleted, err := s.commentRepo.RemoveVote(txCtx, commentID, userID)
+            if err != nil {
+                return fmt.Errorf("failed to remove vote: %w", err)
+            }
+            if deleted {
+                isLiked = false
+                if err := s.commentRepo.IncrementScore(txCtx, commentID, -1); err != nil {
+                    return err
+                }
+                newScore = comment.Score - 1
+                comment.Score = newScore // Update the comment object with new score
+            } else {
+                // Edge case: vote didn't exist and wasn't created
+                newScore = comment.Score
+            }
+        }
+
+        return nil
+    })
+    
+    return comment, newScore, isLiked, err
+}
+
+// GetUserVotesForComments bulk checks which comments the user has liked
+func (s *commentService) GetUserVotesForComments(ctx context.Context, commentIDs []uuid.UUID, userID uuid.UUID) (map[uuid.UUID]bool, error) {
+    return s.commentRepo.GetUserVotesForComments(ctx, commentIDs, userID)
 }
 
 // updatePostCommentCounter is deprecated - count updates are now handled atomically in transactions

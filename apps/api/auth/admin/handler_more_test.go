@@ -11,7 +11,6 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofrs/uuid"
-	authErrors "github.com/qolzam/telar/apps/api/auth/errors"
 	authModels "github.com/qolzam/telar/apps/api/auth/models"
 	authRepository "github.com/qolzam/telar/apps/api/auth/repository"
 	adminRepository "github.com/qolzam/telar/apps/api/auth/admin/repository"
@@ -411,24 +410,17 @@ func TestAdminHandler_Signup_Status(t *testing.T) {
 	t.Logf("TRACE req=test-admin-signup step=response-received status=%d body=%s", resp.StatusCode, string(bodyBytes))
 
 	if resp.StatusCode == 500 {
-		t.Logf("DEBUG: Attempting manual admin creation to isolate error...")
-
 		// Use repository to check if admin was created
 		afterHttpCheck, err := authRepo.FindByUsername(ctx, uniqueEmail)
 		if err == nil && afterHttpCheck != nil && afterHttpCheck.Role == "admin" {
-			t.Logf("DEBUG: FOUND admin after HTTP call despite 500 error - this suggests transaction commit issue")
-		} else {
-			t.Logf("DEBUG: No admin found after HTTP call - HTTP handler truly failed")
+			// Admin was created despite 500 error - transaction commit issue
+			_ = afterHttpCheck
 		}
 
-		token, createErr := adminService.CreateAdmin(ctx, "admin", uniqueEmail, "Adm1n!Pass")
+		_, createErr := adminService.CreateAdmin(ctx, "admin", uniqueEmail, "Adm1n!Pass")
 		if createErr != nil {
-			t.Logf("DEBUG: Manual CreateAdmin error: %v (type: %T)", createErr, createErr)
-			if authErr, ok := createErr.(*authErrors.AuthError); ok {
-				t.Logf("DEBUG: AuthError details - Code: %s, Message: %s, Cause: %v", authErr.Code, authErr.Message, authErr.Cause)
-			}
-		} else {
-			t.Logf("DEBUG: Manual CreateAdmin succeeded with token: %s", token)
+			// Manual creation failed - error details available in createErr
+			_ = createErr
 		}
 	}
 

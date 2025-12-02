@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"net/http"
 )
 
@@ -15,8 +14,7 @@ func Call(gatewayURL, url string, data []byte) error {
 	req, _ := http.NewRequest(http.MethodPost, fullURL, reader)
 	res, err := c.Do(req)
 	if err != nil {
-		log.Println(fullURL, err)
-		return err
+		return fmt.Errorf("failed to call %s: %w", fullURL, err)
 	}
 	if res.Body != nil {
 		defer res.Body.Close()

@@ -30,6 +30,9 @@ export { postsApi } from './posts';
 export type { IPostsApi } from './posts';
 export { commentsApi } from './comments';
 export type { ICommentsApi } from './comments';
+export { votesApi } from './votes';
+export type { IVotesApi } from './votes';
+export type { VoteRequest } from './votes';
 export { adminApi } from './admin';
 export type { IAdminApi } from './admin';
 export type { AdminMember, MembersListResponse } from './admin';
@@ -40,6 +43,7 @@ import { authApi, IAuthApi } from './auth';
 import { profileApi, IProfileApi } from './profile';
 import { postsApi, IPostsApi } from './posts';
 import { commentsApi, ICommentsApi } from './comments';
+import { votesApi, IVotesApi } from './votes';
 import { adminApi, IAdminApi } from './admin';
 
 /**
@@ -65,6 +69,11 @@ export interface ITelarSDK {
    * Comments API
    */
   comments: ICommentsApi;
+
+  /**
+   * Votes API
+   */
+  votes: IVotesApi;
 
   /**
    * Admin API
@@ -98,6 +107,7 @@ export const createTelarSDK = (): ITelarSDK => {
     profile: profileApi(apiClient),
     posts: postsApi(apiClient),
     comments: commentsApi(apiClient),
+    votes: votesApi(apiClient),
     admin: adminApi(apiClient),
   };
 };

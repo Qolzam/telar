@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -43,6 +44,15 @@ func newAuthAppForTest(t *testing.T, base *platform.BaseService, config *platfor
 
 	// Create postgres client for repositories from config
 	ctx := context.Background()
+	// Extract schema from DSN if present (for isolated test schemas)
+	schema := ""
+	if config.Database.Postgres.DSN != "" {
+		if parsed, err := url.Parse(config.Database.Postgres.DSN); err == nil {
+			if searchPath := parsed.Query().Get("search_path"); searchPath != "" {
+				schema = searchPath
+			}
+		}
+	}
 	pgConfig := &dbi.PostgreSQLConfig{
 		Host:               config.Database.Postgres.Host,
 		Port:               config.Database.Postgres.Port,
@@ -50,6 +60,7 @@ func newAuthAppForTest(t *testing.T, base *platform.BaseService, config *platfor
 		Password:           config.Database.Postgres.Password,
 		Database:           config.Database.Postgres.Database,
 		SSLMode:            config.Database.Postgres.SSLMode,
+		Schema:             schema, // Extract from DSN (for isolated test schemas)
 		MaxOpenConnections: config.Database.Postgres.MaxOpenConns,
 		MaxIdleConnections: config.Database.Postgres.MaxIdleConns,
 		MaxLifetime:        int(config.Database.Postgres.ConnMaxLifetime.Seconds()),
@@ -85,7 +96,8 @@ func newAuthAppForTest(t *testing.T, base *platform.BaseService, config *platfor
 	authRepoForLogin := authRepository.NewPostgresAuthRepository(pgClient)
 	
 	signupService := signupUC.NewService(verifRepoForSignup, signupServiceConfig)
-	signupHandler := signupUC.NewHandler(signupService, "test-recaptcha-key", privPEM)
+	fakeVerifier := &testutil.FakeRecaptchaVerifier{ShouldSucceed: true}
+	signupHandler := signupUC.NewHandler(signupService, fakeVerifier, privPEM)
 
 	loginServiceConfig := &loginUC.ServiceConfig{
 		JWTConfig:  platformconfig.JWTConfig{PublicKey: pubPEM, PrivateKey: privPEM},
@@ -252,6 +264,22 @@ func TestAuth_Admin_Signup_Persistence(t *testing.T) {
 	// 3. Create a SINGLE isolated test environment. This creates a unique, temporary
 	//    database and returns a repository connected to it. THIS IS OUR SOURCE OF TRUTH.
 	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, &localConfig)
+	
+	// Apply migrations to isolated test schema
+	ctx := context.Background()
+	pgConfig := iso.LegacyConfig.ToServiceConfig(dbi.DatabaseTypePostgreSQL).PostgreSQLConfig
+	pgConfig.Schema = iso.LegacyConfig.PGSchema
+	pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
+	require.NoError(t, err, "Failed to create postgres client")
+	defer pgClient.Close()
+	
+	// Create schema if it doesn't exist
+	schemaSQL := fmt.Sprintf(`CREATE SCHEMA IF NOT EXISTS %s`, iso.LegacyConfig.PGSchema)
+	_, err = pgClient.DB().ExecContext(ctx, schemaSQL)
+	require.NoError(t, err, "Failed to create schema")
+	
+	// Apply migrations (auth + profile)
+	applyAuthAndProfileMigrations(t, ctx, pgClient)
 
 	// 4. Create the application dependencies by INJECTING the ISOLATED repository.
 	serviceCfg := &platform.ServiceConfig{
@@ -260,6 +288,7 @@ func TestAuth_Admin_Signup_Persistence(t *testing.T) {
 		MaxRetries:         3,
 	}
 	baseService := platform.NewBaseServiceWithRepo(iso.Repo, serviceCfg)
+	// Pass the isolated config with schema set in DSN
 	app := newAuthAppForTest(t, baseService, iso.Config)
 
 
@@ -279,19 +308,15 @@ func TestAuth_Admin_Signup_Persistence(t *testing.T) {
 
 	// 6. VERIFICATION: Use the new AuthRepository to verify the result.
 	t.Logf("Admin signup successful! Verifying persistence in isolated database")
-	ctx := context.Background()
+	verifyCtx := context.Background()
 	actualUsername := strings.ReplaceAll(email, "+", " ")
 
-	// Create postgres client and repository for verification
-	pgConfig := iso.LegacyConfig.ToServiceConfig(dbi.DatabaseTypePostgreSQL).PostgreSQLConfig
-	pgConfig.Schema = iso.LegacyConfig.PGSchema
-	pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
-	require.NoError(t, err, "Failed to create postgres client for verification")
+	// Create postgres client and repository for verification (reuse existing client)
 	authRepo := authRepository.NewPostgresAuthRepository(pgClient)
 
 	// Use `require.Eventually` for robustness. The verification is now checking the correct database.
 	require.Eventually(t, func() bool {
-		user, err := authRepo.FindByUsername(ctx, actualUsername)
+		user, err := authRepo.FindByUsername(verifyCtx, actualUsername)
 		if err != nil {
 			t.Logf("Verification query failed: %v", err)
 			return false
