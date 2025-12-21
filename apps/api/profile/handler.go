@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofrs/uuid"
@@ -16,12 +17,12 @@ import (
 )
 
 type ProfileHandler struct {
-	profileService *services.Service
+	profileService services.ProfileService
 	jwtConfig      platformconfig.JWTConfig
 	hmacConfig     platformconfig.HMACConfig
 }
 
-func NewProfileHandler(profileService *services.Service, jwtConfig platformconfig.JWTConfig, hmacConfig platformconfig.HMACConfig) *ProfileHandler {
+func NewProfileHandler(profileService services.ProfileService, jwtConfig platformconfig.JWTConfig, hmacConfig platformconfig.HMACConfig) *ProfileHandler {
 	return &ProfileHandler{
 		profileService: profileService,
 		jwtConfig:      jwtConfig,
@@ -31,7 +32,7 @@ func NewProfileHandler(profileService *services.Service, jwtConfig platformconfi
 
 func (h *ProfileHandler) ReadMyProfile(c *fiber.Ctx) error {
 	if uc, ok := c.Locals(types.UserCtxName).(types.UserContext); ok && uc.UserID != uuid.Nil {
-		doc, err := h.profileService.FindMyProfile(c.Context(), uc.UserID)
+		doc, err := h.profileService.GetProfile(c.Context(), uc.UserID)
 		if err != nil {
 			return errors.HandleServiceError(c, err)
 		}
@@ -68,14 +69,50 @@ func (h *ProfileHandler) QueryUserProfile(c *fiber.Ctx) error {
 		return errors.HandleValidationError(c, err.Error())
 	}
 
-	docs, err := h.profileService.Query(c.Context(), filter.Search, filter.Limit, (filter.Page-1)*filter.Limit)
+	result, err := h.profileService.QueryProfiles(c.Context(), filter)
 	if err != nil {
 		return errors.HandleServiceError(c, err)
 	}
-	if docs == nil {
-		docs = []*models.Profile{}
+	if result == nil {
+		return c.JSON(&models.ProfilesResponse{
+			Profiles: []models.Profile{},
+			Total:    0,
+		})
 	}
-	return c.JSON(docs)
+	// Convert []models.Profile to []*models.Profile for JSON response
+	profiles := make([]*models.Profile, len(result.Profiles))
+	for i := range result.Profiles {
+		profiles[i] = &result.Profiles[i]
+	}
+	return c.JSON(profiles)
+}
+
+func (h *ProfileHandler) SearchProfiles(c *fiber.Ctx) error {
+	query := c.Query("q")
+	if strings.TrimSpace(query) == "" {
+		return c.JSON([]*models.Profile{})
+	}
+
+	limit := 5
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			if parsed > 20 {
+				limit = 20
+			} else {
+				limit = parsed
+			}
+		}
+	}
+
+	results, err := h.profileService.SearchProfiles(c.Context(), query, limit)
+	if err != nil {
+		return errors.HandleServiceError(c, err)
+	}
+	if results == nil {
+		results = []*models.Profile{}
+	}
+
+	return c.JSON(results)
 }
 
 func (h *ProfileHandler) ReadProfile(c *fiber.Ctx) error {
@@ -84,7 +121,7 @@ func (h *ProfileHandler) ReadProfile(c *fiber.Ctx) error {
 	if err != nil {
 		return errors.HandleUUIDError(c, "userId")
 	}
-	doc, err := h.profileService.FindByID(c.Context(), id)
+	doc, err := h.profileService.GetProfile(c.Context(), id)
 	if err != nil {
 		return errors.HandleServiceError(c, err)
 	}
@@ -98,7 +135,7 @@ func (h *ProfileHandler) GetBySocialName(c *fiber.Ctx) error {
 		return errors.HandleValidationError(c, err.Error())
 	}
 
-	doc, err := h.profileService.FindBySocialName(c.Context(), name)
+	doc, err := h.profileService.GetProfileBySocialName(c.Context(), name)
 	if err != nil {
 		return errors.HandleServiceError(c, err)
 	}
@@ -121,7 +158,14 @@ func (h *ProfileHandler) GetProfileByIds(c *fiber.Ctx) error {
 			ids = append(ids, id)
 		}
 	}
-	docs, err := h.profileService.FindManyByIDs(c.Context(), ids)
+
+	// If no valid UUIDs were parsed, return empty array
+	if len(ids) == 0 {
+		return c.JSON([]*models.Profile{})
+	}
+
+	// GetProfilesByIds is now part of ProfileService interface
+	docs, err := h.profileService.GetProfilesByIds(c.Context(), ids)
 	if err != nil {
 		return errors.HandleServiceError(c, err)
 	}
@@ -132,7 +176,9 @@ func (h *ProfileHandler) GetProfileByIds(c *fiber.Ctx) error {
 }
 
 func (h *ProfileHandler) InitProfileIndex(c *fiber.Ctx) error {
-	if err := h.profileService.CreateIndexes(c.Context()); err != nil {
+	// CreateIndexes is deprecated - indexes are now created via SQL migrations
+	// This is a no-op for backward compatibility
+	if err := h.profileService.CreateIndex(c.Context(), nil); err != nil {
 		return errors.HandleServiceError(c, err)
 	}
 	return c.SendStatus(http.StatusOK)
@@ -152,7 +198,7 @@ func (h *ProfileHandler) UpdateLastSeen(c *fiber.Ctx) error {
 	if err != nil {
 		return errors.HandleUUIDError(c, "userId")
 	}
-	if err := h.profileService.UpdateLastSeen(c.Context(), userId, 1); err != nil {
+	if err := h.profileService.UpdateLastSeen(c.Context(), userId); err != nil {
 		return errors.HandleServiceError(c, err)
 	}
 	return c.SendStatus(http.StatusOK)
@@ -169,7 +215,7 @@ func (h *ProfileHandler) UpdateProfile(c *fiber.Ctx) error {
 	}
 
 	if uc, ok := c.Locals(types.UserCtxName).(types.UserContext); ok && uc.UserID != uuid.Nil {
-		if err := h.profileService.UpdateProfile(c.Context(), uc.UserID, &req); err != nil {
+		if err := h.profileService.UpdateProfile(c.Context(), uc.UserID, &req, &uc); err != nil {
 			return errors.HandleServiceError(c, err)
 		}
 		return c.SendStatus(http.StatusOK)
@@ -183,7 +229,7 @@ func (h *ProfileHandler) ReadDtoProfile(c *fiber.Ctx) error {
 	if err != nil {
 		return errors.HandleUUIDError(c, "userId")
 	}
-	doc, err := h.profileService.FindByID(c.Context(), id)
+	doc, err := h.profileService.GetProfile(c.Context(), id)
 	if err != nil {
 		return errors.HandleServiceError(c, err)
 	}
@@ -203,7 +249,8 @@ func (h *ProfileHandler) CreateDtoProfile(c *fiber.Ctx) error {
 		return errors.HandleValidationError(c, err.Error())
 	}
 
-	if err := h.profileService.CreateOrUpdateDTO(c.Context(), &req); err != nil {
+	// CreateProfileOnSignup is now part of ProfileService interface
+	if err := h.profileService.CreateProfileOnSignup(c.Context(), &req); err != nil {
 		return errors.HandleServiceError(c, err)
 	}
 	return c.SendStatus(http.StatusCreated)
@@ -232,7 +279,7 @@ func (h *ProfileHandler) IncreaseFollowCount(c *fiber.Ctx) error {
 		return errors.HandleValidationError(c, err.Error())
 	}
 
-	if err := h.profileService.Increase(c.Context(), "followCount", inc, id); err != nil {
+	if err := h.profileService.IncrementField(c.Context(), id, "followCount", inc); err != nil {
 		return errors.HandleServiceError(c, err)
 	}
 	return c.SendStatus(http.StatusOK)
@@ -252,9 +299,8 @@ func (h *ProfileHandler) IncreaseFollowerCount(c *fiber.Ctx) error {
 		return errors.HandleValidationError(c, err.Error())
 	}
 
-	if err := h.profileService.Increase(c.Context(), "followerCount", inc, id); err != nil {
+	if err := h.profileService.IncrementField(c.Context(), id, "followerCount", inc); err != nil {
 		return errors.HandleServiceError(c, err)
 	}
 	return c.SendStatus(http.StatusOK)
 }
-

@@ -5,30 +5,54 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"time"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/qolzam/telar/apps/api/auth"
 	adminUC "github.com/qolzam/telar/apps/api/auth/admin"
+	adminRepository "github.com/qolzam/telar/apps/api/auth/admin/repository"
 	jwksUC "github.com/qolzam/telar/apps/api/auth/jwks"
 	loginUC "github.com/qolzam/telar/apps/api/auth/login"
 	oauthUC "github.com/qolzam/telar/apps/api/auth/oauth"
 	passwordUC "github.com/qolzam/telar/apps/api/auth/password"
+	authRepository "github.com/qolzam/telar/apps/api/auth/repository"
 	signupUC "github.com/qolzam/telar/apps/api/auth/signup"
 	verifyUC "github.com/qolzam/telar/apps/api/auth/verification"
+	"github.com/qolzam/telar/apps/api/bookmarks"
+	bookmarksHandlers "github.com/qolzam/telar/apps/api/bookmarks/handlers"
+	bookmarksRepository "github.com/qolzam/telar/apps/api/bookmarks/repository"
+	bookmarksServices "github.com/qolzam/telar/apps/api/bookmarks/services"
 	"github.com/qolzam/telar/apps/api/comments"
 	commentHandlers "github.com/qolzam/telar/apps/api/comments/handlers"
+	commentRepository "github.com/qolzam/telar/apps/api/comments/repository"
 	commentServices "github.com/qolzam/telar/apps/api/comments/services"
+	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
+	"github.com/qolzam/telar/apps/api/internal/database/postgres"
+	requestid "github.com/qolzam/telar/apps/api/internal/middleware/requestid"
 	platform "github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	platformemail "github.com/qolzam/telar/apps/api/internal/platform/email"
+	"github.com/qolzam/telar/apps/api/internal/recaptcha"
+	"github.com/qolzam/telar/apps/api/internal/testutil"
+	signupOrchestrator "github.com/qolzam/telar/apps/api/orchestrator/signup"
 	"github.com/qolzam/telar/apps/api/posts"
 	"github.com/qolzam/telar/apps/api/posts/handlers"
+	postsRepository "github.com/qolzam/telar/apps/api/posts/repository"
 	postsServices "github.com/qolzam/telar/apps/api/posts/services"
-	sharedInterfaces "github.com/qolzam/telar/apps/api/shared/interfaces"
 	"github.com/qolzam/telar/apps/api/profile"
+	profileRepository "github.com/qolzam/telar/apps/api/profile/repository"
 	profileServices "github.com/qolzam/telar/apps/api/profile/services"
+	sharedInterfaces "github.com/qolzam/telar/apps/api/shared/interfaces"
+	"github.com/qolzam/telar/apps/api/votes"
+	votesHandlers "github.com/qolzam/telar/apps/api/votes/handlers"
+	votesRepository "github.com/qolzam/telar/apps/api/votes/repository"
+	votesServices "github.com/qolzam/telar/apps/api/votes/services"
+	"github.com/qolzam/telar/apps/api/storage"
+	storageHandlers "github.com/qolzam/telar/apps/api/storage/handlers"
+	storageProvider "github.com/qolzam/telar/apps/api/storage/provider"
+	storageRepository "github.com/qolzam/telar/apps/api/storage/repository"
+	storageServices "github.com/qolzam/telar/apps/api/storage/services"
 )
 
 func main() {
@@ -67,11 +91,35 @@ func main() {
 	refEmail := cfg.Email.RefEmail
 	refEmailPass := cfg.Email.RefEmailPass
 
+	// Split comma-separated origins into a slice for Fiber CORS middleware
+	originList := strings.Split(webDomain, ",")
+	for i, origin := range originList {
+		originList[i] = strings.TrimSpace(origin)
+	}
+
+	// Create a map for fast origin lookup
+	allowedOrigins := make(map[string]bool)
+	for _, origin := range originList {
+		allowedOrigins[origin] = true
+	}
+
+	// Request ID middleware (must be early in the chain)
+	app.Use(requestid.New())
+
 	// CORS Configuration for Browser Direct Access
+	// Use AllowOriginsFunc to properly handle multiple origins
+	// IMPORTANT: When AllowCredentials is true, AllowOrigins cannot be "*"
+	// The function returns true if origin is in the allowed list, or if origin is empty (same-origin request)
 	app.Use(cors.New(cors.Config{
-		AllowOrigins:     webDomain,
+		AllowOriginsFunc: func(origin string) bool {
+			// Empty origin means same-origin request (should be allowed)
+			if origin == "" {
+				return true
+			}
+			return allowedOrigins[origin]
+		},
 		AllowCredentials: true,
-		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
+		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, X-Request-ID",
 		AllowMethods:     "GET, POST, PUT, DELETE, PATCH, OPTIONS",
 	}))
 
@@ -80,24 +128,140 @@ func main() {
 		log.Fatalf("Failed to create base service: %v", err)
 	}
 
-	// Initialize Profile service (concrete implementation)
-	profileService := profileServices.NewService(baseService, cfg)
+	// Profile service will be initialized after repositories are created (see below)
+	var profileService profileServices.ProfileService
+	var profileCreator profileServices.ProfileServiceClient
+	var profileHandler *profile.ProfileHandler
+	var profileHandlers *profile.ProfileHandlers
 
-	// Create database indexes on startup
-	log.Println("🔧 Creating database indexes for Profile service...")
-	indexCtx, indexCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	if err := profileService.CreateIndexes(indexCtx); err != nil {
-		indexCancel()
-		log.Printf("⚠️  Warning: Failed to create indexes (may already exist): %v", err)
-	} else {
-		indexCancel()
-		log.Println("✅ Profile database indexes created successfully")
+	// Admin service will be created after repositories are set up (see below)
+	var adminService *adminUC.Service
+	var adminHandler *adminUC.AdminHandler
+
+	// Create postgres client for repositories (used by orchestrator, signup service, and admin service)
+	ctx := context.Background()
+	pgConfig := &dbi.PostgreSQLConfig{
+		Host:               cfg.Database.Postgres.Host,
+		Port:               cfg.Database.Postgres.Port,
+		Username:           cfg.Database.Postgres.Username,
+		Password:           cfg.Database.Postgres.Password,
+		Database:           cfg.Database.Postgres.Database,
+		SSLMode:            cfg.Database.Postgres.SSLMode,
+		MaxOpenConnections: cfg.Database.Postgres.MaxOpenConns,
+		MaxIdleConnections: cfg.Database.Postgres.MaxIdleConns,
+		MaxLifetime:        int(cfg.Database.Postgres.ConnMaxLifetime.Seconds()),
+		ConnectTimeout:     10,
+	}
+	pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
+	if err != nil {
+		log.Fatalf("Failed to create postgres client for repositories: %v", err)
 	}
 
-	// Decide which adapter to use based on deployment mode
-	var profileCreator profileServices.ProfileServiceClient
-	deploymentMode := os.Getenv("DEPLOYMENT_MODE")
+	signupServiceConfig := &signupUC.ServiceConfig{
+		JWTConfig: platformconfig.JWTConfig{
+			PublicKey:  publicKey,
+			PrivateKey: privateKey,
+		},
+		HMACConfig: platformconfig.HMACConfig{
+			Secret: payloadSecret,
+		},
+		AppConfig: platformconfig.AppConfig{
+			WebDomain: webDomain,
+		},
+	}
+	// Create repositories early (will be reused)
+	authRepo := authRepository.NewPostgresAuthRepository(pgClient)
+	verifRepo := authRepository.NewPostgresVerificationRepository(pgClient)
+	profileRepo := profileRepository.NewPostgresProfileRepository(pgClient)
 
+	// Create signup service with verification repository
+	signupService := signupUC.NewService(verifRepo, signupServiceConfig)
+	if smtpHost := cfg.Email.SMTPHost; smtpHost != "" {
+		smtpPort := fmt.Sprintf("%d", cfg.Email.SMTPPort)
+		smtpUser := cfg.Email.SMTPUser
+		smtpPass := cfg.Email.SMTPPass
+		sender, err := platformemail.NewSMTPSender(smtpHost, smtpPort, smtpUser, smtpPass)
+		if err == nil {
+			signupService = signupService.WithEmailSender(sender)
+		}
+	}
+
+	// SECURITY: Fail Closed - Enforce Recaptcha configuration
+	recaptchaKey := cfg.Security.RecaptchaKey
+	recaptchaDisabled := cfg.Security.RecaptchaDisabled
+
+	var recaptchaVerifier recaptcha.Verifier
+	var errRecaptcha error
+
+	if recaptchaKey == "" {
+		if !recaptchaDisabled {
+			// CRITICAL: Fail Closed. Do not allow server to start insecurely.
+			log.Fatalf("SECURITY ERROR: RECAPTCHA_KEY is missing. Configure it or set RECAPTCHA_DISABLED=true in config.")
+		}
+		// Explicitly Disabled (Dev/Test Mode)
+		log.Printf("SECURITY WARNING: Recaptcha is explicitly disabled via configuration. Using FakeVerifier.")
+		recaptchaVerifier = &testutil.FakeRecaptchaVerifier{ShouldSucceed: true}
+	} else {
+		// Production Mode
+		recaptchaVerifier, errRecaptcha = recaptcha.NewGoogleVerifier(recaptchaKey)
+		if errRecaptcha != nil {
+			log.Fatalf("Failed to initialize Google Recaptcha: %v", errRecaptcha)
+		}
+	}
+
+	// Inject verifier into handler
+	signupHandler := signupUC.NewHandler(signupService, recaptchaVerifier, privateKey)
+
+	loginServiceConfig := &loginUC.ServiceConfig{
+		JWTConfig: platformconfig.JWTConfig{
+			PublicKey:  publicKey,
+			PrivateKey: privateKey,
+		},
+		HMACConfig: platformconfig.HMACConfig{
+			Secret: payloadSecret,
+		},
+	}
+	// Login service will be created after repositories are set up (see below)
+	var loginService *loginUC.Service
+	var loginHandler *loginUC.Handler
+
+	verifyServiceConfig := &verifyUC.ServiceConfig{
+		JWTConfig: platformconfig.JWTConfig{
+			PublicKey:  publicKey,
+			PrivateKey: privateKey,
+		},
+		HMACConfig: platformconfig.HMACConfig{
+			Secret: payloadSecret,
+		},
+		AppConfig: platformconfig.AppConfig{
+			OrgName:   "Telar",
+			WebDomain: webDomain,
+		},
+	}
+
+	// Create remaining repositories (using same DB connection pool)
+	adminRepo := adminRepository.NewPostgresAdminRepository(pgClient)
+	postRepo := postsRepository.NewPostgresRepository(pgClient)
+	commentRepo := commentRepository.NewPostgresCommentRepository(pgClient)
+	voteRepo := votesRepository.NewPostgresVoteRepository(pgClient)
+	bookmarkRepo := bookmarksRepository.NewPostgresRepository(pgClient)
+
+	// Initialize Profile service with repository (now that repositories are available)
+	profileService = profileServices.NewProfileService(profileRepo, cfg)
+
+	// Initialize profile handler (now that profileService is available)
+	profileHandler = profile.NewProfileHandler(profileService, platformconfig.JWTConfig{
+		PublicKey:  publicKey,
+		PrivateKey: privateKey,
+	}, platformconfig.HMACConfig{
+		Secret: payloadSecret,
+	})
+	profileHandlers = &profile.ProfileHandlers{
+		ProfileHandler: profileHandler,
+	}
+
+	// Decide which adapter to use based on deployment mode (now that profileService is initialized)
+	deploymentMode := os.Getenv("DEPLOYMENT_MODE")
 	if deploymentMode == "microservices" {
 		log.Println("🔌 Wiring Profile service using gRPC Adapter")
 		profileServiceAddr := os.Getenv("PROFILE_SERVICE_GRPC_ADDR")
@@ -117,59 +281,19 @@ func main() {
 		log.Println("✅ Profile direct call adapter initialized")
 	}
 
-	profileHandler := profile.NewProfileHandler(profileService, platformconfig.JWTConfig{
-		PublicKey:  publicKey,
-		PrivateKey: privateKey,
-	}, platformconfig.HMACConfig{
-		Secret: payloadSecret,
-	})
-	profileHandlers := &profile.ProfileHandlers{
-		ProfileHandler: profileHandler,
-	}
-
-	adminService := adminUC.NewService(baseService, privateKey, cfg)
-	adminHandler := adminUC.NewAdminHandler(adminService, platformconfig.JWTConfig{
+	// Create admin service with repositories (now that repositories are available)
+	adminService = adminUC.NewService(authRepo, profileRepo, adminRepo, privateKey, cfg)
+	adminHandler = adminUC.NewAdminHandler(adminService, platformconfig.JWTConfig{
 		PublicKey:  publicKey,
 		PrivateKey: privateKey,
 	}, platformconfig.HMACConfig{
 		Secret: payloadSecret,
 	})
 
-	signupServiceConfig := &signupUC.ServiceConfig{
-		JWTConfig: platformconfig.JWTConfig{
-			PublicKey:  publicKey,
-			PrivateKey: privateKey,
-		},
-		HMACConfig: platformconfig.HMACConfig{
-			Secret: payloadSecret,
-		},
-		AppConfig: platformconfig.AppConfig{
-			WebDomain: webDomain,
-		},
-	}
-	signupService := signupUC.NewService(baseService, signupServiceConfig)
-	if smtpHost := cfg.Email.SMTPHost; smtpHost != "" {
-		smtpPort := fmt.Sprintf("%d", cfg.Email.SMTPPort)
-		smtpUser := cfg.Email.SMTPUser
-		smtpPass := cfg.Email.SMTPPass
-		sender, err := platformemail.NewSMTPSender(smtpHost, smtpPort, smtpUser, smtpPass)
-		if err == nil {
-			signupService = signupService.WithEmailSender(sender)
-		}
-	}
-	signupHandler := signupUC.NewHandler(signupService, "", privateKey)
+	// Create login service with AuthRepository and ProfileCreator (now that authRepo and profileCreator are available)
+	loginService = loginUC.NewServiceWithProfileCreator(authRepo, profileCreator, loginServiceConfig)
 
-	loginServiceConfig := &loginUC.ServiceConfig{
-		JWTConfig: platformconfig.JWTConfig{
-			PublicKey:  publicKey,
-			PrivateKey: privateKey,
-		},
-		HMACConfig: platformconfig.HMACConfig{
-			Secret: payloadSecret,
-		},
-	}
-	loginService := loginUC.NewService(baseService, loginServiceConfig)
-
+	// Create login handler now that loginService is initialized
 	loginHandlerConfig := &loginUC.HandlerConfig{
 		WebDomain:           webDomain,
 		PrivateKey:          privateKey,
@@ -177,29 +301,22 @@ func main() {
 		PayloadCookieName:   "telar-payload",
 		SignatureCookieName: "telar-signature",
 	}
-	loginHandler := loginUC.NewHandler(loginService, loginHandlerConfig)
+	loginHandler = loginUC.NewHandler(loginService, loginHandlerConfig)
 
-	verifyServiceConfig := &verifyUC.ServiceConfig{
-		JWTConfig: platformconfig.JWTConfig{
-			PublicKey:  publicKey,
-			PrivateKey: privateKey,
-		},
-		HMACConfig: platformconfig.HMACConfig{
-			Secret: payloadSecret,
-		},
-		AppConfig: platformconfig.AppConfig{
-			OrgName:   "Telar",
-			WebDomain: webDomain,
-		},
-	}
-	verifyService := verifyUC.NewServiceWithKeys(
-		baseService,
+	// Create signup orchestrator
+	signupOrchestrator := signupOrchestrator.NewService(authRepo, profileRepo, verifRepo)
+
+	verifyService := verifyUC.NewServiceWithRepositoriesAndKeys(
+		verifRepo,
+		authRepo,
 		verifyServiceConfig,
 		privateKey,
 		cfg.App.OrgName,
 		cfg.App.WebDomain,
 		profileCreator,
 	)
+	// Inject orchestrator into verification service
+	verifyService.SetSignupOrchestrator(signupOrchestrator)
 
 	verifyHandlerConfig := &verifyUC.HandlerConfig{
 		PublicKey: publicKey,
@@ -225,7 +342,8 @@ func main() {
 			WebDomain: webDomain,
 		},
 	}
-	passwordService := passwordUC.NewService(baseService, passwordServiceConfig)
+	// Create password service with repositories
+	passwordService := passwordUC.NewServiceWithRepositories(authRepo, verifRepo, passwordServiceConfig)
 
 	smtpHost := cfg.Email.SMTPHost
 	smtpPort := fmt.Sprintf("%d", cfg.Email.SMTPPort)
@@ -306,12 +424,12 @@ func main() {
 	// Decide which adapters to use based on deployment mode (reuse same env var)
 	if deploymentMode == "microservices" {
 		log.Println("🔌 Wiring Posts and Comments services using gRPC Adapters")
-		
+
 		commentsServiceAddr := os.Getenv("COMMENTS_SERVICE_GRPC_ADDR")
 		if commentsServiceAddr == "" {
 			commentsServiceAddr = "localhost:50052"
 		}
-		
+
 		postsServiceAddr := os.Getenv("POSTS_SERVICE_GRPC_ADDR")
 		if postsServiceAddr == "" {
 			postsServiceAddr = "localhost:50053"
@@ -332,11 +450,11 @@ func main() {
 		log.Printf("✅ Posts gRPC client connected to %s", postsServiceAddr)
 	} else {
 		log.Println("🔌 Wiring Posts and Comments services using Direct Call Adapters")
-		
+
 		// Create temporary service instances to get adapters
-		tempCommentsService := commentServices.NewCommentService(baseService, cfg, nil)
-		tempPostsService := postsServices.NewPostService(baseService, cfg, nil)
-		
+		tempCommentsService := commentServices.NewCommentService(commentRepo, postRepo, cfg, nil)
+		tempPostsService := postsServices.NewPostService(postRepo, voteRepo, bookmarkRepo, cfg, nil, commentRepo)
+
 		// Create direct call adapters
 		commentCounter = comments.NewDirectCallCounter(tempCommentsService)
 		postStatsUpdater = posts.NewDirectCallStatsUpdater(tempPostsService)
@@ -344,19 +462,11 @@ func main() {
 	}
 
 	// Re-initialize services with cross-service dependencies
-	commentsService = commentServices.NewCommentService(baseService, cfg, postStatsUpdater)
-	postsService = postsServices.NewPostService(baseService, cfg, commentCounter)
+	commentsService = commentServices.NewCommentService(commentRepo, postRepo, cfg, postStatsUpdater)
+	postsService = postsServices.NewPostService(postRepo, voteRepo, bookmarkRepo, cfg, commentCounter, commentRepo)
 
-	// Create database indexes on startup
-	log.Println("🔧 Creating database indexes for Posts service...")
-	postsIndexCtx, postsIndexCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	if err := postsService.CreateIndexes(postsIndexCtx); err != nil {
-		postsIndexCancel()
-		log.Printf("⚠️  Warning: Failed to create Posts indexes (may already exist): %v", err)
-	} else {
-		postsIndexCancel()
-		log.Println("✅ Posts database indexes created successfully")
-	}
+	// Index creation is now handled by SQL migrations
+	log.Println("✅ Posts service initialized (indexes managed via SQL migrations)")
 
 	postsHandler := handlers.NewPostHandler(postsService, cfg.JWT, cfg.HMAC)
 
@@ -374,6 +484,55 @@ func main() {
 
 	comments.RegisterRoutes(app, commentRoutes, cfg)
 
-	log.Printf("Starting Telar API Server (Auth + Profile + Posts + Comments) on port 8080")
-	log.Fatal(app.Listen(":8080"))
+	// Initialize votes service
+	votesService := votesServices.NewVoteService(voteRepo, postRepo)
+	log.Println("✅ Votes service initialized")
+
+	votesHandler := votesHandlers.NewVoteHandler(votesService, cfg.JWT, cfg.HMAC)
+
+	votesHandlers := &votes.VotesHandlers{
+		VoteHandler: votesHandler,
+	}
+
+	votes.RegisterRoutes(app, votesHandlers, cfg)
+
+	bookmarkService := bookmarksServices.NewService(bookmarkRepo, postsService)
+	bookmarkHandler := bookmarksHandlers.NewBookmarkHandler(bookmarkService)
+	bookmarkHandlers := &bookmarks.Handlers{
+		BookmarkHandler: bookmarkHandler,
+	}
+	bookmarks.RegisterRoutes(app, bookmarkHandlers, cfg)
+
+	// Initialize storage service
+	if cfg.Storage.BucketName != "" && cfg.Storage.AccessKeyID != "" {
+		// Create R2 provider
+		blobProvider, err := storageProvider.NewR2Provider(&cfg.Storage)
+		if err != nil {
+			log.Printf("⚠️  Warning: Failed to initialize storage provider: %v", err)
+			log.Println("⚠️  Storage endpoints will not be available")
+		} else {
+			// Create storage repository
+			storageRepo := storageRepository.NewPostgresRepository(pgClient)
+			
+			// Create storage service
+			storageService := storageServices.NewStorageService(storageRepo, blobProvider, cfg.Storage.BucketName, &cfg.Storage)
+			
+			// Create storage handler
+			storageHandler := storageHandlers.NewStorageHandler(storageService)
+			
+			// Create handlers struct
+			storageHandlersGroup := &storage.StorageHandlers{
+				StorageHandler: storageHandler,
+			}
+			
+			// Register routes
+			storage.RegisterRoutes(app, storageHandlersGroup, cfg)
+			log.Println("✅ Storage service initialized")
+		}
+	} else {
+		log.Println("⚠️  Storage configuration not found, storage endpoints disabled")
+	}
+
+	log.Printf("Starting Telar API Server (Auth + Profile + Posts + Comments + Votes + Bookmarks + Storage) on port 9099")
+	log.Fatal(app.Listen(":9099"))
 }

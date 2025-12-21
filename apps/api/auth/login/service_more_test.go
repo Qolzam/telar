@@ -2,14 +2,17 @@ package login
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/gofrs/uuid"
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
-	platform "github.com/qolzam/telar/apps/api/internal/platform"
+	"github.com/qolzam/telar/apps/api/internal/database/postgres"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/internal/testutil"
 	"github.com/stretchr/testify/require"
+	authRepository "github.com/qolzam/telar/apps/api/auth/repository"
+	authModels "github.com/qolzam/telar/apps/api/auth/models"
 )
 
 func TestLoginService_FindAndReadProfile_Coverage(t *testing.T) {
@@ -24,8 +27,41 @@ func TestLoginService_FindAndReadProfile_Coverage(t *testing.T) {
 
 	ctx := context.Background()
 
-	base, err := platform.NewBaseService(ctx, iso.Config)
-	require.NoError(t, err)
+	// Create postgres client and repository
+	pgConfig := iso.LegacyConfig.ToServiceConfig(dbi.DatabaseTypePostgreSQL).PostgreSQLConfig
+	pgConfig.Schema = iso.LegacyConfig.PGSchema
+	pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
+	require.NoError(t, err, "Failed to create postgres client")
+	defer pgClient.Close()
+
+	// Create schema and set search_path
+	schemaSQL := fmt.Sprintf(`CREATE SCHEMA IF NOT EXISTS %s`, iso.LegacyConfig.PGSchema)
+	_, err = pgClient.DB().ExecContext(ctx, schemaSQL)
+	require.NoError(t, err, "Failed to create schema")
+	setSearchPathSQL := fmt.Sprintf(`SET search_path TO %s`, iso.LegacyConfig.PGSchema)
+	_, err = pgClient.DB().ExecContext(ctx, setSearchPathSQL)
+	require.NoError(t, err, "Failed to set search_path")
+
+	// Apply auth migration
+	migrationSQL := `
+		CREATE TABLE IF NOT EXISTS user_auths (
+			id UUID PRIMARY KEY,
+			username VARCHAR(255) UNIQUE NOT NULL,
+			password_hash BYTEA NOT NULL,
+			role VARCHAR(50) DEFAULT 'user',
+			email_verified BOOLEAN DEFAULT FALSE,
+			phone_verified BOOLEAN DEFAULT FALSE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			created_date BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			last_updated BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_user_auths_username ON user_auths(username);
+	`
+	_, err = pgClient.DB().ExecContext(ctx, migrationSQL)
+	require.NoError(t, err, "Failed to apply auth migration")
+
+	authRepo := authRepository.NewPostgresAuthRepository(pgClient)
 
 	// Create service config for testing
 	serviceConfig := &ServiceConfig{
@@ -37,14 +73,22 @@ func TestLoginService_FindAndReadProfile_Coverage(t *testing.T) {
 			Secret: "test-secret",
 		},
 	}
-	svc := NewService(base, serviceConfig)
+	svc := NewService(authRepo, serviceConfig)
 	uid := uuid.Must(uuid.NewV4())
 
-	// Seed userAuth and userProfile
-	userAuth := map[string]interface{}{"objectId": uid, "username": "find@example.com", "password": []byte("p"), "emailVerified": true, "phoneVerified": false, "role": "user"}
-	_ = (<-base.Repository.Save(ctx, "userAuth", uid, uid, 1, 1, userAuth)).Error
-	userProfile := map[string]interface{}{"objectId": uid, "fullName": "FN", "socialName": "sn", "email": "find@example.com", "avatar": "a", "banner": "b", "tagLine": "t", "created_date": 1}
-	_ = (<-base.Repository.Save(ctx, "userProfile", uid, uid, 1, 1, userProfile)).Error
+	// Seed userAuth using repository
+	userAuth := &authModels.UserAuth{
+		ObjectId:      uid,
+		Username:      "find@example.com",
+		Password:      []byte("p"),
+		EmailVerified: true,
+		PhoneVerified: false,
+		Role:          "user",
+		CreatedDate:   1,
+		LastUpdated:   1,
+	}
+	err = authRepo.CreateUser(ctx, userAuth)
+	require.NoError(t, err, "Failed to create user")
 
 	_, _ = svc.FindUserByUsername(ctx, "find@example.com")
 	

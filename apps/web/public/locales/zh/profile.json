@@ -5,6 +5,10 @@
     "followers": "Followers",
     "following": "Following"
   },
-  "about": "About",
-  "editProfile": "Edit Profile"
+  "about": {
+    "title": "关于",
+    "worksAt": "工作于",
+    "defaultTagline": "分享想法并与社区建立联系"
+  },
+  "editProfile": "编辑个人资料"
 }

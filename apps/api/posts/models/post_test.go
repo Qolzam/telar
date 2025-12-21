@@ -429,7 +429,6 @@ func TestPostsListResponse_Validation(t *testing.T) {
 		TotalCount: 25,
 		Page:       2,
 		Limit:      10,
-		HasMore:    true,
 	}
 
 	// Marshal and unmarshal
@@ -445,7 +444,6 @@ func TestPostsListResponse_Validation(t *testing.T) {
 	assert.Equal(t, response.TotalCount, unmarshaledResponse.TotalCount)
 	assert.Equal(t, response.Page, unmarshaledResponse.Page)
 	assert.Equal(t, response.Limit, unmarshaledResponse.Limit)
-	assert.Equal(t, response.HasMore, unmarshaledResponse.HasMore)
 }
 
 // Test CreatePostResponse validation
@@ -560,7 +558,7 @@ func TestPost_LargeDataHandling(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.Equal(t, largeBody, unmarshaledPost.Body)
-	assert.Equal(t, largeTags, unmarshaledPost.Tags)
+	assert.Equal(t, []string(largeTags), []string(unmarshaledPost.Tags))
 }
 
 // Test special characters and unicode
@@ -586,7 +584,7 @@ func TestPost_SpecialCharactersAndUnicode(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.Equal(t, specialBody, unmarshaledPost.Body)
-	assert.Equal(t, unicodeTags, unmarshaledPost.Tags)
+	assert.Equal(t, unicodeTags, []string(unmarshaledPost.Tags))
 	assert.Equal(t, "用户名 with 🌟", unmarshaledPost.OwnerDisplayName)
 }
 

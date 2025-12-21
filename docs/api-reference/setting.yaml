@@ -11,7 +11,7 @@ info:
     url: https://github.com/qolzam/telar/blob/master/LICENSE
 
 servers:
-  - url: http://localhost:8080
+  - url: http://localhost:9099
     description: Development server
   - url: https://api.telar.dev
     description: Production server

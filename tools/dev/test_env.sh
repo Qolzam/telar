@@ -133,6 +133,9 @@ gen_env_file() {
   local example_file="${API_DIR}/.env.example"
   local temp_file="${env_file}.tmp"
 
+  # Ensure API_DIR exists
+  mkdir -p "${API_DIR}"
+
   if [[ ! -f "${env_file}" ]]; then
     echo "[INFO] .env file not found. Creating from ${example_file}."
     if [[ -f "${example_file}" ]]; then
@@ -142,7 +145,8 @@ gen_env_file() {
     fi
   fi
 
-  grep -v -E "^(RUN_DB_TESTS|POSTGRES_DSN|DB_TYPE|SMTP_HOST|SMTP_PORT|SMTP_USER|SMTP_PASS|SMTP_EMAIL)=" "${env_file}" > "${temp_file}"
+  # Remove test-specific env vars (grep returns 1 if no matches, which is fine)
+  grep -v -E "^(RUN_DB_TESTS|POSTGRES_DSN|DB_TYPE|SMTP_HOST|SMTP_PORT|SMTP_USER|SMTP_PASS|SMTP_EMAIL)=" "${env_file}" > "${temp_file}" || true
 
   print_env_postgres >>"${temp_file}"
   print_env_smtp >>"${temp_file}"

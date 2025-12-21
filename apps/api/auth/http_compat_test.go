@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -12,18 +13,35 @@ import (
 	"github.com/gofiber/fiber/v2"
 	uuid "github.com/gofrs/uuid"
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
+	"github.com/qolzam/telar/apps/api/internal/database/postgres"
 	"github.com/qolzam/telar/apps/api/internal/platform"
 	"github.com/qolzam/telar/apps/api/internal/testutil"
 	"github.com/qolzam/telar/apps/api/internal/types"
+	"github.com/stretchr/testify/require"
 )
 
 // createAuthTestApp creates a test app using the base service pattern (following posts golden pattern)
 func createAuthTestApp(t *testing.T, iso *testutil.IsolatedTest) *fiber.App {
 	t.Helper()
 
+	// Apply migrations to isolated test schema
+	ctx := context.Background()
+	pgConfig := iso.LegacyConfig.ToServiceConfig(dbi.DatabaseTypePostgreSQL).PostgreSQLConfig
+	pgConfig.Schema = iso.LegacyConfig.PGSchema
+	pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
+	require.NoError(t, err, "Failed to create postgres client")
+	defer pgClient.Close()
+	
+	// Create schema if it doesn't exist
+	schemaSQL := fmt.Sprintf(`CREATE SCHEMA IF NOT EXISTS %s`, iso.LegacyConfig.PGSchema)
+	_, err = pgClient.DB().ExecContext(ctx, schemaSQL)
+	require.NoError(t, err, "Failed to create schema")
+	
+	// Apply migrations (auth + profile)
+	applyAuthAndProfileMigrations(t, ctx, pgClient)
+
 	// Create base service for the test (following posts golden pattern)
 	// This avoids transactional wrapper issues that cause context cancellation
-	ctx := context.Background()
 	cfg := iso.Config
 	base, err := platform.NewBaseService(ctx, cfg)
 	if err != nil {

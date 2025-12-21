@@ -3,13 +3,15 @@ package main
 import (
 	"context"
 	"log"
-	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/qolzam/telar/apps/api/comments"
 	"github.com/qolzam/telar/apps/api/comments/handlers"
 	commentsServices "github.com/qolzam/telar/apps/api/comments/services"
-	"github.com/qolzam/telar/apps/api/internal/platform"
+	commentRepository "github.com/qolzam/telar/apps/api/comments/repository"
+	postsRepository "github.com/qolzam/telar/apps/api/posts/repository"
+	"github.com/qolzam/telar/apps/api/internal/database/postgres"
+	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 )
 
@@ -21,23 +23,31 @@ func main() {
 
 	app := fiber.New()
 
-	baseService, err := platform.NewBaseService(context.Background(), cfg)
+	// Create postgres client for repositories
+	ctx := context.Background()
+	pgConfig := &dbi.PostgreSQLConfig{
+		Host:               cfg.Database.Postgres.Host,
+		Port:               cfg.Database.Postgres.Port,
+		Username:           cfg.Database.Postgres.Username,
+		Password:           cfg.Database.Postgres.Password,
+		Database:           cfg.Database.Postgres.Database,
+		SSLMode:            cfg.Database.Postgres.SSLMode,
+		MaxOpenConnections: cfg.Database.Postgres.MaxOpenConns,
+		MaxIdleConnections: cfg.Database.Postgres.MaxIdleConns,
+		MaxLifetime:        int(cfg.Database.Postgres.ConnMaxLifetime.Seconds()),
+		ConnectTimeout:     10,
+	}
+	pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
 	if err != nil {
-		log.Fatalf("Failed to create base service: %v", err)
+		log.Fatalf("Failed to create postgres client: %v", err)
 	}
 
-	commentsService := commentsServices.NewCommentService(baseService, cfg)
+	// Initialize repositories
+	commentRepo := commentRepository.NewPostgresCommentRepository(pgClient)
+	postRepo := postsRepository.NewPostgresRepository(pgClient)
 
-	// Create database indexes on startup
-	log.Println("🔧 Creating database indexes for Comments service...")
-	indexCtx, indexCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	if err := commentsService.CreateIndexes(indexCtx); err != nil {
-		indexCancel()
-		log.Printf("⚠️  Warning: Failed to create indexes (may already exist): %v", err)
-	} else {
-		indexCancel()
-		log.Println("✅ Comments database indexes created successfully")
-	}
+	// Initialize services
+	commentsService := commentsServices.NewCommentService(commentRepo, postRepo, cfg, nil) // nil for postStatsUpdater for now
 
 	commentsHandler := handlers.NewCommentHandler(commentsService, cfg.JWT, cfg.HMAC)
 

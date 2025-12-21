@@ -1,10 +1,6 @@
 # ====================================================================================
 # Telar Microservices - Test & CI Orchestration Makefile
 #
-# Philosophy:
-# 1. Use variables for common settings (parallelism, timeouts, flags) for consistency.
-# 2. The Makefile manages the ENVIRONMENT (Docker containers, build tags).
-# 3. The Go test suite manages the test LOGIC (running against PostgreSQL).
 # ====================================================================================
 
 .PHONY: all help \
@@ -18,7 +14,8 @@
         test-transactions \
         lint lint-fix \
         run-api run-web run-both run-profile run-profile-standalone run-posts run-comments dev stop-servers restart-servers pre-flight-check logs-api logs-web \
-        test-e2e-posts test-e2e-profile test-e2e-comments
+        test-e2e-auth test-e2e-posts test-e2e-profile test-e2e-comments test-e2e-web \
+        verify-release
 
 # --- Configuration Variables ---
 PARALLEL ?= 8
@@ -26,6 +23,13 @@ TIMEOUT ?= 15m
 REPORT_DIR := reports
 PROFILES_DIR := $(REPORT_DIR)/profiles
 TEST_ENV_SCRIPT := tools/dev/test_env.sh
+
+# Service Ports (configurable via environment)
+API_PORT ?= 9099
+WEB_PORT ?= 3000
+PROFILE_PORT ?= 8081
+POSTS_PORT ?= 8082
+COMMENTS_PORT ?= 8083
 
 GO_TEST_FLAGS := -count=1 -v -race -covermode=atomic -timeout=$(TIMEOUT) -parallel=$(PARALLEL)
 
@@ -39,6 +43,13 @@ lint:
 lint-fix:
 	@echo "Running golangci-lint with auto-fix..."
 	@cd apps/api && golangci-lint run --config=../../.golangci.yml --fix
+
+# --- Release Verification ---
+# Runs the full gauntlet: Hygiene + Lint + Build + Test + E2E
+# Usage: make verify-release
+# This is the mandatory quality gate before any merge
+verify-release:
+	@bash tools/dev/test/verify-release.sh
 
 # --- Docker & Database Management ---
 
@@ -66,13 +77,17 @@ down-postgres:
 	@$(TEST_ENV_SCRIPT) down postgres
 
 clean-dbs:
-	@echo "Recreating fresh PostgreSQL container and removing all data volumes..."
+	@echo "🔥 NUKING database and resetting state..."
 	@$(MAKE) down-postgres
 	@echo "Removing any existing PostgreSQL data volumes..."
 	@docker volume ls -q --filter name=telar-postgres | xargs -r docker volume rm || true
 	@docker volume ls -q --filter name=postgres | xargs -r docker volume rm || true
 	@$(MAKE) up-postgres
-	@echo "PostgreSQL is clean and ready with the latest schema."
+	@echo "⏳ Waiting for Database to be ready..."
+	@sleep 3
+	@echo "🏗️ Applying Migrations..."
+	@bash tools/dev/infra/db-migrate.sh || (echo "❌ Migration failed. Check database connection." && exit 1)
+	@echo "✅ PostgreSQL is clean, migrated, and ready for use."
 
 status:
 	@$(TEST_ENV_SCRIPT) status
@@ -80,8 +95,11 @@ status:
 logs-postgres:
 	@$(TEST_ENV_SCRIPT) logs postgres
 
+migrate:
+	@bash tools/dev/infra/db-migrate.sh
+
 docker-start:
-	@./tools/dev/scripts/docker-start.sh
+	@bash tools/dev/infra/start-docker.sh
 
 all: test-all
 
@@ -296,18 +314,25 @@ help:
 	@echo "  test-transactions - Run enterprise transaction management tests with PostgreSQL."
 	@echo ""
 	@echo "Development Servers:"
-	@echo "  run-api           - Start the Telar API server on port 8080 (requires databases)."
-	@echo "  run-profile       - Start the Profile microservice on port 8081 (requires databases)."
-	@echo "  run-posts         - Start the Posts microservice on port 8082 (requires databases)."
-	@echo "  run-comments      - Start the Comments microservice on port 8083 (requires databases)."
-	@echo "  run-web           - Start the Next.js web frontend development server."
+	@echo "  run-api           - Start the Telar API server on port $(API_PORT) (requires databases)."
+	@echo "  run-profile       - Start the Profile microservice on port $(PROFILE_PORT) (requires databases)."
+	@echo "  run-posts         - Start the Posts microservice on port $(POSTS_PORT) (requires databases)."
+	@echo "  run-comments      - Start the Comments microservice on port $(COMMENTS_PORT) (requires databases)."
+	@echo "  run-web           - Start the Next.js web frontend development server on port $(WEB_PORT)."
 	@echo "  run-both          - Start both API and web frontend servers concurrently."
-	@echo "  dev       - Start both servers in background (recommended for development)."
-	@echo "  run-api-background - Start API server in background with PID file (for E2E tests)."
-	@echo "  stop-api-background - Stop background API server using PID file."
-	@echo "  test-e2e-posts    - Run Posts E2E tests with automatic server management."
-	@echo "  test-e2e-comments - Run Comments E2E tests with automatic server management."
-	@echo "  test-e2e-profile  - Run Profile E2E tests with automatic server management."
+	@echo "  dev               - Start both servers in background (recommended for development)."
+	@echo "  run-api-background - Start API server in background (for E2E tests)."
+	@echo "  stop-api-background - Stop background API server gracefully."
+	@echo ""
+	@echo "E2E Testing:"
+	@echo "  test-e2e SERVICE=<name> - Run E2E tests for a service (auth, posts, comments, profile)."
+	@echo "  test-e2e-auth     - Run Auth E2E tests (legacy, delegates to test-e2e)."
+	@echo "  test-e2e-posts    - Run Posts E2E tests (legacy, delegates to test-e2e)."
+	@echo "  test-e2e-comments - Run Comments E2E tests (legacy, delegates to test-e2e)."
+	@echo "  test-e2e-profile  - Run Profile E2E tests (legacy, delegates to test-e2e)."
+	@echo "  test-e2e-web      - Run Web E2E tests (Playwright browser tests)."
+	@echo ""
+	@echo "  verify-release    - Run full quality gate: Hygiene + Lint + Build + Test + E2E (MANDATORY before merge)"
 	@echo "  stop-servers      - Stop all running servers."
 	@echo "  restart-servers   - Restart all servers safely (preserves Cursor processes)."
 	@echo "  pre-flight-check  - Check system readiness before server startup."
@@ -322,6 +347,8 @@ help:
 # NOTE: These use up-dbs-dev (NOT up-postgres) to preserve your .env settings
 
 run-api: up-dbs-dev
+	@echo "Checking Database Schema..."
+	@bash tools/dev/infra/db-migrate.sh || (echo "⚠️  Migration check failed. Continuing anyway..." && true)
 	@echo "Starting Telar API server (using your .env settings)..."
 	@cd apps/api && go run cmd/server/main.go
 
@@ -334,7 +361,7 @@ run-profile: up-dbs-dev
 	@cd apps/api && go run cmd/services/profile/main.go
 
 run-profile-standalone:
-	@echo "Starting Profile microservice standalone on port 8081..."
+	@echo "Starting Profile microservice standalone on port $(PROFILE_PORT)..."
 	@cd apps/api && go run cmd/services/profile/main.go
 
 run-posts: up-dbs-dev
@@ -347,8 +374,8 @@ run-comments: up-dbs-dev
 
 run-both: up-dbs-dev
 	@echo "Starting both API and web frontend servers..."
-	@echo "API server will be available at: http://localhost:8080"
-	@echo "Web frontend will be available at: http://localhost:3000"
+	@echo "API server will be available at: http://localhost:$(API_PORT)"
+	@echo "Web frontend will be available at: http://localhost:$(WEB_PORT)"
 	@echo ""
 	@trap 'kill 0' EXIT; \
 	(cd apps/api && go run cmd/server/main.go) & \
@@ -358,54 +385,66 @@ run-both: up-dbs-dev
 # --- Background Process Management ---
 
 dev: up-dbs-dev
-	@./tools/dev/scripts/start-servers-bg.sh
+	@bash tools/dev/app/start.sh
 
 stop-servers:
-	@./tools/dev/scripts/stop-servers.sh
+	@bash tools/dev/app/stop.sh
 
 restart-servers:
-	@./tools/dev/scripts/restart-servers.sh
+	@bash tools/dev/app/restart.sh
 
 # Target to run the API stack in the background for E2E tests
+# Delegates to start-api-only.sh which handles process management properly
 run-api-background: up-dbs-dev
-	@echo "Starting API in background..."
-	@ps aux | grep "go run.*cmd/server/main.go\|go run.*cmd/main.go" | grep -v grep | awk '{print $$2}' | xargs kill -9 2>/dev/null || true
-	@sleep 1
-	@cd apps/api && nohup go run cmd/server/main.go > ../../api.log 2>&1 & echo $$! > ../../api.pid
-	@echo "API started with PID `cat api.pid`. Tailing logs..."
-	@sleep 5
+	@echo "Applying database migrations..."
+	@bash tools/dev/infra/db-migrate.sh || (echo "Migration failed. Check database connection." && exit 1)
+	@bash tools/dev/app/stop.sh || true
+	@API_PORT=$(API_PORT) bash tools/dev/app/start-api-only.sh
+	@sleep 2
 
 # Target to stop the background API
+# Delegates to stop.sh which implements graceful shutdown (SIGTERM then SIGKILL)
 stop-api-background:
-	@echo "Stopping background API..."
-	@if [ -f api.pid ]; then \
-		kill `cat api.pid` 2>/dev/null && rm api.pid api.log 2>/dev/null && echo "API stopped."; \
-	else \
-		echo "API not running or PID file not found. Cleaning up any stale processes..."; \
-		ps aux | grep "go run.*cmd/server/main.go\|go run.*cmd/main.go" | grep -v grep | awk '{print $$2}' | xargs kill -9 2>/dev/null || true; \
+	@bash tools/dev/app/stop.sh
+
+# Unified E2E test target
+# Usage: make test-e2e SERVICE=auth
+#        make test-e2e SERVICE=posts
+#        make test-e2e SERVICE=comments
+#        make test-e2e SERVICE=profile
+test-e2e:
+	@if [ -z "$(SERVICE)" ]; then \
+		echo "Error: SERVICE parameter required. Usage: make test-e2e SERVICE=auth"; \
+		exit 1; \
 	fi
-
-# Running E2E tests for posts service
-test-e2e-posts: stop-api-background run-api-background
-	@echo "Running Posts E2E tests..."
-	@./tools/dev/scripts/posts_e2e_test.sh || true
+	@echo "Running E2E tests for $(SERVICE)..."
+	@$(MAKE) stop-api-background || true
+	@$(MAKE) run-api-background
+	@bash tools/dev/test/e2e-$(SERVICE).sh || ($(MAKE) stop-api-background && exit 1)
 	@$(MAKE) stop-api-background
 
-# Running E2E tests for comments service
-test-e2e-comments: stop-api-background run-api-background
-	@echo "Running Comments E2E tests..."
-	@./tools/dev/scripts/comments_e2e_test.sh || true
-	@$(MAKE) stop-api-background
+# Legacy individual E2E targets (delegate to unified target)
+test-e2e-auth:
+	@$(MAKE) test-e2e SERVICE=auth
 
-# Running E2E tests for  profile service
-test-e2e-profile: stop-api-background run-api-background
-	@echo "Running Profile E2E tests..."
-	@./tools/dev/scripts/profile_e2e_test.sh || true
-	@$(MAKE) stop-api-background
+test-e2e-posts:
+	@$(MAKE) test-e2e SERVICE=posts
+
+test-e2e-comments:
+	@$(MAKE) test-e2e SERVICE=comments
+
+test-e2e-profile:
+	@$(MAKE) test-e2e SERVICE=profile
+
+# Running E2E tests for web application (Playwright browser tests)
+test-e2e-web:
+	@echo "Running Web E2E tests with Playwright..."
+	@echo "This will start servers if not running and test the full user flow in browser"
+	@cd apps/web && pnpm test:e2e
 
 
 pre-flight-check:
-	@./tools/dev/scripts/pre-flight-check.sh
+	@bash tools/dev/infra/check-env.sh
 
 logs-api:
 	@echo "📋 Tailing API server logs (Ctrl+C to exit)..."

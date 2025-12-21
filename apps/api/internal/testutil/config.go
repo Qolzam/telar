@@ -174,7 +174,7 @@ func (c *TestConfig) ToPlatformConfig(dbType string) *platformconfig.Config {
 		Server: platformconfig.ServerConfig{
 			Host:            "localhost",
 			BaseRoute:       "/api",
-			Gateway:         "http://localhost:8080",
+			Gateway:         "http://localhost:9099",
 			InternalGateway: "http://localhost:8081",
 			WebDomain:       "localhost",
 			Debug:           true,

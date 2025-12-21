@@ -3,14 +3,18 @@ package main
 import (
 	"context"
 	"log"
-	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/qolzam/telar/apps/api/internal/platform"
+	bookmarksRepository "github.com/qolzam/telar/apps/api/bookmarks/repository"
+	commentRepository "github.com/qolzam/telar/apps/api/comments/repository"
+	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
+	"github.com/qolzam/telar/apps/api/internal/database/postgres"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/posts"
 	"github.com/qolzam/telar/apps/api/posts/handlers"
+	postsRepository "github.com/qolzam/telar/apps/api/posts/repository"
 	postsServices "github.com/qolzam/telar/apps/api/posts/services"
+	votesRepository "github.com/qolzam/telar/apps/api/votes/repository"
 )
 
 func main() {
@@ -21,23 +25,33 @@ func main() {
 
 	app := fiber.New()
 
-	baseService, err := platform.NewBaseService(context.Background(), cfg)
+	// Create postgres client for repositories
+	ctx := context.Background()
+	pgConfig := &dbi.PostgreSQLConfig{
+		Host:               cfg.Database.Postgres.Host,
+		Port:               cfg.Database.Postgres.Port,
+		Username:           cfg.Database.Postgres.Username,
+		Password:           cfg.Database.Postgres.Password,
+		Database:           cfg.Database.Postgres.Database,
+		SSLMode:            cfg.Database.Postgres.SSLMode,
+		MaxOpenConnections: cfg.Database.Postgres.MaxOpenConns,
+		MaxIdleConnections: cfg.Database.Postgres.MaxIdleConns,
+		MaxLifetime:        int(cfg.Database.Postgres.ConnMaxLifetime.Seconds()),
+		ConnectTimeout:     10,
+	}
+	pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
 	if err != nil {
-		log.Fatalf("Failed to create base service: %v", err)
+		log.Fatalf("Failed to create postgres client: %v", err)
 	}
 
-	postsService := postsServices.NewPostService(baseService, cfg)
+	// Create repositories
+	postRepo := postsRepository.NewPostgresRepository(pgClient)
+	voteRepo := votesRepository.NewPostgresVoteRepository(pgClient)
+	commentRepo := commentRepository.NewPostgresCommentRepository(pgClient)
+	bookmarkRepo := bookmarksRepository.NewPostgresRepository(pgClient)
 
-	// Create database indexes on startup
-	log.Println("🔧 Creating database indexes for Posts service...")
-	indexCtx, indexCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	if err := postsService.CreateIndexes(indexCtx); err != nil {
-		indexCancel()
-		log.Printf("⚠️  Warning: Failed to create indexes (may already exist): %v", err)
-	} else {
-		indexCancel()
-		log.Println("✅ Posts database indexes created successfully")
-	}
+	// Create post service with repository
+	postsService := postsServices.NewPostService(postRepo, voteRepo, bookmarkRepo, cfg, nil, commentRepo)
 
 	postsHandler := handlers.NewPostHandler(postsService, cfg.JWT, cfg.HMAC)
 
@@ -50,4 +64,3 @@ func main() {
 	log.Printf("Starting Posts Service on port 8082")
 	log.Fatal(app.Listen(":8082"))
 }
-

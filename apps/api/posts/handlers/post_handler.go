@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -103,7 +102,12 @@ func (h *PostHandler) GetPost(c *fiber.Ctx) error {
 	}
 
 	// Convert to response format (uses lazy population for commentCounter)
-	response := h.postService.ConvertPostToResponse(c.Context(), post)
+	// Enrichment with voteType happens in service layer if user context is available
+	var reqCtx context.Context = c.Context()
+	if user, ok := c.Locals(types.UserCtxName).(types.UserContext); ok {
+		reqCtx = context.WithValue(reqCtx, types.UserCtxName, user)
+	}
+	response := h.postService.ConvertPostToResponse(reqCtx, post)
 	return c.JSON(response)
 }
 
@@ -136,8 +140,47 @@ func (h *PostHandler) GetPostByURLKey(c *fiber.Ctx) error {
 	}
 
 	// Convert to response format (uses lazy population for commentCounter)
-	response := h.postService.ConvertPostToResponse(c.Context(), post)
+	// Enrichment with voteType happens in service layer if user context is available
+	var reqCtx context.Context = c.Context()
+	if user, ok := c.Locals(types.UserCtxName).(types.UserContext); ok {
+		reqCtx = context.WithValue(reqCtx, types.UserCtxName, user)
+	}
+	response := h.postService.ConvertPostToResponse(reqCtx, post)
 	return c.JSON(response)
+}
+
+// SearchPosts handles lightweight post search for autocomplete
+func (h *PostHandler) SearchPosts(c *fiber.Ctx) error {
+	query := c.Query("q")
+	if strings.TrimSpace(query) == "" {
+		return c.JSON([]models.PostResponse{})
+	}
+
+	limit := 5
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			if parsed > 20 {
+				limit = 20
+			} else {
+				limit = parsed
+			}
+		}
+	}
+
+	reqCtx := c.UserContext()
+	if reqCtx == nil {
+		reqCtx = context.Background()
+	}
+	if user, ok := c.Locals(types.UserCtxName).(types.UserContext); ok {
+		reqCtx = context.WithValue(reqCtx, types.UserCtxName, user)
+	}
+
+	results, err := h.postService.SearchPostsLite(reqCtx, query, limit)
+	if err != nil {
+		return errors.HandleServiceError(c, err)
+	}
+
+	return c.JSON(results)
 }
 
 // QueryPosts handles post querying with filters (now using cursor-based pagination)
@@ -230,7 +273,12 @@ func (h *PostHandler) QueryPosts(c *fiber.Ctx) error {
 	}
 
 	// Use cursor-based pagination instead of offset-based
-	result, err := h.postService.QueryPostsWithCursor(c.Context(), filter)
+	// Enrichment with voteType happens in service layer if user context is available
+	var reqCtx context.Context = c.Context()
+	if user, ok := c.Locals(types.UserCtxName).(types.UserContext); ok {
+		reqCtx = context.WithValue(reqCtx, types.UserCtxName, user)
+	}
+	result, err := h.postService.QueryPostsWithCursor(reqCtx, filter)
 	if err != nil {
 		return errors.HandleServiceError(c, err)
 	}
@@ -305,7 +353,13 @@ func (h *PostHandler) QueryPostsWithCursor(c *fiber.Ctx) error {
 	}
 
 	// Query posts with cursor
-	result, err := h.postService.QueryPostsWithCursor(c.Context(), filter)
+	// Enrichment with voteType happens in service layer if user context is available
+	var reqCtx context.Context = c.Context()
+	if user, ok := c.Locals(types.UserCtxName).(types.UserContext); ok {
+		reqCtx = context.WithValue(reqCtx, types.UserCtxName, user)
+	}
+
+	result, err := h.postService.QueryPostsWithCursor(reqCtx, filter)
 	if err != nil {
 		return errors.HandleServiceError(c, err)
 	}
@@ -386,7 +440,12 @@ func (h *PostHandler) SearchPostsWithCursor(c *fiber.Ctx) error {
 	}
 
 	// Search posts with cursor
-	result, err := h.postService.SearchPostsWithCursor(c.Context(), searchTerm, filter)
+	// Enrichment with voteType happens in service layer if user context is available
+	var reqCtx context.Context = c.Context()
+	if user, ok := c.Locals(types.UserCtxName).(types.UserContext); ok {
+		reqCtx = context.WithValue(reqCtx, types.UserCtxName, user)
+	}
+	result, err := h.postService.SearchPostsWithCursor(reqCtx, searchTerm, filter)
 	if err != nil {
 		return errors.HandleServiceError(c, err)
 	}
@@ -659,22 +718,6 @@ func (h *PostHandler) GeneratePostURLKey(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{
 		"urlKey": urlKey,
-	})
-}
-
-// CreateIndex handles index creation
-func (h *PostHandler) CreateIndex(c *fiber.Ctx) error {
-	indexes := map[string]interface{}{
-		"body":     "text",
-		"objectId": 1,
-	}
-
-	if err := h.postService.CreateIndex(c.Context(), indexes); err != nil {
-		return errors.HandleServiceError(c, err)
-	}
-
-	return c.Status(http.StatusCreated).JSON(fiber.Map{
-		"message": "Indexes created successfully",
 	})
 }
 

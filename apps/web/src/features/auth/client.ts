@@ -27,7 +27,7 @@ import type {
 // Session Management
 // ============================================================================
 
-export const SESSION_QUERY_KEY = ['auth', 'session'] as const;
+export const SESSION_QUERY_KEY = ['auth', 'access_token'] as const;
 
 /**
  * Fetch session data

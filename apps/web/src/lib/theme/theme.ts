@@ -76,6 +76,9 @@ const COLORS = {
   }
 };
 
+export const AI_ACCENT_GRADIENT = 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)';
+export const AI_ACCENT_SOLID = '#6366f1';
+
 
 export const createAppTheme = (direction: 'ltr' | 'rtl' = 'ltr') => createTheme({
   direction,

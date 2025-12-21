@@ -24,10 +24,16 @@ import (
 	passwordUC "github.com/qolzam/telar/apps/api/auth/password"
 	signupUC "github.com/qolzam/telar/apps/api/auth/signup"
 	verifyUC "github.com/qolzam/telar/apps/api/auth/verification"
+	"github.com/qolzam/telar/apps/api/auth/models"
+	"github.com/qolzam/telar/apps/api/internal/database/postgres"
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
 	"github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/internal/testutil"
+	authRepository "github.com/qolzam/telar/apps/api/auth/repository"
+	adminRepository "github.com/qolzam/telar/apps/api/auth/admin/repository"
+	profileRepository "github.com/qolzam/telar/apps/api/profile/repository"
+	signupOrchestrator "github.com/qolzam/telar/apps/api/orchestrator/signup"
 	"github.com/qolzam/telar/apps/api/internal/types"
 	"github.com/qolzam/telar/apps/api/internal/utils"
 	"github.com/qolzam/telar/apps/api/profile"
@@ -35,7 +41,109 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newAuthApp(t *testing.T, base *platform.BaseService, cfg *platformconfig.Config) (*fiber.App, string, string) {
+// applyAuthAndProfileMigrations applies auth and profile migrations to the isolated test schema
+func applyAuthAndProfileMigrations(t *testing.T, ctx context.Context, pgClient *postgres.Client) {
+	t.Helper()
+	
+	authMigrationSQL := `
+		CREATE TABLE IF NOT EXISTS user_auths (
+			id UUID PRIMARY KEY,
+			username VARCHAR(255) UNIQUE NOT NULL,
+			password_hash BYTEA NOT NULL,
+			role VARCHAR(50) DEFAULT 'user',
+			email_verified BOOLEAN DEFAULT FALSE,
+			phone_verified BOOLEAN DEFAULT FALSE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			created_date BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			last_updated BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_user_auths_username ON user_auths(username);
+		CREATE INDEX IF NOT EXISTS idx_user_auths_role ON user_auths(role);
+		CREATE INDEX IF NOT EXISTS idx_user_auths_created_at ON user_auths(created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_user_auths_created_date ON user_auths(created_date DESC);
+		
+		CREATE TABLE IF NOT EXISTS verifications (
+			id UUID PRIMARY KEY,
+			user_id UUID REFERENCES user_auths(id) ON DELETE CASCADE,
+			future_user_id UUID,
+			code VARCHAR(10) NOT NULL,
+			target VARCHAR(255) NOT NULL,
+			target_type VARCHAR(50) NOT NULL,
+			counter BIGINT DEFAULT 1,
+			created_date BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			last_updated BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			remote_ip_address VARCHAR(45),
+			is_verified BOOLEAN DEFAULT FALSE,
+			hashed_password BYTEA,
+			expires_at BIGINT NOT NULL,
+			used BOOLEAN DEFAULT FALSE,
+			full_name VARCHAR(255)
+		);
+		
+		-- Add future_user_id column if it doesn't exist (for existing tables)
+		DO $$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM information_schema.columns 
+				WHERE table_schema = current_schema()
+				AND table_name = 'verifications' AND column_name = 'future_user_id'
+			) THEN
+				ALTER TABLE verifications ADD COLUMN future_user_id UUID;
+			END IF;
+		END $$;
+		
+		CREATE INDEX IF NOT EXISTS idx_verifications_user_type ON verifications(user_id, target_type) WHERE user_id IS NOT NULL;
+		CREATE INDEX IF NOT EXISTS idx_verifications_code ON verifications(code) WHERE used = FALSE;
+		CREATE INDEX IF NOT EXISTS idx_verifications_target ON verifications(target, target_type) WHERE user_id IS NULL;
+		CREATE INDEX IF NOT EXISTS idx_verifications_expires_at ON verifications(expires_at) WHERE used = FALSE;
+		CREATE INDEX IF NOT EXISTS idx_verifications_created_at ON verifications(created_date DESC);
+	`
+	_, err := pgClient.DB().ExecContext(ctx, authMigrationSQL)
+	require.NoError(t, err, "Failed to apply auth migration to isolated test schema")
+	
+	profileMigrationSQL := `
+		CREATE TABLE IF NOT EXISTS profiles (
+			user_id UUID PRIMARY KEY REFERENCES user_auths(id) ON DELETE CASCADE,
+			full_name VARCHAR(255),
+			social_name VARCHAR(255),
+			email VARCHAR(255),
+			avatar VARCHAR(512),
+			banner VARCHAR(512),
+			tagline VARCHAR(500),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			created_date BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			last_updated BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			last_seen BIGINT DEFAULT 0,
+			birthday BIGINT DEFAULT 0,
+			web_url VARCHAR(512),
+			company_name VARCHAR(255),
+			country VARCHAR(100),
+			address TEXT,
+			phone VARCHAR(50),
+			vote_count BIGINT DEFAULT 0,
+			share_count BIGINT DEFAULT 0,
+			follow_count BIGINT DEFAULT 0,
+			follower_count BIGINT DEFAULT 0,
+			post_count BIGINT DEFAULT 0,
+			facebook_id VARCHAR(255),
+			instagram_id VARCHAR(255),
+			twitter_id VARCHAR(255),
+			linkedin_id VARCHAR(255),
+			access_user_list TEXT[],
+			permission VARCHAR(50) DEFAULT 'Public'
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_social_name ON profiles(social_name) WHERE social_name IS NOT NULL;
+		CREATE INDEX IF NOT EXISTS idx_profiles_email ON profiles(email) WHERE email IS NOT NULL;
+		CREATE INDEX IF NOT EXISTS idx_profiles_created_at ON profiles(created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_profiles_created_date ON profiles(created_date DESC);
+	`
+	_, err = pgClient.DB().ExecContext(ctx, profileMigrationSQL)
+	require.NoError(t, err, "Failed to apply profile migration to isolated test schema")
+}
+
+func newAuthApp(t *testing.T, base *platform.BaseService, cfg *platformconfig.Config, schema string) (*fiber.App, string, string) {
 	pubPEM, privPEM := testutil.GenerateECDSAKeyPairPEM(t)
 
 	// Create platform config for auth services
@@ -58,8 +166,32 @@ func newAuthApp(t *testing.T, base *platform.BaseService, cfg *platformconfig.Co
 		},
 	}
 
+	// Create postgres client for repositories from config
+	// Use the isolated test schema to ensure all services query the same database
+	ctx := context.Background()
+	pgConfig := &dbi.PostgreSQLConfig{
+		Host:               cfg.Database.Postgres.Host,
+		Port:               cfg.Database.Postgres.Port,
+		Username:           cfg.Database.Postgres.Username,
+		Password:           cfg.Database.Postgres.Password,
+		Database:           cfg.Database.Postgres.Database,
+		SSLMode:            cfg.Database.Postgres.SSLMode,
+		Schema:             schema, // Use isolated test schema
+		MaxOpenConnections: cfg.Database.Postgres.MaxOpenConns,
+		MaxIdleConnections: cfg.Database.Postgres.MaxIdleConns,
+		MaxLifetime:        int(cfg.Database.Postgres.ConnMaxLifetime.Seconds()),
+		ConnectTimeout:     10,
+	}
+	pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
+	require.NoError(t, err)
+
+	// Create repositories
+	authRepo := authRepository.NewPostgresAuthRepository(pgClient)
+	profileRepo := profileRepository.NewPostgresProfileRepository(pgClient)
+	adminRepo := adminRepository.NewPostgresAdminRepository(pgClient)
+
 	// Create admin service with new constructor
-	adminService := adminUC.NewService(base, privPEM, platformCfg)
+	adminService := adminUC.NewService(authRepo, profileRepo, adminRepo, privPEM, platformCfg)
 	adminHandler := adminUC.NewAdminHandler(adminService, platformconfig.JWTConfig{
 		PublicKey:  pubPEM,
 		PrivateKey: privPEM,
@@ -80,9 +212,40 @@ func newAuthApp(t *testing.T, base *platform.BaseService, cfg *platformconfig.Co
 			WebDomain: "http://localhost",
 		},
 	}
-	signupService := signupUC.NewService(base, signupServiceConfig)
-	signupHandler := signupUC.NewHandler(signupService, "test-recaptcha-key", privPEM)
-	signupHandler = signupHandler.WithRecaptcha(&testutil.FakeRecaptchaVerifier{ShouldSucceed: true})
+	// Create repositories for signup and login services (will be reused for orchestrator)
+	pgConfigForClient := &dbi.PostgreSQLConfig{
+		Host:               cfg.Database.Postgres.Host,
+		Port:               cfg.Database.Postgres.Port,
+		Username:           cfg.Database.Postgres.Username,
+		Password:           cfg.Database.Postgres.Password,
+		Database:           cfg.Database.Postgres.Database,
+		SSLMode:            cfg.Database.Postgres.SSLMode,
+		Schema:             schema, // Use isolated test schema
+		MaxOpenConnections: cfg.Database.Postgres.MaxOpenConns,
+		MaxIdleConnections: cfg.Database.Postgres.MaxIdleConns,
+		MaxLifetime:        int(cfg.Database.Postgres.ConnMaxLifetime.Seconds()),
+		ConnectTimeout:     10,
+	}
+	pgClientForAuth, err := postgres.NewClient(context.Background(), pgConfigForClient, pgConfigForClient.Database)
+	if err != nil {
+		t.Fatalf("Failed to create postgres client: %v", err)
+	}
+	verifRepoForSignup := authRepository.NewPostgresVerificationRepository(pgClientForAuth)
+	authRepoForLogin := authRepository.NewPostgresAuthRepository(pgClientForAuth)
+	profileRepoForOrchestrator := profileRepository.NewPostgresProfileRepository(pgClientForAuth)
+	
+	// Create profile service early so it can be used by login service
+	profileServiceForAuth := profileServices.NewProfileService(profileRepoForOrchestrator, &platformconfig.Config{
+		JWT:      platformconfig.JWTConfig{PublicKey: pubPEM, PrivateKey: privPEM},
+		HMAC:     platformconfig.HMACConfig{Secret: cfg.HMAC.Secret},
+		App:      platformconfig.AppConfig{WebDomain: "http://localhost"},
+		Database: cfg.Database,
+	})
+	profileCreator := profile.NewDirectCallAdapter(profileServiceForAuth)
+	
+	signupService := signupUC.NewService(verifRepoForSignup, signupServiceConfig)
+	fakeVerifier := &testutil.FakeRecaptchaVerifier{ShouldSucceed: true}
+	signupHandler := signupUC.NewHandler(signupService, fakeVerifier, privPEM)
 
 	// Create login service with new constructor
 	loginServiceConfig := &loginUC.ServiceConfig{
@@ -94,7 +257,8 @@ func newAuthApp(t *testing.T, base *platform.BaseService, cfg *platformconfig.Co
 			Secret: cfg.HMAC.Secret,
 		},
 	}
-	loginService := loginUC.NewService(base, loginServiceConfig)
+	// Create login service with profile creator for proper profile lookup
+	loginService := loginUC.NewServiceWithProfileCreator(authRepoForLogin, profileCreator, loginServiceConfig)
 	loginHandlerConfig := &loginUC.HandlerConfig{
 		WebDomain:           "http://localhost",
 		PrivateKey:          privPEM,
@@ -118,12 +282,15 @@ func newAuthApp(t *testing.T, base *platform.BaseService, cfg *platformconfig.Co
 			WebDomain: "http://localhost",
 		},
 	}
-	verifyService := verifyUC.NewService(base, verifyServiceConfig)
+	// Create repositories for verification service (use same pgClient to ensure same schema)
+	// Note: We'll create the verification service later after profileCreator is available
 	verifyHandlerConfig := &verifyUC.HandlerConfig{
 		PublicKey: pubPEM,
 		OrgName:   "Telar",
 		WebDomain: "http://localhost",
 	}
+	// verifyService and verifyHandler will be created later after profileCreator is available
+	var verifyService *verifyUC.Service
 	var verifyHandler *verifyUC.Handler
 
 	// Create password service with new constructor
@@ -144,7 +311,10 @@ func newAuthApp(t *testing.T, base *platform.BaseService, cfg *platformconfig.Co
 			WebDomain: "http://localhost",
 		},
 	}
-	passwordService := passwordUC.NewService(base, passwordServiceConfig)
+	// Create repositories for password service
+	verifRepoForPassword := authRepository.NewPostgresVerificationRepository(pgClient)
+	authRepoForPassword := authRepository.NewPostgresAuthRepository(pgClient)
+	passwordService := passwordUC.NewServiceWithRepositories(authRepoForPassword, verifRepoForPassword, passwordServiceConfig)
 	passwordHandlerConfig := &passwordUC.HandlerConfig{
 		RefEmail:     "test@example.com",
 		RefEmailPass: "testpass",
@@ -179,24 +349,28 @@ func newAuthApp(t *testing.T, base *platform.BaseService, cfg *platformconfig.Co
 	}
 	oauthHandler := oauthUC.NewHandler(oauthService, oauthHandlerConfig, stateStore)
 
-	// Create profile service adapter (using direct call adapter for tests)
-	profileService := profileServices.NewService(base, &platformconfig.Config{
-		JWT:      platformconfig.JWTConfig{PublicKey: pubPEM, PrivateKey: privPEM},
-		HMAC:     platformconfig.HMACConfig{Secret: cfg.HMAC.Secret},
-		App:      platformconfig.AppConfig{WebDomain: "http://localhost"},
-		Database: cfg.Database,
-	})
-	profileCreator := profile.NewDirectCallAdapter(profileService)
+	// Create repositories for orchestrator (reuse pgClientForAuth and profileRepoForOrchestrator)
+	// Create repositories (using different variable names to avoid shadowing)
+	authRepoForOrchestrator := authRepository.NewPostgresAuthRepository(pgClientForAuth)
+	verifRepoForOrchestrator := authRepository.NewPostgresVerificationRepository(pgClientForAuth)
 
-	// Update verification service to use profile creator
-	verifyService = verifyUC.NewServiceWithKeys(
-		base,
+	// Create signup orchestrator (reuse profileRepoForOrchestrator created earlier)
+	signupOrchestrator := signupOrchestrator.NewService(authRepoForOrchestrator, profileRepoForOrchestrator, verifRepoForOrchestrator)
+
+	// Create verification service with repositories, profile creator, and orchestrator
+	verifRepoForVerify := authRepository.NewPostgresVerificationRepository(pgClient)
+	authRepoForVerify := authRepository.NewPostgresAuthRepository(pgClient)
+	verifyService = verifyUC.NewServiceWithRepositoriesAndKeys(
+		verifRepoForVerify,
+		authRepoForVerify,
 		verifyServiceConfig,
 		privPEM,
 		"Telar",
 		"http://localhost",
 		profileCreator,
 	)
+	verifyService.SetSignupOrchestrator(signupOrchestrator)
+	// Create handler with service that has repositories, profile creator, and orchestrator
 	verifyHandler = verifyUC.NewHandler(verifyService, verifyHandlerConfig)
 
 	// Create JWKS handler
@@ -213,8 +387,9 @@ func newAuthApp(t *testing.T, base *platform.BaseService, cfg *platformconfig.Co
 	}
 
 	platformCfg = &platformconfig.Config{
-		HMAC: platformconfig.HMACConfig{Secret: cfg.HMAC.Secret},
-		JWT:  platformconfig.JWTConfig{PublicKey: pubPEM, PrivateKey: privPEM},
+		HMAC:       platformconfig.HMACConfig{Secret: cfg.HMAC.Secret},
+		JWT:        platformconfig.JWTConfig{PublicKey: pubPEM, PrivateKey: privPEM},
+		RateLimits: cfg.RateLimits, // Required for route registration
 	}
 	app := fiber.New()
 	auth.RegisterRoutes(app, authHandlers, platformCfg)
@@ -243,9 +418,126 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 	baseConfig := suite.Config()
 	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, baseConfig)
 	ctx := context.Background()
+	
+	// Apply migrations to isolated test schema (required for schema-per-test isolation)
+	pgConfig := iso.LegacyConfig.ToServiceConfig(dbi.DatabaseTypePostgreSQL).PostgreSQLConfig
+	pgConfig.Schema = iso.LegacyConfig.PGSchema
+	pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
+	require.NoError(t, err, "Failed to create postgres client")
+	defer pgClient.Close()
+	
+	// Create schema if it doesn't exist
+	schemaSQL := fmt.Sprintf(`CREATE SCHEMA IF NOT EXISTS %s`, iso.LegacyConfig.PGSchema)
+	_, err = pgClient.DB().ExecContext(ctx, schemaSQL)
+	require.NoError(t, err, "Failed to create schema")
+	
+	// Set search_path to the isolated schema
+	setSearchPathSQL := fmt.Sprintf(`SET search_path TO %s`, iso.LegacyConfig.PGSchema)
+	_, err = pgClient.DB().ExecContext(ctx, setSearchPathSQL)
+	require.NoError(t, err, "Failed to set search_path")
+	
+	// Apply Auth Schema Migration (including future_user_id column)
+	migrationSQL := `
+		CREATE TABLE IF NOT EXISTS user_auths (
+			id UUID PRIMARY KEY,
+			username VARCHAR(255) UNIQUE NOT NULL,
+			password_hash BYTEA NOT NULL,
+			role VARCHAR(50) DEFAULT 'user',
+			email_verified BOOLEAN DEFAULT FALSE,
+			phone_verified BOOLEAN DEFAULT FALSE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			created_date BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			last_updated BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_user_auths_username ON user_auths(username);
+		CREATE INDEX IF NOT EXISTS idx_user_auths_role ON user_auths(role);
+		CREATE INDEX IF NOT EXISTS idx_user_auths_created_at ON user_auths(created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_user_auths_created_date ON user_auths(created_date DESC);
+		
+		CREATE TABLE IF NOT EXISTS verifications (
+			id UUID PRIMARY KEY,
+			user_id UUID REFERENCES user_auths(id) ON DELETE CASCADE,
+			future_user_id UUID,
+			code VARCHAR(10) NOT NULL,
+			target VARCHAR(255) NOT NULL,
+			target_type VARCHAR(50) NOT NULL,
+			counter BIGINT DEFAULT 1,
+			created_date BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			last_updated BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			remote_ip_address VARCHAR(45),
+			is_verified BOOLEAN DEFAULT FALSE,
+			hashed_password BYTEA,
+			expires_at BIGINT NOT NULL,
+			used BOOLEAN DEFAULT FALSE,
+			full_name VARCHAR(255)
+		);
+		
+		-- Add future_user_id column if it doesn't exist (for existing tables)
+		DO $$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM information_schema.columns 
+				WHERE table_schema = current_schema()
+				AND table_name = 'verifications' AND column_name = 'future_user_id'
+			) THEN
+				ALTER TABLE verifications ADD COLUMN future_user_id UUID;
+			END IF;
+		END $$;
+		
+		CREATE INDEX IF NOT EXISTS idx_verifications_user_type ON verifications(user_id, target_type) WHERE user_id IS NOT NULL;
+		CREATE INDEX IF NOT EXISTS idx_verifications_code ON verifications(code) WHERE used = FALSE;
+		CREATE INDEX IF NOT EXISTS idx_verifications_target ON verifications(target, target_type) WHERE user_id IS NULL;
+		CREATE INDEX IF NOT EXISTS idx_verifications_expires_at ON verifications(expires_at) WHERE used = FALSE;
+		CREATE INDEX IF NOT EXISTS idx_verifications_created_at ON verifications(created_date DESC);
+	`
+	_, err = pgClient.DB().ExecContext(ctx, migrationSQL)
+	require.NoError(t, err, "Failed to apply auth migration to isolated test schema")
+	
+	// Apply Profile Schema Migration (required for signup flow)
+	profileMigrationSQL := `
+		CREATE TABLE IF NOT EXISTS profiles (
+			user_id UUID PRIMARY KEY REFERENCES user_auths(id) ON DELETE CASCADE,
+			full_name VARCHAR(255),
+			social_name VARCHAR(255),
+			email VARCHAR(255),
+			avatar VARCHAR(512),
+			banner VARCHAR(512),
+			tagline VARCHAR(500),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			created_date BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			last_updated BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			last_seen BIGINT DEFAULT 0,
+			birthday BIGINT DEFAULT 0,
+			web_url VARCHAR(512),
+			company_name VARCHAR(255),
+			country VARCHAR(100),
+			address TEXT,
+			phone VARCHAR(50),
+			vote_count BIGINT DEFAULT 0,
+			share_count BIGINT DEFAULT 0,
+			follow_count BIGINT DEFAULT 0,
+			follower_count BIGINT DEFAULT 0,
+			post_count BIGINT DEFAULT 0,
+			facebook_id VARCHAR(255),
+			instagram_id VARCHAR(255),
+			twitter_id VARCHAR(255),
+			linkedin_id VARCHAR(255),
+			access_user_list TEXT[],
+			permission VARCHAR(50) DEFAULT 'Public'
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_social_name ON profiles(social_name) WHERE social_name IS NOT NULL;
+		CREATE INDEX IF NOT EXISTS idx_profiles_email ON profiles(email) WHERE email IS NOT NULL;
+		CREATE INDEX IF NOT EXISTS idx_profiles_created_at ON profiles(created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_profiles_created_date ON profiles(created_date DESC);
+	`
+	_, err = pgClient.DB().ExecContext(ctx, profileMigrationSQL)
+	require.NoError(t, err, "Failed to apply profile migration to isolated test schema")
+	
 	base, err := platform.NewBaseService(ctx, iso.Config)
 	require.NoError(t, err)
-	app, pubPEM, privPEM := newAuthApp(t, base, iso.Config)
+	app, pubPEM, privPEM := newAuthApp(t, base, iso.Config, iso.LegacyConfig.PGSchema)
 	h := testutil.NewHTTPHelper(t, app)
 
 	// Generate unique email for this test run to avoid database isolation issues
@@ -284,20 +576,27 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 		require.NotEqual(t, uuid.Nil, verifyUUID, "VerificationId must be a valid UUID")
 
 		// Verify server-side verification record exists with hashed password
-		queryObj := &dbi.Query{
-			Conditions: []dbi.Field{
-				{Name: "object_id", Value: verifyUUID, Operator: "=", IsJSONB: false},
-			},
-		}
-		res := <-base.Repository.FindOne(ctx, "userVerification", queryObj)
-		require.NoError(t, res.Error())
+		// Use the new VerificationRepository to check the verification record
+		pgConfig := iso.LegacyConfig.ToServiceConfig(dbi.DatabaseTypePostgreSQL).PostgreSQLConfig
+		pgConfig.Schema = iso.LegacyConfig.PGSchema
+		pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
+		require.NoError(t, err, "Failed to create postgres client for verification")
+		verifRepo := authRepository.NewPostgresVerificationRepository(pgClient)
+		
+		verification, err := verifRepo.FindByID(ctx, verifyUUID)
+		require.NoError(t, err, "Verification record should exist")
+		require.NotNil(t, verification, "Verification record should not be nil")
+		
 		var uv struct {
-			Code           string `json:"code"`
-			HashedPassword []byte `json:"hashedPassword"`
-			ExpiresAt      int64  `json:"expiresAt"`
-			Used           bool   `json:"used"`
+			Code           string
+			HashedPassword []byte
+			ExpiresAt      int64
+			Used           bool
 		}
-		require.NoError(t, res.Decode(&uv))
+		uv.Code = verification.Code
+		uv.HashedPassword = verification.HashedPassword
+		uv.ExpiresAt = verification.ExpiresAt
+		uv.Used = verification.Used
 		require.NotEmpty(t, uv.Code)
 		require.NotEmpty(t, uv.HashedPassword, "Hashed password must be stored server-side")
 		require.True(t, uv.ExpiresAt > 0, "Expiry must be set")
@@ -314,18 +613,10 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp2.StatusCode, fmt.Sprintf("verify failed: %d", resp2.StatusCode))
 
 		// Verify the verification record is marked as used
-		queryObj2 := &dbi.Query{
-			Conditions: []dbi.Field{
-				{Name: "object_id", Value: verifyUUID, Operator: "=", IsJSONB: false},
-			},
-		}
-		res2 := <-base.Repository.FindOne(ctx, "userVerification", queryObj2)
-		require.NoError(t, res2.Error())
-		var uv2 struct {
-			Used bool `json:"used"`
-		}
-		require.NoError(t, res2.Decode(&uv2))
-		require.True(t, uv2.Used, "Verification record must be marked as used")
+		verification2, err := verifRepo.FindByID(ctx, verifyUUID)
+		require.NoError(t, err, "Verification record should still exist")
+		require.NotNil(t, verification2, "Verification record should not be nil")
+		require.True(t, verification2.Used, "Verification record must be marked as used")
 
 		// Verify user was created and verified by testing the API response
 		// This follows the posts microservice pattern - test the API, not the database directly
@@ -469,57 +760,51 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 
 	t.Run("Password_Reset_Form", func(t *testing.T) {
 		// Test POST /auth/password/reset/:verifyId
-		// First create a user directly in the database for this test
+		// First create a user directly in the database for this test with unique email
 		userUUID := uuid.Must(uuid.NewV4())
+		resetEmail := fmt.Sprintf("reset.user.%s@example.com", uuid.Must(uuid.NewV4()).String()[:8])
 		hashedPassword, err := utils.Hash(password)
 		require.NoError(t, err)
 
-		userAuth := struct {
-			ObjectId    uuid.UUID `json:"objectId" bson:"objectId"`
-			Username    string    `json:"username" bson:"username"`
-			Password    []byte    `json:"password" bson:"password"`
-			CreatedDate int64     `json:"createdDate" bson:"createdDate"`
-			LastUpdated int64     `json:"lastUpdated" bson:"lastUpdated"`
-		}{
+		// Create repositories for user creation
+		pgConfig := iso.LegacyConfig.ToServiceConfig(dbi.DatabaseTypePostgreSQL).PostgreSQLConfig
+		pgConfig.Schema = iso.LegacyConfig.PGSchema
+		pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
+		require.NoError(t, err, "Failed to create postgres client")
+		authRepo := authRepository.NewPostgresAuthRepository(pgClient)
+
+		userAuth := &models.UserAuth{
 			ObjectId:    userUUID,
-			Username:    email,
+			Username:    resetEmail, // Use unique email to avoid conflicts
 			Password:    hashedPassword,
 			CreatedDate: time.Now().Unix(),
 			LastUpdated: time.Now().Unix(),
 		}
 
-		err = (<-base.Repository.Save(ctx, "userAuth", userAuth.ObjectId, userAuth.ObjectId, userAuth.CreatedDate, userAuth.LastUpdated, &userAuth)).Error
-		require.NoError(t, err)
-
-		// Test user lookup
-		queryObj := &dbi.Query{
-			Conditions: []dbi.Field{
-				{Name: "data->>'username'", Value: email, Operator: "=", IsJSONB: true},
-			},
-		}
-		userRes := <-base.Repository.FindOne(ctx, "userAuth", queryObj)
-		require.NoError(t, userRes.Error())
-		var ua struct {
-			ObjectId uuid.UUID `json:"objectId" bson:"objectId"`
-			Username string    `json:"username" bson:"username"`
-		}
-		require.NoError(t, userRes.Decode(&ua))
+		err = authRepo.CreateUser(ctx, userAuth)
+		require.NoError(t, err, "Failed to create user for password reset test")
+		
+		ua, err := authRepo.FindByUsername(ctx, resetEmail)
+		require.NoError(t, err, "User should exist after verification")
+		require.NotNil(t, ua, "User should not be nil")
 
 		// Use the secure password reset flow instead of deprecated JWT tokens
-		passwordService := passwordUC.NewService(base, &passwordUC.ServiceConfig{
+		// Create repositories for password service
+		verifRepoForPassword := authRepository.NewPostgresVerificationRepository(pgClient)
+		passwordService := passwordUC.NewServiceWithRepositories(authRepo, verifRepoForPassword, &passwordUC.ServiceConfig{
 			JWTConfig:   platformconfig.JWTConfig{PublicKey: pubPEM, PrivateKey: privPEM},
 			HMACConfig:  platformconfig.HMACConfig{Secret: iso.Config.HMAC.Secret},
 			EmailConfig: platformconfig.EmailConfig{},
 			AppConfig:   platformconfig.AppConfig{},
 		})
-		resetData, err := passwordService.PrepareSecureResetVerification(ctx, email, "127.0.0.1")
+		resetData, err := passwordService.PrepareSecureResetVerification(ctx, resetEmail, "127.0.0.1")
 		require.NoError(t, err)
 
 		// Verify the secure token has proper entropy
 		require.GreaterOrEqual(t, len(resetData.PlaintextToken), 40, "Secure token should have sufficient entropy")
 		require.NotEqual(t, resetData.PlaintextToken, resetData.HashedToken, "Plaintext and hashed tokens should be different")
 
-		// Use the plaintext token for the reset request
+		// Use the plaintext token for the reset request (the handler expects the high-entropy token)
 		resetToken := resetData.PlaintextToken
 
 		form := url.Values{}
@@ -584,21 +869,21 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 
 	t.Run("Password_Change", func(t *testing.T) {
 		// Test PUT /auth/password/change with JWT
-		// First create a user for this test
+		// First create a user for this test using authRepo
 		userUUID := uuid.Must(uuid.NewV4())
 		testPassword := "TestPassword123!"
 		testEmail := fmt.Sprintf("test.user.%s@example.com", uuid.Must(uuid.NewV4()).String()[:8])
 		hashedPassword, err := utils.Hash(testPassword)
 		require.NoError(t, err)
 
-		userAuth := struct {
-			ObjectId      uuid.UUID `json:"objectId" bson:"objectId"`
-			Username      string    `json:"username" bson:"username"`
-			Password      []byte    `json:"password" bson:"password"`
-			EmailVerified bool      `json:"emailVerified" bson:"emailVerified"`
-			CreatedDate   int64     `json:"createdDate" bson:"createdDate"`
-			LastUpdated   int64     `json:"lastUpdated" bson:"lastUpdated"`
-		}{
+		// Create repositories for user creation
+		pgConfig := iso.LegacyConfig.ToServiceConfig(dbi.DatabaseTypePostgreSQL).PostgreSQLConfig
+		pgConfig.Schema = iso.LegacyConfig.PGSchema
+		pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
+		require.NoError(t, err, "Failed to create postgres client")
+		authRepo := authRepository.NewPostgresAuthRepository(pgClient)
+
+		userAuth := &models.UserAuth{
 			ObjectId:      userUUID,
 			Username:      testEmail, // Use a unique email for this test
 			Password:      hashedPassword,
@@ -607,8 +892,8 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 			LastUpdated:   time.Now().Unix(),
 		}
 
-		err = (<-base.Repository.Save(ctx, "userAuth", userAuth.ObjectId, userAuth.ObjectId, userAuth.CreatedDate, userAuth.LastUpdated, &userAuth)).Error
-		require.NoError(t, err)
+		err = authRepo.CreateUser(ctx, userAuth)
+		require.NoError(t, err, "Failed to create user for password change test")
 
 		// Create user profile as well
 		userProfile := struct {
@@ -740,20 +1025,20 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 		adminUsername := "admin_user_" + uniqueID
 		adminPassword := "AdminPassword123!"
 
-		// Create admin user directly in database
+		// Create admin user directly in database using authRepo
 		userUUID := uuid.Must(uuid.NewV4())
 		hashedPassword, err := utils.Hash(adminPassword)
 		require.NoError(t, err)
 
-		userAuth := struct {
-			ObjectId      uuid.UUID `json:"objectId" bson:"objectId"`
-			Username      string    `json:"username" bson:"username"`
-			Password      []byte    `json:"password" bson:"password"`
-			Role          string    `json:"role" bson:"role"`
-			EmailVerified bool      `json:"emailVerified" bson:"emailVerified"`
-			CreatedDate   int64     `json:"createdDate" bson:"createdDate"`
-			LastUpdated   int64     `json:"lastUpdated" bson:"lastUpdated"`
-		}{
+		// Create a PostgreSQL client to access the auth repository
+		pgConfig := iso.LegacyConfig.ToServiceConfig(dbi.DatabaseTypePostgreSQL).PostgreSQLConfig
+		pgConfig.Schema = iso.LegacyConfig.PGSchema
+		pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
+		require.NoError(t, err, "Failed to create postgres client for admin login test")
+
+		authRepo := authRepository.NewPostgresAuthRepository(pgClient)
+
+		userAuth := &models.UserAuth{
 			ObjectId:      userUUID,
 			Username:      adminUsername,
 			Password:      hashedPassword,
@@ -763,8 +1048,8 @@ func TestAuth_Complete_Refactored_Flow(t *testing.T) {
 			LastUpdated:   time.Now().Unix(),
 		}
 
-		err = (<-base.Repository.Save(ctx, "userAuth", userAuth.ObjectId, userAuth.ObjectId, userAuth.CreatedDate, userAuth.LastUpdated, &userAuth)).Error
-		require.NoError(t, err)
+		err = authRepo.CreateUser(ctx, userAuth)
+		require.NoError(t, err, "Failed to create admin user for login test")
 
 		// Create admin login payload
 		loginData := map[string]interface{}{
@@ -847,7 +1132,7 @@ func TestAuth_RefactoringValidation(t *testing.T) {
 	ctx := context.Background()
 	base, err := platform.NewBaseService(ctx, iso.Config)
 	require.NoError(t, err)
-	app, _, _ := newAuthApp(t, base, iso.Config)
+	app, _, _ := newAuthApp(t, base, iso.Config, iso.LegacyConfig.PGSchema)
 	h := testutil.NewHTTPHelper(t, app)
 
 	t.Run("JWTv5LibraryValidation", func(t *testing.T) {

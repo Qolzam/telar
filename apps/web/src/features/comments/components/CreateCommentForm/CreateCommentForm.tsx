@@ -14,13 +14,14 @@ interface CreateCommentFormProps {
   parentCommentId?: string;
   onSuccess?: () => void;
   autoFocus?: boolean;
+  replyToDisplayName?: string;
 }
 
 type CreateCommentFormValues = {
   text: string;
 };
 
-export function CreateCommentForm({ postId, parentCommentId, onSuccess, autoFocus }: CreateCommentFormProps) {
+export function CreateCommentForm({ postId, parentCommentId, onSuccess, autoFocus, replyToDisplayName }: CreateCommentFormProps) {
   const [submitting, setSubmitting] = useState(false);
   const createMutation = useCreateCommentMutation(postId);
   const { user } = useSession();
@@ -67,7 +68,7 @@ export function CreateCommentForm({ postId, parentCommentId, onSuccess, autoFocu
       <Box sx={{ flexGrow: 1, position: 'relative' }}>
         <TextField
           {...register('text')}
-          placeholder="Write your comments here..."
+          placeholder={replyToDisplayName ? `Replying to @${replyToDisplayName}...` : "Write your comments here..."}
           multiline
           rows={3}
           autoFocus={autoFocus}

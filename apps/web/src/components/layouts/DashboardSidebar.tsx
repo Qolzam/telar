@@ -24,6 +24,7 @@ import ChatIcon from '@mui/icons-material/Chat';
 import GroupIcon from '@mui/icons-material/Group';
 import SearchIcon from '@mui/icons-material/Search';
 import SettingsIcon from '@mui/icons-material/Settings';
+import BookmarkBorderIcon from '@mui/icons-material/BookmarkBorder';
 import { isRTL } from '@/lib/i18n/utils';
 import { useEffect, useState } from 'react';
 
@@ -62,10 +63,12 @@ export default function DashboardSidebar() {
     { label: t('navigation.home'), path: '/dashboard', icon: <HomeIcon /> },
     { label: t('navigation.profile'), path: '/profile', icon: <PersonIcon /> },
     { label: t('navigation.posts'), path: '/posts', icon: <PostAddIcon /> },
-    { label: t('navigation.messages'), path: '/messages', icon: <ChatIcon /> },
+    { label: t('navigation.bookmarks'), path: '/bookmarks', icon: <BookmarkBorderIcon /> },
+    // { label: t('navigation.messages'), path: '/messages', icon: <ChatIcon /> }, // HIDDEN FOR PREVIEW
     { label: t('navigation.connections'), path: '/connections', icon: <GroupIcon /> },
-    { label: t('navigation.search'), path: '/search', icon: <SearchIcon /> },
+    // { label: t('navigation.search'), path: '/search', icon: <SearchIcon /> }, // HIDDEN FOR PREVIEW
     { label: t('navigation.settings'), path: '/settings', icon: <SettingsIcon /> },
+    // { label: t('navigation.gallery'), path: '/gallery' }, // HIDDEN FOR PREVIEW
   ];
 
   const handleNavigation = (path: string) => {
@@ -267,7 +270,7 @@ export default function DashboardSidebar() {
           {MENU_ITEMS.map((item) => (
             <ListItem key={item.path} disablePadding>
               <ListItemButton
-                selected={pathname === item.path}
+                selected={pathname === item.path || (item.path === '/bookmarks' && pathname?.startsWith('/bookmarks'))}
                 onClick={() => handleNavigation(item.path)}
                 sx={{
                   mx: 1,

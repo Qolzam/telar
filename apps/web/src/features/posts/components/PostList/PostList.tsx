@@ -1,17 +1,26 @@
 'use client';
 
-import { Box, CircularProgress, Typography, Alert } from '@mui/material';
+import { Alert, Box, Button, CircularProgress, Stack, Typography } from '@mui/material';
 import { useInView } from 'react-intersection-observer';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { useSession } from '@/features/auth/client';
 import { useInfinitePostsQuery } from '../../client';
 import { PostCard, PostCardSkeleton } from '../PostCard';
+import { PostDialog } from '../PostDialog';
 import type { PostsResponse } from '@telar/sdk';
+import type { CursorQueryParams } from '@telar/sdk';
 
-export function PostList() {
+interface PostListProps {
+  params?: CursorQueryParams;
+}
+
+export function PostList({ params }: PostListProps = {}) {
   const { data, isLoading, isError, error, fetchNextPage, hasNextPage, isFetchingNextPage } = 
-    useInfinitePostsQuery({ limit: 10 });
+    useInfinitePostsQuery({ limit: 10, ...params });
   
   const { ref, inView } = useInView();
+  const { user, isAuthenticated } = useSession();
+  const [postDialogOpen, setPostDialogOpen] = useState(false);
 
   // Log React Query state changes
   useEffect(() => {
@@ -117,12 +126,33 @@ export function PostList() {
   });
 
   if (posts.length === 0) {
+    const isAdmin = user?.role === 'admin';
+
     return (
-      <Box sx={{ textAlign: 'center', py: 8 }}>
-        <Typography variant="h6" color="text.secondary">
-          No posts yet. Be the first to post!
-        </Typography>
-      </Box>
+      <>
+        <Box sx={{ textAlign: 'center', py: 8 }}>
+          <Typography variant="h6" color="text.secondary" sx={{ mb: 2 }}>
+            No posts yet. Let&apos;s ignite the conversation.
+          </Typography>
+          {isAuthenticated ? (
+            <Stack direction="row" spacing={2} justifyContent="center">
+              {isAdmin ? (
+                <Button variant="contained" href="/admin/tools">
+                  Ignite with AI
+                </Button>
+              ) : (
+                <Button variant="contained" onClick={() => setPostDialogOpen(true)}>
+                  Create the first post
+                </Button>
+              )}
+            </Stack>
+          ) : null}
+        </Box>
+
+        {!isAdmin ? (
+          <PostDialog open={postDialogOpen} onClose={() => setPostDialogOpen(false)} />
+        ) : null}
+      </>
     );
   }
 

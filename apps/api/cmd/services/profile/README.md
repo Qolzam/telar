@@ -64,7 +64,7 @@ The service uses the same environment configuration as other Telar microservices
 make test-profile
 
 # Run e2e tests
-bash tools/dev/scripts/profile_e2e_test.sh
+bash tools/dev/test/e2e-profile.sh
 ```
 
 ### Building

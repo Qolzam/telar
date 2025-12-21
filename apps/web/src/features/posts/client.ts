@@ -1,8 +1,8 @@
 'use client';
 
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { sdk } from '@/lib/sdk';
-import type { CreatePostRequest, CursorQueryParams, PostsResponse, Post } from '@telar/sdk';
+import type { CreatePostRequest, UpdatePostRequest, CursorQueryParams, PostsResponse, Post } from '@telar/sdk';
 
 /**
  * Query keys for posts
@@ -21,13 +21,18 @@ export const postsKeys = {
  * @returns React Query infinite query result
  */
 export function useInfinitePostsQuery(params?: CursorQueryParams) {
+  const queryParams: CursorQueryParams = {
+    limit: params?.limit ?? 10,
+    cursor: params?.cursor,
+    owner: params?.owner,
+  };
+
   return useInfiniteQuery({
-    queryKey: postsKeys.infiniteList(params),
+    queryKey: postsKeys.infiniteList(queryParams),
     queryFn: async ({ pageParam }) => {
       const response = await sdk.posts.getPostsWithCursor({
-        ...params,
+        ...queryParams,
         cursor: pageParam as string | undefined,
-        limit: params?.limit || 10,
       });
       
       return response;
@@ -103,6 +108,127 @@ export function useCreatePostMutation() {
     mutationFn: (data: CreatePostRequest) => sdk.posts.createPost(data),
     onSuccess: () => {
       // Invalidate all posts lists so newly created post appears in the feed
+      queryClient.invalidateQueries({ queryKey: postsKeys.lists() });
+    },
+  });
+}
+
+/**
+ * Mutation hook for updating a post with optimistic updates
+ */
+export function useUpdatePostMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (data: UpdatePostRequest) => sdk.posts.updatePost(data),
+    onMutate: async (variables) => {
+      // Cancel any outgoing queries to avoid race conditions
+      await queryClient.cancelQueries({ queryKey: postsKeys.lists() });
+      await queryClient.cancelQueries({ queryKey: postsKeys.detail(variables.objectId) });
+
+      // Get the previous post value for rollback
+      const previousPost = queryClient.getQueryData<Post>(postsKeys.detail(variables.objectId));
+
+      // Optimistically update the post in infinite query cache
+      queryClient.setQueriesData<InfiniteData<PostsResponse>>(
+        { queryKey: postsKeys.lists() },
+        (old) => {
+          if (!old) return old;
+          return {
+            ...old,
+            pages: old.pages.map((page) => ({
+              ...page,
+              posts: page.posts.map((p) =>
+                p.objectId === variables.objectId
+                  ? { ...p, body: variables.body ?? p.body }
+                  : p
+              ),
+            })),
+          };
+        }
+      );
+
+      // Optimistically update the single post query
+      queryClient.setQueryData<Post>(postsKeys.detail(variables.objectId), (old) => {
+        if (!old) return old;
+        return { ...old, body: variables.body ?? old.body };
+      });
+
+      return { previousPost };
+    },
+    onSuccess: (_data, variables) => {
+      // Invalidate to ensure we have the latest data from server
+      queryClient.invalidateQueries({ queryKey: postsKeys.detail(variables.objectId) });
+      queryClient.invalidateQueries({ queryKey: postsKeys.lists() });
+    },
+    onError: (_error, variables, context) => {
+      // Rollback optimistic updates on error
+      if (context?.previousPost) {
+        queryClient.setQueryData<Post>(postsKeys.detail(variables.objectId), context.previousPost);
+      }
+      queryClient.invalidateQueries({ queryKey: postsKeys.lists() });
+    },
+  });
+}
+
+/**
+ * Mutation hook for deleting a post with optimistic removal
+ */
+export function useDeletePostMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (postId: string) => sdk.posts.deletePost(postId),
+    onMutate: async (postId) => {
+      // Cancel any outgoing queries to avoid race conditions
+      await queryClient.cancelQueries({ queryKey: postsKeys.lists() });
+      await queryClient.cancelQueries({ queryKey: postsKeys.detail(postId) });
+
+      // Get the previous post value for rollback
+      const previousPost = queryClient.getQueryData<Post>(postsKeys.detail(postId));
+
+      // Get all pages to find and remove the post
+      const allQueries = queryClient.getQueriesData<InfiniteData<PostsResponse>>({
+        queryKey: postsKeys.lists(),
+      });
+
+      // Store previous state for rollback
+      const previousQueries = allQueries.map(([key, data]) => [key, data] as const);
+
+      // Optimistically remove the post from infinite query cache
+      queryClient.setQueriesData<InfiniteData<PostsResponse>>(
+        { queryKey: postsKeys.lists() },
+        (old) => {
+          if (!old) return old;
+          return {
+            ...old,
+            pages: old.pages.map((page) => ({
+              ...page,
+              posts: page.posts.filter((p) => p.objectId !== postId),
+            })),
+          };
+        }
+      );
+
+      // Remove the single post query
+      queryClient.removeQueries({ queryKey: postsKeys.detail(postId) });
+
+      return { previousPost, previousQueries };
+    },
+    onSuccess: () => {
+      // Invalidate to ensure consistency
+      queryClient.invalidateQueries({ queryKey: postsKeys.lists() });
+    },
+    onError: (_error, postId, context) => {
+      // Rollback optimistic updates on error
+      if (context?.previousQueries) {
+        context.previousQueries.forEach(([key, data]) => {
+          queryClient.setQueryData(key, data);
+        });
+      }
+      if (context?.previousPost) {
+        queryClient.setQueryData<Post>(postsKeys.detail(postId), context.previousPost);
+      }
       queryClient.invalidateQueries({ queryKey: postsKeys.lists() });
     },
   });

@@ -57,9 +57,10 @@ func New(cfg Config) fiber.Handler {
 			}
 		}
 
-		// 2. Fall back to session cookie (for web browsers)
+		// 2. Fall back to access_token cookie (for web browsers/BFF pattern)
+		// Per blueprint: Cookie name must be "access_token" (strictly enforced)
 		if tokenString == "" {
-			tokenString = c.Cookies("session")
+			tokenString = c.Cookies("access_token")
 		}
 
 		// 3. If no token found in either place, return error
@@ -218,4 +219,76 @@ func mapToUserContext(claimData map[string]interface{}) (types.UserContext, erro
 	}
 
 	return userCtx, nil
+}
+
+// ValidateToken validates a JWT token and returns the UserContext if valid.
+// This is a pure validation function that does NOT write to the response.
+// It can be used by other middleware (like dualauth) to validate tokens without side effects.
+func ValidateToken(tokenString string, publicKey string, claimKey string, sessionCache *cache.GenericCacheService) (types.UserContext, error) {
+	var userCtx types.UserContext
+
+	// Parse the key
+	ecPublicKey, err := jwt.ParseECPublicKeyFromPEM([]byte(publicKey))
+	if err != nil {
+		return userCtx, fmt.Errorf("failed to parse EC public key: %w", err)
+	}
+
+	// Parse token
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		// CRITICAL: Enforce the expected signing algorithm.
+		if _, ok := token.Method.(*jwt.SigningMethodECDSA); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return ecPublicKey, nil
+	})
+
+	if err != nil {
+		return userCtx, fmt.Errorf("invalid token: %w", err)
+	}
+
+	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+		// Check if token is expired
+		if exp, ok := claims["exp"].(float64); ok {
+			if int64(exp) < time.Now().Unix() {
+				return userCtx, fmt.Errorf("token has expired")
+			}
+		}
+
+		// Extract the claim data
+		claimData, claimOk := claims[claimKey].(map[string]interface{})
+		if !claimOk {
+			return userCtx, fmt.Errorf("invalid token claim format")
+		}
+
+		// Optional session allowlist check via cache
+		if sessionCache != nil {
+			jtiStr, _ := claims["jti"].(string)
+			if jtiStr == "" {
+				return userCtx, fmt.Errorf("missing session ID")
+			}
+			uidStr, _ := claimData[types.HeaderUID].(string)
+			if uidStr == "" {
+				return userCtx, fmt.Errorf("missing user ID")
+			}
+			key := sessionCache.GenerateHashKey("sessions", map[string]interface{}{"uid": uidStr})
+			isMember, err := sessionCache.SetIsMember(context.Background(), key, jtiStr)
+			if err != nil {
+				log.Warn("CRITICAL: Redis session check failed for user %s: %v", uidStr, err)
+				return userCtx, fmt.Errorf("session validation failed: %w", err)
+			}
+			if !isMember {
+				return userCtx, fmt.Errorf("session has been invalidated")
+			}
+		}
+
+		// Map claim data to UserContext
+		userCtx, err := mapToUserContext(claimData)
+		if err != nil {
+			return userCtx, fmt.Errorf("invalid user context in token: %w", err)
+		}
+
+		return userCtx, nil
+	}
+
+	return userCtx, fmt.Errorf("invalid token")
 }

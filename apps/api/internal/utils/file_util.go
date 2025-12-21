@@ -1,14 +1,14 @@
 package utils
 
 import (
-	"log"
 	"os"
 	"sync"
 )
 
-func GetFilesContents(files ...string) map[string][]byte {
+func GetFilesContents(files ...string) (map[string][]byte, error) {
 	var wg sync.WaitGroup
 	var m sync.Mutex
+	var firstErr error
 
 	filesLength := len(files)
 	contents := make(map[string][]byte, filesLength)
@@ -16,20 +16,29 @@ func GetFilesContents(files ...string) map[string][]byte {
 
 	for _, file := range files {
 		go func(file string) {
+			defer wg.Done()
 			content, err := os.ReadFile(file)
 
 			if err != nil {
-				log.Fatal(err)
+				m.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				m.Unlock()
+				return
 			}
 
 			m.Lock()
 			contents[file] = content
 			m.Unlock()
-			wg.Done()
 		}(file)
 	}
 
 	wg.Wait()
 
-	return contents
+	if firstErr != nil {
+		return nil, firstErr
+	}
+
+	return contents, nil
 }

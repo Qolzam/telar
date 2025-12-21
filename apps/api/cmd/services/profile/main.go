@@ -6,12 +6,13 @@ import (
 	"log"
 	"net"
 	"os"
-	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/qolzam/telar/apps/api/internal/platform"
+	"github.com/qolzam/telar/apps/api/internal/database/postgres"
+	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/profile"
+	profileRepository "github.com/qolzam/telar/apps/api/profile/repository"
 	"github.com/qolzam/telar/apps/api/profile/services"
 	pb "github.com/qolzam/telar/protos/gen/go/profilepb"
 	"google.golang.org/grpc"
@@ -25,23 +26,33 @@ func main() {
 
 	app := fiber.New()
 
-	baseService, err := platform.NewBaseService(context.Background(), cfg)
+	// Create postgres client for repositories
+	ctx := context.Background()
+	pgConfig := &dbi.PostgreSQLConfig{
+		Host:               cfg.Database.Postgres.Host,
+		Port:               cfg.Database.Postgres.Port,
+		Username:           cfg.Database.Postgres.Username,
+		Password:           cfg.Database.Postgres.Password,
+		Database:           cfg.Database.Postgres.Database,
+		SSLMode:            cfg.Database.Postgres.SSLMode,
+		MaxOpenConnections: cfg.Database.Postgres.MaxOpenConns,
+		MaxIdleConnections: cfg.Database.Postgres.MaxIdleConns,
+		MaxLifetime:        int(cfg.Database.Postgres.ConnMaxLifetime.Seconds()),
+		ConnectTimeout:     10,
+	}
+	pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
 	if err != nil {
-		log.Fatalf("Failed to create base service: %v", err)
+		log.Fatalf("Failed to create postgres client: %v", err)
 	}
 
-	profileService := services.NewService(baseService, cfg)
+	// Create repository
+	profileRepo := profileRepository.NewPostgresProfileRepository(pgClient)
 
-	// Create database indexes on startup
-	log.Println("🔧 Creating database indexes for Profile service...")
-	indexCtx, indexCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	if err := profileService.CreateIndexes(indexCtx); err != nil {
-		indexCancel()
-		log.Printf("⚠️  Warning: Failed to create indexes (may already exist): %v", err)
-	} else {
-		indexCancel()
-		log.Println("✅ Profile database indexes created successfully")
-	}
+	// Create profile service with repository
+	profileService := services.NewProfileService(profileRepo, cfg)
+
+	// Create profile service client adapter for gRPC
+	profileServiceClient := profile.NewDirectCallAdapter(profileService)
 
 	profileHandler := profile.NewProfileHandler(profileService, cfg.JWT, cfg.HMAC)
 
@@ -65,7 +76,7 @@ func main() {
 			}
 
 			grpcServer := grpc.NewServer()
-			pb.RegisterProfileServiceServer(grpcServer, profile.NewGrpcServer(profileService))
+			pb.RegisterProfileServiceServer(grpcServer, profile.NewGrpcServer(profileServiceClient))
 
 			log.Printf("🚀 Profile gRPC Server listening on port %s", grpcPort)
 			if err := grpcServer.Serve(lis); err != nil {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -13,14 +14,21 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	uuid "github.com/gofrs/uuid"
+	"github.com/lib/pq"
+	authModels "github.com/qolzam/telar/apps/api/auth/models"
+	authRepository "github.com/qolzam/telar/apps/api/auth/repository"
 	"github.com/qolzam/telar/apps/api/comments"
 	"github.com/qolzam/telar/apps/api/comments/handlers"
+	commentModels "github.com/qolzam/telar/apps/api/comments/models"
+	commentRepository "github.com/qolzam/telar/apps/api/comments/repository"
 	"github.com/qolzam/telar/apps/api/comments/services"
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
-	"github.com/qolzam/telar/apps/api/internal/platform"
+	"github.com/qolzam/telar/apps/api/internal/database/postgres"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/internal/testutil"
 	"github.com/qolzam/telar/apps/api/internal/types"
+	postsModels "github.com/qolzam/telar/apps/api/posts/models"
+	postsRepository "github.com/qolzam/telar/apps/api/posts/repository"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,18 +42,7 @@ func verifyPostgresConnection() error {
 	return nil
 }
 
-// Legacy helper functions for backward compatibility
-func setLegacyMongoConfigForTests(t *testing.T) {
-	// This function is kept for backward compatibility but is deprecated
-	// Use testutil.GetTestIsolation(t).SetupMongoDB() instead
-	t.Logf("setLegacyMongoConfigForTests is deprecated, use testutil.GetTestIsolation(t).SetupMongoDB()")
-}
-
-func setLegacyPostgresConfigForTests(t *testing.T) {
-	// This function is kept for backward compatibility but is deprecated
-	// Use testutil.GetTestIsolation(t).SetupPostgreSQL() instead
-	t.Logf("setLegacyPostgresConfigForTests is deprecated, use testutil.GetTestIsolation(t).SetupPostgreSQL()")
-}
+// Legacy helper functions removed - PostgreSQL only
 
 // DELETED: Redundant signHMAC helper removed per g-sol10.md Step 2
 // All HMAC signing now uses the centralized testutil.signHMAC with SHA256
@@ -54,12 +51,12 @@ func setLegacyPostgresConfigForTests(t *testing.T) {
 func addHMACHeaders(req *http.Request, body []byte, secret string, uid string) {
 	// Generate timestamp for canonical signing
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	
+
 	// Extract request details for canonical signing
 	method := req.Method
 	path := req.URL.Path
 	query := req.URL.RawQuery
-	
+
 	// Generate canonical HMAC signature
 	sig := testutil.SignHMAC(method, path, query, body, uid, timestamp, secret)
 	req.Header.Set(types.HeaderHMACAuthenticate, sig)
@@ -73,7 +70,7 @@ func addHMACHeaders(req *http.Request, body []byte, secret string, uid string) {
 
 // newTestApp creates a new test Fiber app with comments routes
 // Returns the app and the secret used for HMAC signing
-func newTestApp(t *testing.T, base *platform.BaseService, cfg *platformconfig.Config) (*fiber.App, string) {
+func newTestApp(t *testing.T, commentRepo commentRepository.CommentRepository, postRepo postsRepository.PostRepository, cfg *platformconfig.Config) (*fiber.App, string) {
 	app := fiber.New()
 
 	// Add test middleware to set user context
@@ -81,10 +78,16 @@ func newTestApp(t *testing.T, base *platform.BaseService, cfg *platformconfig.Co
 		// Extract user info from headers (simulating HMAC middleware)
 		uid := c.Get(types.HeaderUID)
 		if uid != "" {
-			userID, _ := uuid.FromString(uid)
+			userID, err := uuid.FromString(uid)
+			if err != nil {
+				return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "invalid user ID"})
+			}
 			createdDate, _ := strconv.ParseInt(c.Get("createdDate"), 10, 64)
+			if createdDate == 0 {
+				createdDate = time.Now().Unix()
+			}
 			user := types.UserContext{
-				UserID:      userID,
+				UserID:      userID, // This MUST match the user created in setupTestData
 				Username:    c.Get("email"),
 				DisplayName: c.Get("displayName"),
 				SocialName:  c.Get("socialName"),
@@ -99,8 +102,8 @@ func newTestApp(t *testing.T, base *platform.BaseService, cfg *platformconfig.Co
 		return c.Next()
 	})
 
-	// Create handlers and config using the injected base service
-	commentService := services.NewCommentService(base, cfg)
+	// Create handlers and config using the new repository-based service
+	commentService := services.NewCommentService(commentRepo, postRepo, cfg, nil)
 	commentHandler := handlers.NewCommentHandler(commentService, cfg.JWT, cfg.HMAC)
 
 	commentsHandlers := &comments.CommentsHandlers{
@@ -137,36 +140,6 @@ type commentResponse struct {
 	LastUpdated      int64  `json:"lastUpdated,omitempty"`
 }
 
-// TestCommentsHTTPCompatibilityMongoDB tests HTTP compatibility with MongoDB
-func TestCommentsHTTPCompatibilityMongoDB(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	// Get the shared connection pool
-	suite := testutil.Setup(t)
-
-	// Create isolated test environment with transaction
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypeMongoDB, suite.Config())
-	if iso.Repo == nil {
-		t.Skip("MongoDB not available, skipping test")
-	}
-
-	ctx := context.Background()
-
-	base, err := platform.NewBaseService(ctx, iso.Config)
-	require.NoError(t, err)
-
-	app, secret := newTestApp(t, base, iso.Config)
-	uid := uuid.Must(uuid.NewV4()).String()
-
-	// Create HTTP helper
-	httpHelper := testutil.NewHTTPHelper(t, app)
-
-	// Test basic CRUD operations
-	runCommentsHTTPCompatibilityTests(t, "MongoDB", app, secret, uid, httpHelper)
-}
-
 // TestCommentsHTTPCompatibilityPostgreSQL tests HTTP compatibility with PostgreSQL
 func TestCommentsHTTPCompatibilityPostgreSQL(t *testing.T) {
 	if testing.Short() {
@@ -176,7 +149,7 @@ func TestCommentsHTTPCompatibilityPostgreSQL(t *testing.T) {
 	// Get the shared connection pool
 	suite := testutil.Setup(t)
 
-	// Create isolated test environment with transaction
+	// Create isolated test environment
 	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 	if iso.Repo == nil {
 		t.Skip("PostgreSQL not available, skipping test")
@@ -184,41 +157,135 @@ func TestCommentsHTTPCompatibilityPostgreSQL(t *testing.T) {
 
 	ctx := context.Background()
 
-	base, err := platform.NewBaseService(ctx, iso.Config)
-	require.NoError(t, err)
+	// Create PostRepository FIRST (applies posts migration, required for comments foreign key)
+	postRepo, err := postsRepository.NewPostgresRepositoryForTest(ctx, iso)
+	require.NoError(t, err, "failed to create PostRepository")
 
-	app, secret := newTestApp(t, base, iso.Config)
-	uid := uuid.Must(uuid.NewV4()).String()
+	// PostRepository client needs search_path set (ApplyPostsMigration sets it, but we need to ensure it persists)
+	// The client returned by NewPostgresRepositoryForTest should already have search_path set via ApplyPostsMigration
+
+	// Create CommentRepository AFTER posts migration (comments table has FK to posts)
+	commentRepo, err := commentRepository.NewPostgresCommentRepositoryForTest(ctx, iso)
+	require.NoError(t, err, "failed to create CommentRepository")
+
+	// Create AuthRepository for test user creation
+	pgConfig := iso.LegacyConfig.ToServiceConfig(dbi.DatabaseTypePostgreSQL).PostgreSQLConfig
+	pgConfig.Schema = iso.LegacyConfig.PGSchema
+	pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
+	require.NoError(t, err, "failed to create postgres client for auth")
+
+	// Set search_path to isolated schema (critical for foreign key constraints)
+	setSearchPathSQL := fmt.Sprintf(`SET search_path TO %s`, iso.LegacyConfig.PGSchema)
+	_, err = pgClient.DB().ExecContext(ctx, setSearchPathSQL)
+	require.NoError(t, err, "failed to set search_path for auth client")
+
+	authRepo := authRepository.NewPostgresAuthRepository(pgClient)
+
+	app, secret := newTestApp(t, commentRepo, postRepo, iso.Config)
+
+	// Create test user and post FIRST, then use that user's ID for tests
+	userUUID := uuid.Must(uuid.NewV4())
+	uid := userUUID.String()
 
 	// Create HTTP helper
 	httpHelper := testutil.NewHTTPHelper(t, app)
 
-	// Test basic CRUD operations
-	runCommentsHTTPCompatibilityTests(t, "PostgreSQL", app, secret, uid, httpHelper)
+	// Test basic CRUD operations (setupTestData will create user with this uid)
+	runCommentsHTTPCompatibilityTests(t, "PostgreSQL", app, secret, uid, httpHelper, authRepo, postRepo)
 }
 
 // runCommentsHTTPCompatibilityTests runs the main HTTP compatibility test suite
-func runCommentsHTTPCompatibilityTests(t *testing.T, dbType string, app *fiber.App, secret string, uid string, httpHelper *testutil.HTTPHelper) {
+func runCommentsHTTPCompatibilityTests(t *testing.T, dbType string, app *fiber.App, secret string, uid string, httpHelper *testutil.HTTPHelper, authRepo authRepository.AuthRepository, postRepo postsRepository.PostRepository) {
+	ctx := context.Background()
+
+	// Create test user for all tests
+	userID := setupTestData(t, ctx, authRepo, uid)
 
 	t.Run(fmt.Sprintf("Create_and_Get_Comment_%s", dbType), func(t *testing.T) {
-		testCreateAndGetComment(t, app, secret, uid, httpHelper)
+		// Each subtest gets its own unique post to avoid data pollution
+		postID := createTestPost(t, ctx, postRepo, userID)
+		testCreateAndGetComment(t, app, secret, uid, httpHelper, postID)
 	})
 
 	t.Run(fmt.Sprintf("Update_Comment_%s", dbType), func(t *testing.T) {
-		testUpdateComment(t, app, secret, uid, httpHelper)
+		// Each subtest gets its own unique post to avoid data pollution
+		postID := createTestPost(t, ctx, postRepo, userID)
+		testUpdateComment(t, app, secret, uid, httpHelper, postID)
 	})
 
 	t.Run(fmt.Sprintf("Delete_Comment_%s", dbType), func(t *testing.T) {
-		testDeleteComment(t, app, secret, uid, httpHelper)
+		// Each subtest gets its own unique post to avoid data pollution
+		postID := createTestPost(t, ctx, postRepo, userID)
+		testDeleteComment(t, app, secret, uid, httpHelper, postID)
 	})
 
 	t.Run(fmt.Sprintf("Get_Comments_By_Post_%s", dbType), func(t *testing.T) {
-		testGetCommentsByPost(t, app, secret, uid, httpHelper)
+		// Each subtest gets its own unique post to avoid data pollution
+		postID := createTestPost(t, ctx, postRepo, userID)
+		testGetCommentsByPost(t, app, secret, uid, httpHelper, postID)
 	})
 }
 
-func testCreateAndGetComment(t *testing.T, app *fiber.App, secret string, uid string, httpHelper *testutil.HTTPHelper) {
-	postId := uuid.Must(uuid.NewV4()).String()
+// setupTestData creates a test user, returning the user ID
+func setupTestData(t *testing.T, ctx context.Context, authRepo authRepository.AuthRepository, uid string) uuid.UUID {
+	// Create test user with unique username
+	userUUID := uuid.Must(uuid.FromString(uid))
+	hashedPassword := []byte("test_password_hash")
+	now := time.Now()
+
+	// Generate unique username to avoid conflicts
+	uniqueID := uuid.Must(uuid.NewV4()).String()[:8]
+	username := fmt.Sprintf("testuser_%s@example.com", uniqueID)
+
+	userAuth := &authModels.UserAuth{
+		ObjectId:      userUUID,
+		Username:      username,
+		Password:      hashedPassword,
+		Role:          "user",
+		EmailVerified: true,
+		PhoneVerified: false,
+		CreatedDate:   now.Unix(),
+		LastUpdated:   now.Unix(),
+	}
+
+	err := authRepo.CreateUser(ctx, userAuth)
+	require.NoError(t, err, "Failed to create test user")
+
+	return userUUID
+}
+
+// createTestPost creates a unique test post for a user, returning the post ID
+func createTestPost(t *testing.T, ctx context.Context, postRepo postsRepository.PostRepository, userID uuid.UUID) uuid.UUID {
+	now := time.Now()
+	postUUID := uuid.Must(uuid.NewV4())
+	post := &postsModels.Post{
+		ObjectId:         postUUID,
+		OwnerUserId:      userID,
+		PostTypeId:       1,
+		Body:             fmt.Sprintf("Test post %s", postUUID.String()[:8]),
+		Score:            0,
+		ViewCount:        0,
+		CommentCounter:   0,
+		Tags:             pq.StringArray{"test"},
+		OwnerDisplayName: "Test User",
+		OwnerAvatar:      "",
+		Deleted:          false,
+		DeletedDate:      0,
+		CreatedDate:      now.Unix(),
+		LastUpdated:      now.Unix(),
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		Permission:       "Public",
+	}
+
+	err := postRepo.Create(ctx, post)
+	require.NoError(t, err, "Failed to create test post")
+
+	return postUUID
+}
+
+func testCreateAndGetComment(t *testing.T, app *fiber.App, secret string, uid string, httpHelper *testutil.HTTPHelper, postID uuid.UUID) {
+	postId := postID.String()
 
 	// Create comment
 	createReq := createCommentRequest{
@@ -228,7 +295,10 @@ func testCreateAndGetComment(t *testing.T, app *fiber.App, secret string, uid st
 
 	resp := httpHelper.NewRequest(http.MethodPost, "/comments/", createReq).
 		WithHMACAuth(secret, uid).Send()
-	require.Equal(t, http.StatusCreated, resp.StatusCode, "Create comment should return 201 Created")
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Create comment failed: status=%d body=%s", resp.StatusCode, string(body))
+	}
 
 	var createResp struct {
 		ObjectId string `json:"objectId"`
@@ -245,6 +315,7 @@ func testCreateAndGetComment(t *testing.T, app *fiber.App, secret string, uid st
 	// Get the created comment to validate full details
 	resp = httpHelper.NewRequest(http.MethodGet, "/comments/"+createResp.ObjectId, nil).
 		WithHMACAuth(secret, uid).Send()
+
 	require.Equal(t, http.StatusOK, resp.StatusCode, "Get comment should return 200 OK")
 
 	var commentResp commentResponse
@@ -267,8 +338,8 @@ func testCreateAndGetComment(t *testing.T, app *fiber.App, secret string, uid st
 	}
 }
 
-func testUpdateComment(t *testing.T, app *fiber.App, secret string, uid string, httpHelper *testutil.HTTPHelper) {
-	postId := uuid.Must(uuid.NewV4()).String()
+func testUpdateComment(t *testing.T, app *fiber.App, secret string, uid string, httpHelper *testutil.HTTPHelper, postID uuid.UUID) {
+	postId := postID.String()
 
 	// Create comment first
 	createReq := createCommentRequest{
@@ -310,7 +381,8 @@ func testUpdateComment(t *testing.T, app *fiber.App, secret string, uid string, 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("Expected status 200, got %d", resp.StatusCode)
+		errBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected status 200, got %d body=%s", resp.StatusCode, string(errBody))
 	}
 
 	var updateResp commentResponse
@@ -327,8 +399,8 @@ func testUpdateComment(t *testing.T, app *fiber.App, secret string, uid string, 
 	}
 }
 
-func testDeleteComment(t *testing.T, app *fiber.App, secret string, uid string, httpHelper *testutil.HTTPHelper) {
-	postId := uuid.Must(uuid.NewV4()).String()
+func testDeleteComment(t *testing.T, app *fiber.App, secret string, uid string, httpHelper *testutil.HTTPHelper, postID uuid.UUID) {
+	postId := postID.String()
 
 	// Create comment first
 	createReq := createCommentRequest{
@@ -364,7 +436,8 @@ func testDeleteComment(t *testing.T, app *fiber.App, secret string, uid string, 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("Expected status 204, got %d", resp.StatusCode)
+		errBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected status 204, got %d body=%s", resp.StatusCode, string(errBody))
 	}
 
 	// Verify comment is deleted by trying to get it
@@ -383,8 +456,8 @@ func testDeleteComment(t *testing.T, app *fiber.App, secret string, uid string, 
 	}
 }
 
-func testGetCommentsByPost(t *testing.T, app *fiber.App, secret string, uid string, httpHelper *testutil.HTTPHelper) {
-	postId := uuid.Must(uuid.NewV4()).String()
+func testGetCommentsByPost(t *testing.T, app *fiber.App, secret string, uid string, httpHelper *testutil.HTTPHelper, postID uuid.UUID) {
+	postId := postID.String()
 
 	// Create multiple comments for the same post
 	commentTexts := []string{"First comment", "Second comment", "Third comment"}
@@ -407,7 +480,8 @@ func testGetCommentsByPost(t *testing.T, app *fiber.App, secret string, uid stri
 		resp.Body.Close()
 
 		if resp.StatusCode != http.StatusCreated {
-			t.Fatalf("Expected status 201, got %d", resp.StatusCode)
+			errBody, _ := io.ReadAll(resp.Body)
+			t.Fatalf("Expected status 201, got %d body=%s", resp.StatusCode, string(errBody))
 		}
 	}
 
@@ -423,21 +497,22 @@ func testGetCommentsByPost(t *testing.T, app *fiber.App, secret string, uid stri
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("Expected status 200, got %d", resp.StatusCode)
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected status 200, got %d, response body: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	var comments []commentResponse
-	if err := json.NewDecoder(resp.Body).Decode(&comments); err != nil {
+	var response commentModels.CommentsListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		t.Fatalf("Failed to decode get comments response: %v", err)
 	}
 
 	// Validate we got the expected number of comments
-	if len(comments) != len(commentTexts) {
-		t.Errorf("Expected %d comments, got %d", len(commentTexts), len(comments))
+	if len(response.Comments) != len(commentTexts) {
+		t.Errorf("Expected %d comments, got %d", len(commentTexts), len(response.Comments))
 	}
 
 	// Validate each comment belongs to the correct post
-	for _, comment := range comments {
+	for _, comment := range response.Comments {
 		if comment.PostId != postId {
 			t.Errorf("Expected postId %s, got %s", postId, comment.PostId)
 		}

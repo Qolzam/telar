@@ -8,18 +8,13 @@ import (
 	"github.com/gofrs/uuid"
 	"github.com/qolzam/telar/apps/api/auth/errors"
 	"github.com/qolzam/telar/apps/api/auth/models"
+	"github.com/qolzam/telar/apps/api/auth/repository"
 	"github.com/qolzam/telar/apps/api/auth/security"
-	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
-	platform "github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	platformemail "github.com/qolzam/telar/apps/api/internal/platform/email"
 
 	"github.com/qolzam/telar/apps/api/internal/utils"
 	"golang.org/x/crypto/bcrypt"
-)
-
-const (
-	userVerificationCollectionName = "userVerification"
 )
 
 // EmailVerificationRequest represents a request to initiate email verification
@@ -55,10 +50,10 @@ type PhoneVerificationResponse struct {
 	Message        string `json:"message"`
 }
 
-type Service struct{ 
-	base *platform.BaseService
-	config *ServiceConfig
-	emailSender platformemail.Sender // optional; if nil, no email is sent
+type Service struct {
+	verificationRepo repository.VerificationRepository
+	config           *ServiceConfig
+	emailSender      platformemail.Sender // optional; if nil, no email is sent
 }
 
 type ServiceConfig struct {
@@ -67,35 +62,11 @@ type ServiceConfig struct {
 	AppConfig  platformconfig.AppConfig
 }
 
-func NewService(base *platform.BaseService, config *ServiceConfig) *Service { 
-	return &Service{base: base, config: config} 
-}
-
-// signupQueryBuilder is a private helper for building signup service queries
-type signupQueryBuilder struct {
-	query *dbi.Query
-}
-
-func newSignupQueryBuilder() *signupQueryBuilder {
-	return &signupQueryBuilder{
-		query: &dbi.Query{
-			Conditions: []dbi.Field{},
-		},
+func NewService(verificationRepo repository.VerificationRepository, config *ServiceConfig) *Service {
+	return &Service{
+		verificationRepo: verificationRepo,
+		config:           config,
 	}
-}
-
-func (qb *signupQueryBuilder) WhereObjectID(objectID uuid.UUID) *signupQueryBuilder {
-	qb.query.Conditions = append(qb.query.Conditions, dbi.Field{
-		Name:     "object_id", // Indexed column
-		Value:    objectID,
-		Operator: "=",
-		IsJSONB:  false,
-	})
-	return qb
-}
-
-func (qb *signupQueryBuilder) Build() *dbi.Query {
-	return qb.query
 }
 
 // WithEmailSender sets the email sender dependency on the signup service.
@@ -105,17 +76,8 @@ func (s *Service) WithEmailSender(sender platformemail.Sender) *Service {
 }
 
 func (s *Service) SaveUserVerification(ctx context.Context, userVerification *models.UserVerification) error {
-	result := <-s.base.Repository.Save(
-		ctx,
-		userVerificationCollectionName,
-		userVerification.ObjectId,
-		userVerification.UserId, // ownerUserId = UserId for verification
-		userVerification.CreatedDate,
-		userVerification.LastUpdated,
-		userVerification,
-	)
-	if result.Error != nil {
-		return errors.WrapDatabaseError(fmt.Errorf("failed to save user verification: %w", result.Error))
+	if err := s.verificationRepo.SaveVerification(ctx, userVerification); err != nil {
+		return errors.WrapDatabaseError(fmt.Errorf("failed to save user verification: %w", err))
 	}
 	return nil
 }
@@ -158,9 +120,12 @@ func (s *Service) InitiateEmailVerification(ctx context.Context, input EmailVeri
 	expiresAt := time.Now().Add(15 * time.Minute).Unix()
 
 	// Store verification record securely
+	// Note: During signup, user_id is NULL in the database (user doesn't exist yet),
+	// but we store the future user ID in the verification record so CompleteSignup can use it.
+	// The repository will handle setting user_id to NULL in the database.
 	verification := &models.UserVerification{
 		ObjectId:        verifyId,
-		UserId:          input.UserId,
+		UserId:          input.UserId, // Store the future user ID (will be NULL in DB until user is created)
 		Code:            code,
 		Target:          input.EmailTo,
 		TargetType:      "email",
@@ -243,42 +208,33 @@ func (s *Service) InitiateEmailVerification(ctx context.Context, input EmailVeri
 
 // ResendVerificationEmail resends verification email with a new code
 func (s *Service) ResendVerificationEmail(ctx context.Context, verificationId uuid.UUID) error {
-	query := newSignupQueryBuilder().WhereObjectID(verificationId).Build()
-	res := <-s.base.Repository.FindOne(ctx, userVerificationCollectionName, query)
-	
-	if res.Error() != nil {
-		return errors.WrapUserNotFoundError(fmt.Errorf("verification not found"))
+	// Find verification by ID
+	verification, err := s.verificationRepo.FindByID(ctx, verificationId)
+	if err != nil {
+		return errors.WrapUserNotFoundError(fmt.Errorf("verification not found: %w", err))
 	}
-	
-	var verification models.UserVerification
-	if err := res.Decode(&verification); err != nil {
-		return errors.WrapDatabaseError(fmt.Errorf("failed to decode verification: %w", err))
-	}
-	
+
 	if verification.Used || verification.IsVerified {
 		return errors.WrapValidationError(fmt.Errorf("verification already completed"), "verificationId")
 	}
-	
+
 	newCode := utils.GenerateDigits(6)
 	expiresAt := time.Now().Add(15 * time.Minute).Unix()
-	
-	update := map[string]interface{}{
-		"code":        newCode,
-		"expiresAt":   expiresAt,
-		"lastUpdated": time.Now().Unix(),
-	}
-	
-	query = newSignupQueryBuilder().WhereObjectID(verificationId).Build()
-	err := (<-s.base.Repository.Update(ctx, userVerificationCollectionName, query, update, &dbi.UpdateOptions{})).Error
-	
-	if err != nil {
+
+	// Update verification with new code
+	if err := s.verificationRepo.UpdateVerificationCode(ctx, verificationId, newCode, expiresAt); err != nil {
 		return errors.WrapDatabaseError(fmt.Errorf("failed to update verification: %w", err))
 	}
-	
+
 	if s.emailSender != nil {
-		verificationLink := fmt.Sprintf("%s/verify?verificationId=%s&code=%s", 
+		verificationLink := fmt.Sprintf("%s/verify?verificationId=%s&code=%s",
 			s.config.AppConfig.WebDomain, verificationId.String(), newCode)
-		
+
+		fullName := verification.FullName
+		if fullName == "" {
+			fullName = "User" // Fallback if full name is not available
+		}
+
 		body := fmt.Sprintf(`
 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
   <h2 style="color: #1976d2;">Hi %s!</h2>
@@ -296,7 +252,7 @@ func (s *Service) ResendVerificationEmail(ctx context.Context, verificationId uu
   
   <p style="color: #999; font-size: 13px; margin-top: 40px;">This code expires in 15 minutes.</p>
 </div>
-`, verification.FullName, verificationLink, newCode)
+`, fullName, verificationLink, newCode)
 		
 		_ = s.emailSender.Send(ctx, platformemail.Message{
 			From:    "noreply@telar.dev",
@@ -347,9 +303,12 @@ func (s *Service) InitiatePhoneVerification(ctx context.Context, input PhoneVeri
 	expiresAt := time.Now().Add(15 * time.Minute).Unix()
 
 	// Store verification record securely
+	// Note: During signup, user_id is NULL in the database (user doesn't exist yet),
+	// but we store the future user ID in the verification record so CompleteSignup can use it.
+	// The repository will handle setting user_id to NULL in the database.
 	verification := &models.UserVerification{
 		ObjectId:        verifyId,
-		UserId:          input.UserId,
+		UserId:          input.UserId, // Store the future user ID (will be NULL in DB until user is created)
 		Code:            code,
 		Target:          input.PhoneNumber,
 		TargetType:      "phone",
@@ -377,8 +336,8 @@ func (s *Service) InitiatePhoneVerification(ctx context.Context, input PhoneVeri
 		return nil, err
 	}
 
-	// TODO: Implement SMS sending service for phone verification
-	// For now, verification code is stored in database for manual testing
+	// Phone verification code is stored in database for manual testing
+	// SMS sending service implementation pending (see TEL-XXX for feature request)
 
 	// Log successful phone signup initiation for security monitoring
 	security.LogSecurityEvent(security.SecurityEvent{
@@ -402,23 +361,45 @@ func (s *Service) InitiatePhoneVerification(ctx context.Context, input PhoneVeri
 
 
 // UpdateVerification updates a verification record in the database
+// This method is kept for backward compatibility but should be replaced with specific repository methods
 func (s *Service) UpdateVerification(ctx context.Context, filter *models.DatabaseFilter, data *models.DatabaseUpdate) error {
-	// Convert DatabaseFilter to Query object
-	query := newSignupQueryBuilder()
-	if filter != nil && filter.ObjectId != nil {
-		query.WhereObjectID(*filter.ObjectId)
+	if filter == nil || filter.ObjectId == nil {
+		return errors.WrapValidationError(fmt.Errorf("verification ID is required"), "objectId")
 	}
-	queryObj := query.Build()
-	
-	// Convert DatabaseUpdate to map[string]interface{}
-	updates := make(map[string]interface{})
+
+	// Verify verification exists
+	_, err := s.verificationRepo.FindByID(ctx, *filter.ObjectId)
+	if err != nil {
+		return errors.WrapUserNotFoundError(fmt.Errorf("verification not found: %w", err))
+	}
+
+	// Handle updates from DatabaseUpdate
 	if data != nil && data.Set != nil {
-		updates = data.Set
+		// Update code if provided
+		if newCode, ok := data.Set["code"].(string); ok {
+			newExpiresAt := time.Now().Add(15 * time.Minute).Unix()
+			if expiresAt, ok := data.Set["expiresAt"].(int64); ok {
+				newExpiresAt = expiresAt
+			}
+			if err := s.verificationRepo.UpdateVerificationCode(ctx, *filter.ObjectId, newCode, newExpiresAt); err != nil {
+				return errors.WrapDatabaseError(fmt.Errorf("failed to update verification code: %w", err))
+			}
+		}
+
+		// Mark as verified if requested
+		if isVerified, ok := data.Set["isVerified"].(bool); ok && isVerified {
+			if err := s.verificationRepo.MarkVerified(ctx, *filter.ObjectId); err != nil {
+				return errors.WrapDatabaseError(fmt.Errorf("failed to mark verification as verified: %w", err))
+			}
+		}
+
+		// Mark as used if requested
+		if used, ok := data.Set["used"].(bool); ok && used {
+			if err := s.verificationRepo.MarkUsed(ctx, *filter.ObjectId); err != nil {
+				return errors.WrapDatabaseError(fmt.Errorf("failed to mark verification as used: %w", err))
+			}
+		}
 	}
-	
-	result := <-s.base.Repository.Update(ctx, userVerificationCollectionName, queryObj, updates, &dbi.UpdateOptions{})
-	if result.Error != nil {
-		return errors.WrapDatabaseError(fmt.Errorf("failed to update verification: %w", result.Error))
-	}
+
 	return nil
 }

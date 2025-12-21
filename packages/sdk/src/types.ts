@@ -302,6 +302,8 @@ export interface Post {
   commentCounter: number;
   viewCount: number;
   votes: Record<string, string>;
+  voteType: 0 | 1 | 2; // 0=None, 1=Up, 2=Down (New field from Backend)
+  isBookmarked: boolean;
   tags: string[];
   postTypeId: PostType;
   permission: UserPermissionType;
@@ -314,6 +316,14 @@ export interface Post {
   version?: string;
   createdDate: number;
   lastUpdated?: number;
+}
+
+/**
+ * Combined search results for profiles and posts
+ */
+export interface SearchResults {
+  profiles: UserProfileModel[];
+  posts: Post[];
 }
 
 // ============================================================================
@@ -340,6 +350,7 @@ export interface ApiErrorResponse {
   code?: string;
   error?: string;
   message?: string;
+  details?: string | unknown;
   statusCode?: number;
 }
 
@@ -355,7 +366,10 @@ export interface Comment {
   ownerAvatar: string;
   postId: string;
   parentCommentId?: string;
+  replyToUserId?: string; // User being replied to (for "Replying to @User" display)
+  replyToDisplayName?: string; // Display name of user being replied to
   replyCount?: number;
+  isLiked: boolean;
   text: string;
   deleted: boolean;
   deletedDate?: number;
@@ -376,6 +390,20 @@ export interface UpdateCommentRequest {
 
 export interface CommentQueryFilter {
   postId?: string;
+  page?: number;
+  limit?: number;
+  cursor?: string; // Cursor for cursor-based pagination
+}
+
+/**
+ * Comments list response with cursor pagination
+ */
+export interface CommentsListResponse {
+  comments: Comment[];
+  nextCursor?: string;
+  hasNext?: boolean;
+  // Legacy pagination (deprecated but maintained for backward compatibility)
+  count?: number;
   page?: number;
   limit?: number;
 }
@@ -429,6 +457,7 @@ export interface CreatePostRequest {
   postTypeId: number;
   body: string;
   permission?: string;
+  imageFullPath?: string;
 }
 
 /**
@@ -440,11 +469,35 @@ export interface CreatePostResponse {
 }
 
 /**
+ * Update post request payload
+ * @see Go: apps/api/posts/models/post.go - UpdatePostRequest
+ */
+export interface UpdatePostRequest {
+  objectId: string;
+  body?: string;
+  image?: string;
+  imageFullPath?: string;
+  video?: string;
+  thumbnail?: string;
+  tags?: string[];
+  album?: PostAlbum;
+  disableComments?: boolean;
+  disableSharing?: boolean;
+  accessUserList?: string[];
+  permission?: string;
+  version?: string;
+}
+
+/**
  * Cursor query parameters for pagination
  */
 export interface CursorQueryParams {
   limit?: number;
   cursor?: string;
+  /**
+   * Filter posts by owner user ID (UUID string)
+   */
+  owner?: string;
 }
 
 /**

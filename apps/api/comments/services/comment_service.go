@@ -4,26 +4,25 @@ import (
     "context"
     "errors"
     "fmt"
+    "strings"
     "time"
 
-    uuid "github.com/gofrs/uuid"
+    "github.com/gofrs/uuid"
 
     "github.com/qolzam/telar/apps/api/comments/common"
     commentsErrors "github.com/qolzam/telar/apps/api/comments/errors"
     "github.com/qolzam/telar/apps/api/comments/models"
+    commentRepository "github.com/qolzam/telar/apps/api/comments/repository"
     "github.com/qolzam/telar/apps/api/internal/cache"
-    dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
-    "github.com/qolzam/telar/apps/api/internal/platform"
-    platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
     "github.com/qolzam/telar/apps/api/internal/pkg/log"
+    platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
     "github.com/qolzam/telar/apps/api/internal/types"
     "github.com/qolzam/telar/apps/api/internal/utils"
+    postsRepository "github.com/qolzam/telar/apps/api/posts/repository"
     sharedInterfaces "github.com/qolzam/telar/apps/api/shared/interfaces"
 )
 
 const (
-    commentCollectionName = "comment"
-
     defaultCommentLimit = 10
     maxCommentLimit     = 100
     defaultCommentPage  = 1
@@ -31,7 +30,8 @@ const (
 
 // commentService implements the CommentService interface using the new repository patterns.
 type commentService struct {
-    base             *platform.BaseService
+    commentRepo      commentRepository.CommentRepository
+    postRepo         postsRepository.PostRepository
     cacheService     *cache.GenericCacheService
     config           *platformconfig.Config
     postStatsUpdater sharedInterfaces.PostStatsUpdater
@@ -40,126 +40,20 @@ type commentService struct {
 // Ensure commentService implements sharedInterfaces.CommentCounter interface
 var _ sharedInterfaces.CommentCounter = (*commentService)(nil)
 
-// commentQueryBuilder provides fluent helpers for building comment queries.
-type commentQueryBuilder struct {
-    query *dbi.Query
-}
-
-func newCommentQueryBuilder() *commentQueryBuilder {
-    return &commentQueryBuilder{
-        query: &dbi.Query{
-            Conditions: []dbi.Field{},
-            OrGroups:   [][]dbi.Field{},
-        },
-    }
-}
-
-func (b *commentQueryBuilder) WhereObjectID(objectID uuid.UUID) *commentQueryBuilder {
-    b.query.Conditions = append(b.query.Conditions, dbi.Field{
-        Name:     "object_id",
-        Value:    objectID,
-        Operator: "=",
-    })
-    return b
-}
-
-func (b *commentQueryBuilder) WhereOwner(userID uuid.UUID) *commentQueryBuilder {
-    b.query.Conditions = append(b.query.Conditions, dbi.Field{
-        Name:     "owner_user_id",
-        Value:    userID,
-        Operator: "=",
-    })
-    return b
-}
-
-func (b *commentQueryBuilder) WherePostID(postID uuid.UUID) *commentQueryBuilder {
-    b.query.Conditions = append(b.query.Conditions, dbi.Field{
-        Name:      "data->>'postId'",
-        Value:     postID.String(),
-        Operator:  "=",
-        IsJSONB:   true,
-        JSONBCast: "::uuid",
-    })
-    return b
-}
-
-func (b *commentQueryBuilder) WhereDeleted(deleted bool) *commentQueryBuilder {
-    b.query.Conditions = append(b.query.Conditions, dbi.Field{
-        Name:      "data->>'deleted'",
-        Value:     deleted,
-        Operator:  "=",
-        IsJSONB:   true,
-        JSONBCast: "::boolean",
-    })
-    return b
-}
-
-func (b *commentQueryBuilder) WhereNotDeleted() *commentQueryBuilder {
-    return b.WhereDeleted(false)
-}
-
-func (b *commentQueryBuilder) WhereCreatedAfter(t time.Time) *commentQueryBuilder {
-    b.query.Conditions = append(b.query.Conditions, dbi.Field{
-        Name:     "created_date",
-        Value:    t.Unix(),
-        Operator: ">=",
-    })
-    return b
-}
-
-func (b *commentQueryBuilder) WhereCreatedBefore(t time.Time) *commentQueryBuilder {
-    b.query.Conditions = append(b.query.Conditions, dbi.Field{
-        Name:     "created_date",
-        Value:    t.Unix(),
-        Operator: "<=",
-    })
-    return b
-}
-
-// WhereParentEquals filters comments by a specific parentCommentId
-func (b *commentQueryBuilder) WhereParentEquals(parentID uuid.UUID) *commentQueryBuilder {
-    b.query.Conditions = append(b.query.Conditions, dbi.Field{
-        Name:      "data->>'parentCommentId'",
-        Value:     parentID.String(),
-        Operator:  "=",
-        IsJSONB:   true,
-        JSONBCast: "::uuid",
-    })
-    return b
-}
-
-// WhereParentIsNull filters to only root comments (no parent)
-func (b *commentQueryBuilder) WhereParentIsNull() *commentQueryBuilder {
-    b.query.Conditions = append(b.query.Conditions, dbi.Field{
-        Name:      "data->>'parentCommentId'",
-        Operator:  "IS NULL",
-        IsJSONB:   true,
-        JSONBCast: "",
-    })
-    return b
-}
-
-func (b *commentQueryBuilder) Build() *dbi.Query {
-    return b.query
-}
+// Legacy query builder removed - all queries now use CommentRepository
 
 // GetRootCommentCount counts root comments (non-reply comments) for a post
 // This is a public method that implements the CommentCounter interface
 func (s *commentService) GetRootCommentCount(ctx context.Context, postID uuid.UUID) (int64, error) {
-    query := newCommentQueryBuilder().
-        WherePostID(postID).
-        WhereParentIsNull().
-        WhereNotDeleted().
-        Build()
-
-    return s.getCommentCount(ctx, query)
+    return s.commentRepo.CountByPostID(ctx, postID)
 }
 
 // NewCommentService wires the comment service with its dependencies.
-func NewCommentService(base *platform.BaseService, cfg *platformconfig.Config, postStatsUpdater sharedInterfaces.PostStatsUpdater) CommentService {
+func NewCommentService(commentRepo commentRepository.CommentRepository, postRepo postsRepository.PostRepository, cfg *platformconfig.Config, postStatsUpdater sharedInterfaces.PostStatsUpdater) CommentService {
     cacheService := cache.NewGenericCacheServiceFor("comments")
     return &commentService{
-        base:             base,
+        commentRepo:      commentRepo,
+        postRepo:         postRepo,
         cacheService:     cacheService,
         config:           cfg,
         postStatsUpdater: postStatsUpdater,
@@ -208,7 +102,9 @@ func (s *commentService) invalidateUserComments(ctx context.Context, userID uuid
         return
     }
     pattern := "cursor:comments:*:owner:" + userID.String() + "*"
-    s.cacheService.InvalidatePattern(ctx, pattern)
+    if err := s.cacheService.InvalidatePattern(ctx, pattern); err != nil {
+        log.Warn("Cache invalidation failed for user comments: %v", err)
+    }
 }
 
 func (s *commentService) invalidatePostComments(ctx context.Context, postID uuid.UUID) {
@@ -216,17 +112,22 @@ func (s *commentService) invalidatePostComments(ctx context.Context, postID uuid
         return
     }
     pattern := "cursor:comments:" + postID.String() + "*"
-    s.cacheService.InvalidatePattern(ctx, pattern)
+    if err := s.cacheService.InvalidatePattern(ctx, pattern); err != nil {
+        log.Warn("Cache invalidation failed for post comments: %v", err)
+    }
 }
 
 func (s *commentService) invalidateAllComments(ctx context.Context) {
     if s.cacheService == nil {
         return
     }
-    s.cacheService.InvalidatePattern(ctx, "cursor:comments:*")
+    if err := s.cacheService.InvalidatePattern(ctx, "cursor:comments:*"); err != nil {
+        log.Warn("Cache invalidation failed for all comments: %v", err)
+    }
 }
 
 // CreateComment creates a new comment entity.
+// Uses transaction to atomically create comment and increment post comment_count.
 func (s *commentService) CreateComment(ctx context.Context, req *models.CreateCommentRequest, user *types.UserContext) (*models.Comment, error) {
     if req == nil {
         return nil, fmt.Errorf("create comment request is required")
@@ -235,12 +136,54 @@ func (s *commentService) CreateComment(ctx context.Context, req *models.CreateCo
         return nil, fmt.Errorf("user context is required")
     }
 
+
     commentID, err := uuid.NewV4()
     if err != nil {
         return nil, fmt.Errorf("failed to generate comment ID: %w", err)
     }
 
     now := utils.UTCNowUnix()
+    
+    // Two-Tier Architecture: Flatten nested replies to always point to root
+    var rootParentID *uuid.UUID
+    var replyToUserID *uuid.UUID
+    var replyToDisplayName *string
+    
+    if req.ParentCommentId != nil && *req.ParentCommentId != uuid.Nil {
+        // Fetch the target comment the user clicked "Reply" on
+        targetComment, err := s.commentRepo.FindByID(ctx, *req.ParentCommentId)
+        if err != nil {
+            if err.Error() == "comment not found" {
+                return nil, commentsErrors.ErrCommentNotFound
+            }
+            return nil, fmt.Errorf("failed to find parent comment: %w", err)
+        }
+        
+        if targetComment.Deleted {
+            return nil, commentsErrors.ErrCommentNotFound
+        }
+        
+        // Verify the target comment belongs to the same post
+        if targetComment.PostId != req.PostId {
+            return nil, fmt.Errorf("parent comment does not belong to the specified post")
+        }
+        
+        if targetComment.ParentCommentId == nil {
+            // Case A: Replying to a Root Comment
+            // The Root becomes the parent. Track who we're replying to.
+            rootParentID = &targetComment.ObjectId
+            replyToUserID = &targetComment.OwnerUserId
+            replyToDisplayName = &targetComment.OwnerDisplayName
+        } else {
+            // Case B: Replying to a Reply (Nested)
+            // FLATTEN IT: The parent's parent is the Root.
+            rootParentID = targetComment.ParentCommentId
+            // We explicitly track who we are replying to for the UI.
+            replyToUserID = &targetComment.OwnerUserId
+            replyToDisplayName = &targetComment.OwnerDisplayName
+        }
+    }
+    
     comment := &models.Comment{
         ObjectId:         commentID,
         Score:            0,
@@ -248,7 +191,9 @@ func (s *commentService) CreateComment(ctx context.Context, req *models.CreateCo
         OwnerDisplayName: user.DisplayName,
         OwnerAvatar:      user.Avatar,
         PostId:           req.PostId,
-		ParentCommentId:  req.ParentCommentId,
+        ParentCommentId:  rootParentID,  // ALWAYS points to Root (or nil)
+        ReplyToUserId:    replyToUserID, // Points to specific user being addressed
+        ReplyToDisplayName: replyToDisplayName, // Display name of user being replied to
         Text:             req.Text,
         Deleted:          false,
         DeletedDate:      0,
@@ -256,18 +201,50 @@ func (s *commentService) CreateComment(ctx context.Context, req *models.CreateCo
         LastUpdated:      now,
     }
 
-    result := <-s.base.Repository.Save(ctx, commentCollectionName, comment.ObjectId, comment.OwnerUserId, comment.CreatedDate, comment.LastUpdated, comment)
-    if err := result.Error; err != nil {
-        return nil, fmt.Errorf("failed to save comment: %w", err)
-    }
+    // Determine if this is a root comment (affects comment_count update)
+    isRootComment := rootParentID == nil
 
-    // Update post.commentCounter only for root comments (not replies)
-    // This maintains the denormalized count for performance without fetching all comments
-    if req.ParentCommentId == nil || *req.ParentCommentId == uuid.Nil {
-        if err := s.updatePostCommentCounter(ctx, req.PostId, 1); err != nil {
-            log.Warn("Failed to update post commentCounter for post %s: %v", req.PostId.String(), err)
-        } else {
-            log.Info("Successfully incremented commentCounter for post %s (delta: +1)", req.PostId.String())
+    // Use transaction for atomic comment creation + count increment
+    if isRootComment {
+        // Use PostRepository's WithTransaction to ensure atomicity
+        err = s.postRepo.WithTransaction(ctx, func(txCtx context.Context) error {
+            // Create comment within transaction
+            if err := s.commentRepo.Create(txCtx, comment); err != nil {
+                // Check for foreign key violations (user or post not found)
+                if strings.Contains(err.Error(), "user does not exist") {
+                    return commentsErrors.ErrUserNotFound
+                }
+                if strings.Contains(err.Error(), "post does not exist") {
+                    return commentsErrors.ErrPostNotFound
+                }
+                return fmt.Errorf("failed to create comment: %w", err)
+            }
+
+            // Increment post comment_count within same transaction
+            if err := s.postRepo.IncrementCommentCount(txCtx, req.PostId, 1); err != nil {
+                return fmt.Errorf("failed to increment comment count: %w", err)
+            }
+
+            return nil
+        })
+        if err != nil {
+            // Check if the error is already a domain error (ErrUserNotFound, ErrPostNotFound)
+            if errors.Is(err, commentsErrors.ErrUserNotFound) || errors.Is(err, commentsErrors.ErrPostNotFound) {
+                return nil, err
+            }
+            return nil, fmt.Errorf("failed to create comment atomically: %w", err)
+        }
+    } else {
+        // For replies, no count update needed - just create the comment
+        if err := s.commentRepo.Create(ctx, comment); err != nil {
+            // Check for foreign key violations (user or post not found)
+            if strings.Contains(err.Error(), "user does not exist") {
+                return nil, commentsErrors.ErrUserNotFound
+            }
+            if strings.Contains(err.Error(), "post does not exist") {
+                return nil, commentsErrors.ErrPostNotFound
+            }
+            return nil, fmt.Errorf("failed to create comment: %w", err)
         }
     }
 
@@ -278,45 +255,41 @@ func (s *commentService) CreateComment(ctx context.Context, req *models.CreateCo
     return comment, nil
 }
 
-// CreateIndex proxies to the repository index creation.
+// CreateIndex is a no-op for relational schema (indexes are defined in migration)
 func (s *commentService) CreateIndex(ctx context.Context, indexes map[string]interface{}) error {
-    return <-s.base.Repository.CreateIndex(ctx, commentCollectionName, indexes)
+    return nil
 }
 
-// CreateIndexes creates default indexes for the comments collection.
+// CreateIndexes is a no-op for relational schema (indexes are defined in migration)
 func (s *commentService) CreateIndexes(ctx context.Context) error {
-    indexes := map[string]interface{}{
-        "objectId":    1,
-        "ownerUserId": 1,
-    }
-    return s.CreateIndex(ctx, indexes)
+    return nil
 }
 
 // GetComment returns a single non-deleted comment by ID.
 func (s *commentService) GetComment(ctx context.Context, commentID uuid.UUID) (*models.Comment, error) {
-    query := newCommentQueryBuilder().
-        WhereObjectID(commentID).
-        WhereNotDeleted().
-        Build()
-
-    single := <-s.base.Repository.FindOne(ctx, commentCollectionName, query)
-    var comment models.Comment
-    if err := single.Decode(&comment); err != nil {
-        if errors.Is(err, dbi.ErrNoDocuments) {
+    comment, err := s.commentRepo.FindByID(ctx, commentID)
+    if err != nil {
+        if err.Error() == "comment not found" {
             return nil, commentsErrors.ErrCommentNotFound
         }
-        return nil, fmt.Errorf("failed to decode comment: %w", err)
+        return nil, fmt.Errorf("failed to find comment: %w", err)
     }
 
-    return &comment, nil
+    // Filter out deleted comments (cascade soft-delete is handled at write-time)
+    if comment.Deleted {
+        return nil, commentsErrors.ErrCommentNotFound
+    }
+
+    return comment, nil
 }
 
-// GetCommentsByPost lists comments for a specific post.
+// GetCommentsByPost lists root comments for a specific post.
 func (s *commentService) GetCommentsByPost(ctx context.Context, postID uuid.UUID, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error) {
     if filter == nil {
         filter = &models.CommentQueryFilter{}
     }
     filter.PostId = &postID
+    filter.RootOnly = true // Only return root comments
     return s.QueryComments(ctx, filter)
 }
 
@@ -342,41 +315,47 @@ func (s *commentService) QueryComments(ctx context.Context, filter *models.Comme
         return cached, nil
     }
 
-    qb := newCommentQueryBuilder()
-    applyFilterToBuilder(qb, filter)
-    query := qb.Build()
-
-    limit := int64(filter.Limit)
-    skip := int64((filter.Page - 1) * filter.Limit)
-    findOptions := &dbi.FindOptions{
-        Limit: &limit,
-        Skip:  &skip,
-        Sort:  map[string]int{"created_date": -1},
+    // Convert CommentQueryFilter to CommentFilter
+    repoFilter := commentRepository.CommentFilter{
+        PostID:         filter.PostId,
+        OwnerUserID:    filter.OwnerUserId,
+        ParentCommentID: filter.ParentCommentId,
+        RootOnly:       filter.RootOnly,
+        IncludeDeleted: filter.IncludeDeleted,
+    }
+    if filter.Deleted != nil {
+        deleted := *filter.Deleted
+        repoFilter.Deleted = &deleted
+    }
+    if filter.CreatedAfter != nil {
+        createdAfter := filter.CreatedAfter.Unix()
+        repoFilter.CreatedAfter = &createdAfter
+    }
+    if filter.CreatedBefore != nil {
+        createdBefore := filter.CreatedBefore.Unix()
+        repoFilter.CreatedBefore = &createdBefore
     }
 
-    cursor := <-s.base.Repository.Find(ctx, commentCollectionName, query, findOptions)
-    if err := cursor.Error(); err != nil {
+    limit := filter.Limit
+    offset := (filter.Page - 1) * filter.Limit
+
+    // Query comments using repository
+    comments, err := s.commentRepo.Find(ctx, repoFilter, limit, offset)
+    if err != nil {
         return nil, fmt.Errorf("failed to query comments: %w", err)
     }
-    defer cursor.Close()
 
-    var comments []models.Comment
-    for cursor.Next() {
-        var comment models.Comment
-        if err := cursor.Decode(&comment); err != nil {
-            return nil, fmt.Errorf("failed to decode comment: %w", err)
-        }
-        comments = append(comments, comment)
-    }
-
-    totalCount, err := s.getCommentCount(ctx, query)
+    // Count total matching comments
+    totalCount, err := s.commentRepo.Count(ctx, repoFilter)
     if err != nil {
         return nil, fmt.Errorf("failed to count comments: %w", err)
     }
 
+    // Convert to response format
+    // Note: IsLiked will be set to false by default, caller should bulk-load votes if needed
     responses := make([]models.CommentResponse, len(comments))
     for i, comment := range comments {
-        responses[i] = s.convertToCommentResponse(&comment)
+        responses[i] = s.convertToCommentResponse(comment, false)
     }
 
     result := &models.CommentsListResponse{
@@ -384,75 +363,134 @@ func (s *commentService) QueryComments(ctx context.Context, filter *models.Comme
         Count:    int(totalCount),
         Page:     filter.Page,
         Limit:    filter.Limit,
-        HasMore:  int64(filter.Page*filter.Limit) < totalCount,
     }
 
     s.cacheComments(ctx, cacheKey, result)
     return result, nil
 }
 
-// QueryCommentsWithCursor currently reuses offset pagination.
+// QueryCommentsWithCursor retrieves comments with cursor-based pagination
 func (s *commentService) QueryCommentsWithCursor(ctx context.Context, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error) {
-    return s.QueryComments(ctx, filter)
+    if filter == nil {
+        return nil, fmt.Errorf("filter is required")
+    }
+
+    // Default limit
+    limit := filter.Limit
+    if limit <= 0 {
+        limit = defaultCommentLimit
+    } else if limit > maxCommentLimit {
+        limit = maxCommentLimit
+    }
+
+    // Use cursor pagination for post comments (most common use case)
+    if filter.PostId == nil {
+        // Fall back to offset pagination if no post filter
+        return s.QueryComments(ctx, filter)
+    }
+
+    // Use cursor pagination for post comments
+    cursor := filter.Cursor
+
+    comments, nextCursor, err := s.commentRepo.FindByPostIDWithCursor(ctx, *filter.PostId, cursor, limit)
+    if err != nil {
+        return nil, fmt.Errorf("failed to query comments with cursor: %w", err)
+    }
+
+    // Convert to response format
+    // Note: IsLiked will be set to false by default, caller should bulk-load votes if needed
+    responses := make([]models.CommentResponse, len(comments))
+    for i, comment := range comments {
+        responses[i] = s.convertToCommentResponse(comment, false)
+    }
+
+    result := &models.CommentsListResponse{
+        Comments:   responses,
+        NextCursor: nextCursor,
+        HasNext:    nextCursor != "",
+        Limit:      limit,
+    }
+
+    return result, nil
+}
+
+// QueryRepliesWithCursor retrieves replies to a specific comment with cursor-based pagination
+func (s *commentService) QueryRepliesWithCursor(ctx context.Context, parentID uuid.UUID, cursor string, limit int) (*models.CommentsListResponse, error) {
+    // Default limit
+    if limit <= 0 {
+        limit = defaultCommentLimit
+    } else if limit > maxCommentLimit {
+        limit = maxCommentLimit
+    }
+
+    // Use cursor pagination for replies
+    replies, nextCursor, err := s.commentRepo.FindRepliesWithCursor(ctx, parentID, cursor, limit)
+    if err != nil {
+        return nil, fmt.Errorf("failed to query replies with cursor: %w", err)
+    }
+
+    // Convert to response format
+    // Note: IsLiked will be set to false by default, caller should bulk-load votes if needed
+    responses := make([]models.CommentResponse, len(replies))
+    for i, reply := range replies {
+        responses[i] = s.convertToCommentResponse(reply, false)
+    }
+
+    result := &models.CommentsListResponse{
+        Comments:   responses,
+        NextCursor: nextCursor,
+        HasNext:    nextCursor != "",
+        Limit:      limit,
+    }
+
+    return result, nil
 }
 
 // UpdateComment updates a comment's text for the owning user.
-func (s *commentService) UpdateComment(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) error {
+// Returns the updated comment to avoid Read-After-Write anti-pattern.
+func (s *commentService) UpdateComment(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) (*models.Comment, error) {
     if req == nil {
-        return fmt.Errorf("update comment request is required")
+        return nil, fmt.Errorf("update comment request is required")
     }
     if user == nil {
-        return fmt.Errorf("user context is required")
+        return nil, fmt.Errorf("user context is required")
     }
 
-    comment, err := s.fetchOwnedComment(ctx, commentID, user.UserID)
+    // Fetch comment and verify ownership
+    comment, err := s.commentRepo.FindByID(ctx, commentID)
     if err != nil {
-        return err
+        if err.Error() == "comment not found" {
+            return nil, commentsErrors.ErrCommentNotFound
+        }
+        return nil, fmt.Errorf("failed to find comment: %w", err)
     }
 
-    updates := map[string]interface{}{
-        "text":        req.Text,
-        "lastUpdated": utils.UTCNowUnix(),
+    if comment.Deleted {
+        return nil, commentsErrors.ErrCommentNotFound
     }
 
-    query := newCommentQueryBuilder().
-        WhereObjectID(commentID).
-        WhereOwner(user.UserID).
-        WhereNotDeleted().
-        Build()
+    if comment.OwnerUserId != user.UserID {
+        return nil, commentsErrors.ErrCommentOwnershipRequired
+    }
 
-    result := <-s.base.Repository.UpdateFields(ctx, commentCollectionName, query, updates)
-    if err := result.Error; err != nil {
-        return fmt.Errorf("failed to update comment: %w", err)
+    // Update comment
+    comment.Text = req.Text
+    comment.LastUpdated = utils.UTCNowUnix()
+
+    if err := s.commentRepo.Update(ctx, comment); err != nil {
+        return nil, fmt.Errorf("failed to update comment: %w", err)
     }
 
     s.invalidateUserComments(ctx, user.UserID)
     s.invalidatePostComments(ctx, comment.PostId)
     s.invalidateAllComments(ctx)
-    return nil
+    
+    return comment, nil
 }
 
 // UpdateCommentProfile updates profile information for all comments created by a user.
 func (s *commentService) UpdateCommentProfile(ctx context.Context, userID uuid.UUID, displayName, avatar string) error {
-    updates := map[string]interface{}{}
-    if displayName != "" {
-        updates["ownerDisplayName"] = displayName
-    }
-    if avatar != "" {
-        updates["ownerAvatar"] = avatar
-    }
-    if len(updates) == 0 {
-        return nil
-    }
-    updates["lastUpdated"] = utils.UTCNowUnix()
-
-    query := newCommentQueryBuilder().
-        WhereOwner(userID).
-        WhereNotDeleted().
-        Build()
-
-    result := <-s.base.Repository.UpdateFields(ctx, commentCollectionName, query, updates)
-    if err := result.Error; err != nil {
+    if err := s.commentRepo.UpdateOwnerProfile(ctx, userID, displayName, avatar); err != nil {
         return fmt.Errorf("failed to update comment profile: %w", err)
     }
 
@@ -467,45 +505,73 @@ func (s *commentService) IncrementScore(ctx context.Context, commentID uuid.UUID
         return fmt.Errorf("user context is required")
     }
 
-    increments := map[string]interface{}{"score": delta}
-    return s.IncrementFields(ctx, commentID, increments)
+    // Use repository's atomic increment
+    if err := s.commentRepo.IncrementScore(ctx, commentID, delta); err != nil {
+        return fmt.Errorf("failed to increment score: %w", err)
+    }
+
+    s.invalidateAllComments(ctx)
+    return nil
 }
 
-// DeleteComment removes a comment permanently.
+// DeleteComment removes a comment permanently (soft delete).
+// Uses transaction to atomically delete comment and decrement post comment_count.
 func (s *commentService) DeleteComment(ctx context.Context, commentID uuid.UUID, postID uuid.UUID, user *types.UserContext) error {
     if user == nil {
         return fmt.Errorf("user context is required")
     }
 
-    comment, err := s.fetchOwnedComment(ctx, commentID, user.UserID)
+    // Fetch comment and verify ownership
+    comment, err := s.commentRepo.FindByID(ctx, commentID)
     if err != nil {
-        return err
+        if err.Error() == "comment not found" {
+            return commentsErrors.ErrCommentNotFound
+        }
+        return fmt.Errorf("failed to find comment: %w", err)
+    }
+
+    if comment.Deleted {
+        return commentsErrors.ErrCommentNotFound
+    }
+
+    if comment.OwnerUserId != user.UserID {
+        return commentsErrors.ErrCommentOwnershipRequired
     }
 
     if postID != uuid.Nil && comment.PostId != postID {
         return fmt.Errorf("comment does not belong to the provided post")
     }
 
-    // Check if this is a root comment before deletion (for commentCounter update)
+    // Check if this is a root comment (affects comment_count update)
     isRootComment := comment.ParentCommentId == nil || *comment.ParentCommentId == uuid.Nil
 
-    query := newCommentQueryBuilder().
-        WhereObjectID(commentID).
-        WhereOwner(user.UserID).
-        Build()
-
-    result := <-s.base.Repository.Delete(ctx, commentCollectionName, query)
-    if err := result.Error; err != nil {
-        return fmt.Errorf("failed to delete comment: %w", err)
-    }
-
-    // Update post.commentCounter only for root comments (not replies)
-    // This maintains the denormalized count for performance
+    // Use transaction for atomic comment deletion + count decrement
     if isRootComment {
-        if err := s.updatePostCommentCounter(ctx, comment.PostId, -1); err != nil {
-            log.Warn("Failed to update post commentCounter for post %s: %v", comment.PostId.String(), err)
-        } else {
-            log.Info("Successfully decremented commentCounter for post %s (delta: -1)", comment.PostId.String())
+        // Use PostRepository's WithTransaction to ensure atomicity
+        err = s.postRepo.WithTransaction(ctx, func(txCtx context.Context) error {
+            // Soft delete comment within transaction
+            if err := s.commentRepo.Delete(txCtx, commentID); err != nil {
+                return fmt.Errorf("failed to delete comment: %w", err)
+            }
+
+            if err := s.commentRepo.DeleteRepliesByParentID(txCtx, commentID); err != nil {
+                return fmt.Errorf("failed to cascade delete replies: %w", err)
+            }
+
+            // Decrement post comment_count within same transaction
+            if err := s.postRepo.IncrementCommentCount(txCtx, comment.PostId, -1); err != nil {
+                return fmt.Errorf("failed to decrement comment count: %w", err)
+            }
+
+            return nil
+        })
+        if err != nil {
+            return fmt.Errorf("failed to delete comment atomically: %w", err)
+        }
+    } else {
+        // For replies, no count update needed - just delete the comment
+        if err := s.commentRepo.Delete(ctx, commentID); err != nil {
+            return fmt.Errorf("failed to delete comment: %w", err)
         }
     }
 
@@ -515,19 +581,41 @@ func (s *commentService) DeleteComment(ctx context.Context, commentID uuid.UUID,
     return nil
 }
 
-// DeleteCommentsByPost removes all comments for a given post.
+// DeleteCommentsByPost removes all comments for a given post (soft delete).
 func (s *commentService) DeleteCommentsByPost(ctx context.Context, postID uuid.UUID, user *types.UserContext) error {
     if user == nil {
         return fmt.Errorf("user context is required")
     }
 
-    query := newCommentQueryBuilder().
-        WherePostID(postID).
-        Build()
+    // Get count of root comments before deletion (for count update)
+    rootCount, err := s.commentRepo.CountByPostID(ctx, postID)
+    if err != nil {
+        return fmt.Errorf("failed to count root comments: %w", err)
+    }
 
-    result := <-s.base.Repository.Delete(ctx, commentCollectionName, query)
-    if err := result.Error; err != nil {
-        return fmt.Errorf("failed to delete comments by post: %w", err)
+    // Use transaction for atomic batch delete + count update
+    if rootCount > 0 {
+        err = s.postRepo.WithTransaction(ctx, func(txCtx context.Context) error {
+            // Soft delete all comments for the post
+            if err := s.commentRepo.DeleteByPostID(txCtx, postID); err != nil {
+                return fmt.Errorf("failed to delete comments by post: %w", err)
+            }
+
+            // Decrement post comment_count by the number of root comments
+            if err := s.postRepo.IncrementCommentCount(txCtx, postID, -int(rootCount)); err != nil {
+                return fmt.Errorf("failed to decrement comment count: %w", err)
+            }
+
+            return nil
+        })
+        if err != nil {
+            return fmt.Errorf("failed to delete comments atomically: %w", err)
+        }
+    } else {
+        // No root comments, just delete
+        if err := s.commentRepo.DeleteByPostID(ctx, postID); err != nil {
+            return fmt.Errorf("failed to delete comments by post: %w", err)
+        }
     }
 
     s.invalidatePostComments(ctx, postID)
@@ -536,37 +624,10 @@ func (s *commentService) DeleteCommentsByPost(ctx context.Context, postID uuid.U
 }
 
 // SoftDeleteComment marks a comment as deleted without removing it permanently.
+// This is the same as DeleteComment (both use soft delete).
 func (s *commentService) SoftDeleteComment(ctx context.Context, commentID uuid.UUID, user *types.UserContext) error {
-    if user == nil {
-        return fmt.Errorf("user context is required")
-    }
-
-    comment, err := s.fetchOwnedComment(ctx, commentID, user.UserID)
-    if err != nil {
-        return err
-    }
-
-    updates := map[string]interface{}{
-        "deleted":     true,
-        "deletedDate": utils.UTCNowUnix(),
-        "lastUpdated": utils.UTCNowUnix(),
-    }
-
-    query := newCommentQueryBuilder().
-        WhereObjectID(commentID).
-        WhereOwner(user.UserID).
-        WhereNotDeleted().
-        Build()
-
-    result := <-s.base.Repository.UpdateFields(ctx, commentCollectionName, query, updates)
-    if err := result.Error; err != nil {
-        return fmt.Errorf("failed to soft delete comment: %w", err)
-    }
-
-    s.invalidateUserComments(ctx, user.UserID)
-    s.invalidatePostComments(ctx, comment.PostId)
-    s.invalidateAllComments(ctx)
-    return nil
+    // SoftDeleteComment is the same as DeleteComment (both are soft deletes)
+    return s.DeleteComment(ctx, commentID, uuid.Nil, user)
 }
 
 // DeleteByOwner removes a comment when ownership is known (admin utility).
@@ -576,14 +637,33 @@ func (s *commentService) DeleteByOwner(ctx context.Context, owner uuid.UUID, obj
         return err
     }
 
-    query := newCommentQueryBuilder().
-        WhereObjectID(objectID).
-        WhereOwner(owner).
-        Build()
+    // Check if this is a root comment (affects comment_count update)
+    isRootComment := comment.ParentCommentId == nil || *comment.ParentCommentId == uuid.Nil
 
-    result := <-s.base.Repository.Delete(ctx, commentCollectionName, query)
-    if err := result.Error; err != nil {
-        return fmt.Errorf("failed to delete comment by owner: %w", err)
+    // Use transaction for atomic deletion + count decrement
+    if isRootComment {
+        err = s.postRepo.WithTransaction(ctx, func(txCtx context.Context) error {
+            if err := s.commentRepo.Delete(txCtx, objectID); err != nil {
+                return fmt.Errorf("failed to delete comment: %w", err)
+            }
+
+            // Cascade: Soft delete all replies to this root comment
+            if err := s.commentRepo.DeleteRepliesByParentID(txCtx, objectID); err != nil {
+                return fmt.Errorf("failed to cascade delete replies: %w", err)
+            }
+
+            if err := s.postRepo.IncrementCommentCount(txCtx, comment.PostId, -1); err != nil {
+                return fmt.Errorf("failed to decrement comment count: %w", err)
+            }
+            return nil
+        })
+        if err != nil {
+            return fmt.Errorf("failed to delete comment atomically: %w", err)
+        }
+    } else {
+        if err := s.commentRepo.Delete(ctx, objectID); err != nil {
+            return fmt.Errorf("failed to delete comment: %w", err)
+        }
     }
 
     s.invalidateUserComments(ctx, owner)
@@ -598,7 +678,7 @@ func (s *commentService) ValidateCommentOwnership(ctx context.Context, commentID
     return err
 }
 
-func (s *commentService) convertToCommentResponse(comment *models.Comment) models.CommentResponse {
+func (s *commentService) convertToCommentResponse(comment *models.Comment, isLiked bool) models.CommentResponse {
     return models.CommentResponse{
         ObjectId:         comment.ObjectId.String(),
         Score:            comment.Score,
@@ -606,162 +686,37 @@ func (s *commentService) convertToCommentResponse(comment *models.Comment) model
         OwnerDisplayName: comment.OwnerDisplayName,
         OwnerAvatar:      comment.OwnerAvatar,
         PostId:           comment.PostId.String(),
+        ParentCommentId: func() *string {
+            if comment.ParentCommentId == nil {
+                return nil
+            }
+            s := comment.ParentCommentId.String()
+            return &s
+        }(),
+        ReplyToUserId: func() *string {
+            if comment.ReplyToUserId == nil {
+                return nil
+            }
+            s := comment.ReplyToUserId.String()
+            return &s
+        }(),
+        ReplyToDisplayName: comment.ReplyToDisplayName,
         Text:             comment.Text,
         Deleted:          comment.Deleted,
         DeletedDate:      comment.DeletedDate,
         CreatedDate:      comment.CreatedDate,
         LastUpdated:      comment.LastUpdated,
+        IsLiked:          isLiked,
     }
 }
 
-// Backward compatibility helpers
+// Legacy map-based update methods removed - use type-safe methods instead:
+// - UpdateComment (for text updates)
+// - IncrementScore (for score increments)
+// - UpdateCommentProfile (for profile updates)
 
-func (s *commentService) SetField(ctx context.Context, objectID uuid.UUID, field string, value interface{}) error {
-    updates := map[string]interface{}{field: value}
-    return s.UpdateFields(ctx, objectID, updates)
-}
-
-func (s *commentService) IncrementField(ctx context.Context, objectID uuid.UUID, field string, delta int) error {
-    increments := map[string]interface{}{field: delta}
-    return s.IncrementFields(ctx, objectID, increments)
-}
-
-func (s *commentService) UpdateByOwner(ctx context.Context, objectID uuid.UUID, owner uuid.UUID, fields map[string]interface{}) error {
-    return s.UpdateFieldsWithOwnership(ctx, objectID, owner, fields)
-}
-
-func (s *commentService) UpdateProfileForOwner(ctx context.Context, owner uuid.UUID, displayName, avatar string) error {
-    return s.UpdateCommentProfile(ctx, owner, displayName, avatar)
-}
-
-func (s *commentService) UpdateFields(ctx context.Context, commentID uuid.UUID, updates map[string]interface{}) error {
-    if len(updates) == 0 {
-        return nil
-    }
-
-    updates["lastUpdated"] = utils.UTCNowUnix()
-    query := newCommentQueryBuilder().
-        WhereObjectID(commentID).
-        WhereNotDeleted().
-        Build()
-
-    result := <-s.base.Repository.UpdateFields(ctx, commentCollectionName, query, updates)
-    if err := result.Error; err != nil {
-        return fmt.Errorf("failed to update fields: %w", err)
-    }
-
-    s.invalidateAllComments(ctx)
-    return nil
-}
-
-func (s *commentService) IncrementFields(ctx context.Context, commentID uuid.UUID, increments map[string]interface{}) error {
-    if len(increments) == 0 {
-        return nil
-    }
-
-    query := newCommentQueryBuilder().
-        WhereObjectID(commentID).
-        WhereNotDeleted().
-        Build()
-
-    result := <-s.base.Repository.IncrementFields(ctx, commentCollectionName, query, increments)
-    if err := result.Error; err != nil {
-        return fmt.Errorf("failed to increment fields: %w", err)
-    }
-
-    s.invalidateAllComments(ctx)
-    return nil
-}
-
-func (s *commentService) UpdateAndIncrementFields(ctx context.Context, commentID uuid.UUID, updates map[string]interface{}, increments map[string]interface{}) error {
-    if len(updates) == 0 && len(increments) == 0 {
-        return nil
-    }
-
-    if len(updates) > 0 {
-        updates["lastUpdated"] = utils.UTCNowUnix()
-    }
-
-    query := newCommentQueryBuilder().
-        WhereObjectID(commentID).
-        WhereNotDeleted().
-        Build()
-
-    result := <-s.base.Repository.UpdateAndIncrement(ctx, commentCollectionName, query, updates, increments)
-    if err := result.Error; err != nil {
-        return fmt.Errorf("failed to update and increment fields: %w", err)
-    }
-
-    s.invalidateAllComments(ctx)
-    return nil
-}
-
-func (s *commentService) UpdateFieldsWithOwnership(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID, updates map[string]interface{}) error {
-    if len(updates) == 0 {
-        return nil
-    }
-
-    updates["lastUpdated"] = utils.UTCNowUnix()
-    query := newCommentQueryBuilder().
-        WhereObjectID(commentID).
-        WhereOwner(ownerID).
-        WhereNotDeleted().
-        Build()
-
-    result := <-s.base.Repository.UpdateFields(ctx, commentCollectionName, query, updates)
-    if err := result.Error; err != nil {
-        return fmt.Errorf("failed to update fields with ownership: %w", err)
-    }
-
-    s.invalidateUserComments(ctx, ownerID)
-    s.invalidateAllComments(ctx)
-    return nil
-}
-
-func (s *commentService) DeleteWithOwnership(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID) error {
-    query := newCommentQueryBuilder().
-        WhereObjectID(commentID).
-        WhereOwner(ownerID).
-        Build()
-
-    result := <-s.base.Repository.Delete(ctx, commentCollectionName, query)
-    if err := result.Error; err != nil {
-        return fmt.Errorf("failed to delete with ownership: %w", err)
-    }
-
-    s.invalidateUserComments(ctx, ownerID)
-    s.invalidateAllComments(ctx)
-    return nil
-}
-
-func (s *commentService) IncrementFieldsWithOwnership(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID, increments map[string]interface{}) error {
-    if len(increments) == 0 {
-        return nil
-    }
-
-    query := newCommentQueryBuilder().
-        WhereObjectID(commentID).
-        WhereOwner(ownerID).
-        WhereNotDeleted().
-        Build()
-
-    result := <-s.base.Repository.IncrementFields(ctx, commentCollectionName, query, increments)
-    if err := result.Error; err != nil {
-        return fmt.Errorf("failed to increment fields with ownership: %w", err)
-    }
-
-    s.invalidateUserComments(ctx, ownerID)
-    s.invalidateAllComments(ctx)
-    return nil
-}
-
-func (s *commentService) getCommentCount(ctx context.Context, query *dbi.Query) (int64, error) {
-    countResult := <-s.base.Repository.Count(ctx, commentCollectionName, query)
-    if countResult.Error != nil {
-        return 0, countResult.Error
-    }
-    return countResult.Count, nil
-}
+// getCommentCount is deprecated - use repository.Count directly
+// This method is no longer used and kept for backward compatibility only
 
 func sanitizePagination(filter *models.CommentQueryFilter) {
     if filter.Limit <= 0 {
@@ -775,76 +730,106 @@ func sanitizePagination(filter *models.CommentQueryFilter) {
     }
 }
 
-func applyFilterToBuilder(qb *commentQueryBuilder, filter *models.CommentQueryFilter) {
-    includeDeleted := filter.IncludeDeleted
-    if filter.Deleted != nil {
-        qb.WhereDeleted(*filter.Deleted)
-    } else if !includeDeleted {
-        qb.WhereNotDeleted()
-    }
-
-    if filter.PostId != nil {
-        qb.WherePostID(*filter.PostId)
-    }
-    if filter.OwnerUserId != nil {
-        qb.WhereOwner(*filter.OwnerUserId)
-    }
-    if filter.ParentCommentId != nil {
-        qb.WhereParentEquals(*filter.ParentCommentId)
-    } else if filter.RootOnly {
-        qb.WhereParentIsNull()
-    }
-    if filter.CreatedAfter != nil {
-        qb.WhereCreatedAfter(*filter.CreatedAfter)
-    }
-    if filter.CreatedBefore != nil {
-        qb.WhereCreatedBefore(*filter.CreatedBefore)
-    }
-}
-
 // GetReplyCount returns the number of replies for a parent comment
 func (s *commentService) GetReplyCount(ctx context.Context, parentID uuid.UUID) (int64, error) {
-    qb := newCommentQueryBuilder().WhereParentEquals(parentID).WhereNotDeleted()
-    query := qb.Build()
-    return s.getCommentCount(ctx, query)
+    return s.commentRepo.CountReplies(ctx, parentID)
 }
 
-// updatePostCommentCounter updates the post's commentCounter field via the PostStatsUpdater interface
-// This maintains the denormalized count for performance without fetching all comments
-// delta: +1 to increment (when creating root comment), -1 to decrement (when deleting root comment)
-// Only updates for root comments (replies don't affect post.commentCounter)
-func (s *commentService) updatePostCommentCounter(ctx context.Context, postID uuid.UUID, delta int) error {
-    if s.postStatsUpdater == nil {
+// GetReplyCountsBulk returns reply counts for multiple comments in a single query
+// Returns a map of parentCommentID -> replyCount
+// This avoids N+1 queries when loading comment lists
+func (s *commentService) GetReplyCountsBulk(ctx context.Context, parentIDs []uuid.UUID) (map[uuid.UUID]int64, error) {
+    return s.commentRepo.CountRepliesBulk(ctx, parentIDs)
+}
 
-        log.Warn("PostStatsUpdater is nil - skipping commentCounter update for post %s (delta: %d)", postID.String(), delta)
+// ToggleLike toggles a user's like on a comment
+// This is an atomic operation that updates both comment_votes and comments.score
+// Returns (comment, newScore, isLiked, error) for efficient response without re-fetching
+// The comment object is returned from the transaction to avoid a second database query
+func (s *commentService) ToggleLike(ctx context.Context, commentID, userID uuid.UUID) (*models.Comment, int64, bool, error) {
+    var comment *models.Comment
+    var newScore int64
+    var isLiked bool
+    
+    err := s.commentRepo.WithTransaction(ctx, func(txCtx context.Context) error {
+        // Get current comment before toggle (we'll return this to avoid re-fetching)
+        var err error
+        comment, err = s.commentRepo.FindByID(txCtx, commentID)
+        if err != nil {
+            return fmt.Errorf("failed to get comment: %w", err)
+        }
+        
+        // 1. Try to insert a vote
+        created, err := s.commentRepo.AddVote(txCtx, commentID, userID)
+        if err != nil {
+            return fmt.Errorf("failed to add vote: %w", err)
+        }
+
+        if created {
+            // Vote was added -> Increment Score
+            isLiked = true
+            if err := s.commentRepo.IncrementScore(txCtx, commentID, 1); err != nil {
+                return err
+            }
+            newScore = comment.Score + 1
+            comment.Score = newScore // Update the comment object with new score
+        } else {
+            // Vote existed -> Remove it (Toggle logic) -> Decrement Score
+            deleted, err := s.commentRepo.RemoveVote(txCtx, commentID, userID)
+            if err != nil {
+                return fmt.Errorf("failed to remove vote: %w", err)
+            }
+            if deleted {
+                isLiked = false
+                if err := s.commentRepo.IncrementScore(txCtx, commentID, -1); err != nil {
+                    return err
+                }
+                newScore = comment.Score - 1
+                comment.Score = newScore // Update the comment object with new score
+            } else {
+                // Edge case: vote didn't exist and wasn't created
+                newScore = comment.Score
+            }
+        }
+
         return nil
-    }
+    })
+    
+    return comment, newScore, isLiked, err
+}
 
-    log.Info("Calling PostStatsUpdater.IncrementCommentCountForService for post %s (delta: %d)", postID.String(), delta)
-    err := s.postStatsUpdater.IncrementCommentCountForService(ctx, postID, delta)
-    if err != nil {
-        log.Error("PostStatsUpdater.IncrementCommentCountForService failed for post %s (delta: %d): %v", postID.String(), delta, err)
-        return fmt.Errorf("failed to update post commentCounter: %w", err)
-    }
+// GetUserVotesForComments bulk checks which comments the user has liked
+func (s *commentService) GetUserVotesForComments(ctx context.Context, commentIDs []uuid.UUID, userID uuid.UUID) (map[uuid.UUID]bool, error) {
+    return s.commentRepo.GetUserVotesForComments(ctx, commentIDs, userID)
+}
 
-    log.Info("PostStatsUpdater.IncrementCommentCountForService succeeded for post %s (delta: %d)", postID.String(), delta)
+// updatePostCommentCounter is deprecated - count updates are now handled atomically in transactions
+// This method is kept for backward compatibility but should not be used in new code
+func (s *commentService) updatePostCommentCounter(ctx context.Context, postID uuid.UUID, delta int) error {
+    // This method is no longer used - count updates are handled in transactions
+    // Kept for backward compatibility only
+    if s.postStatsUpdater != nil {
+        return s.postStatsUpdater.IncrementCommentCountForService(ctx, postID, delta)
+    }
     return nil
 }
 
 func (s *commentService) fetchOwnedComment(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID) (*models.Comment, error) {
-    query := newCommentQueryBuilder().
-        WhereObjectID(commentID).
-        WhereOwner(ownerID).
-        WhereNotDeleted().
-        Build()
-
-    single := <-s.base.Repository.FindOne(ctx, commentCollectionName, query)
-    var comment models.Comment
-    if err := single.Decode(&comment); err != nil {
-        if errors.Is(err, dbi.ErrNoDocuments) {
+    comment, err := s.commentRepo.FindByID(ctx, commentID)
+    if err != nil {
+        if err.Error() == "comment not found" {
             return nil, commentsErrors.ErrCommentNotFound
         }
         return nil, fmt.Errorf("failed to load comment: %w", err)
     }
-    return &comment, nil
+
+    if comment.Deleted {
+        return nil, commentsErrors.ErrCommentNotFound
+    }
+
+    if comment.OwnerUserId != ownerID {
+        return nil, commentsErrors.ErrCommentNotFound
+    }
+
+    return comment, nil
 }

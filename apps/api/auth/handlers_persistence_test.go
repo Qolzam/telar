@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -19,12 +20,17 @@ import (
 	signupUC "github.com/qolzam/telar/apps/api/auth/signup"
 	verifyUC "github.com/qolzam/telar/apps/api/auth/verification"
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
+	"github.com/qolzam/telar/apps/api/internal/database/postgres"
 	"github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/internal/testutil"
 	"github.com/qolzam/telar/apps/api/internal/types"
 	"github.com/qolzam/telar/apps/api/profile"
 	profileServices "github.com/qolzam/telar/apps/api/profile/services"
+	authRepository "github.com/qolzam/telar/apps/api/auth/repository"
+	adminRepository "github.com/qolzam/telar/apps/api/auth/admin/repository"
+	profileRepository "github.com/qolzam/telar/apps/api/profile/repository"
+	signupOrchestrator "github.com/qolzam/telar/apps/api/orchestrator/signup"
 	"github.com/stretchr/testify/require"
 )
 
@@ -36,8 +42,40 @@ func newAuthAppForTest(t *testing.T, base *platform.BaseService, config *platfor
 	// Generate proper ECDSA key pair for testing
 	pubPEM, privPEM := testutil.GenerateECDSAKeyPairPEM(t)
 
-	// Create all auth handlers using the injected base service
-	adminService := adminUC.NewService(base, privPEM, &platformconfig.Config{
+	// Create postgres client for repositories from config
+	ctx := context.Background()
+	// Extract schema from DSN if present (for isolated test schemas)
+	schema := ""
+	if config.Database.Postgres.DSN != "" {
+		if parsed, err := url.Parse(config.Database.Postgres.DSN); err == nil {
+			if searchPath := parsed.Query().Get("search_path"); searchPath != "" {
+				schema = searchPath
+			}
+		}
+	}
+	pgConfig := &dbi.PostgreSQLConfig{
+		Host:               config.Database.Postgres.Host,
+		Port:               config.Database.Postgres.Port,
+		Username:           config.Database.Postgres.Username,
+		Password:           config.Database.Postgres.Password,
+		Database:           config.Database.Postgres.Database,
+		SSLMode:            config.Database.Postgres.SSLMode,
+		Schema:             schema, // Extract from DSN (for isolated test schemas)
+		MaxOpenConnections: config.Database.Postgres.MaxOpenConns,
+		MaxIdleConnections: config.Database.Postgres.MaxIdleConns,
+		MaxLifetime:        int(config.Database.Postgres.ConnMaxLifetime.Seconds()),
+		ConnectTimeout:     10,
+	}
+	pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
+	require.NoError(t, err)
+
+	// Create repositories
+	authRepo := authRepository.NewPostgresAuthRepository(pgClient)
+	profileRepo := profileRepository.NewPostgresProfileRepository(pgClient)
+	adminRepo := adminRepository.NewPostgresAdminRepository(pgClient)
+
+	// Create all auth handlers using the injected repositories
+	adminService := adminUC.NewService(authRepo, profileRepo, adminRepo, privPEM, &platformconfig.Config{
 		JWT:  platformconfig.JWTConfig{PublicKey: pubPEM, PrivateKey: privPEM},
 		HMAC: platformconfig.HMACConfig{Secret: config.HMAC.Secret},
 	})
@@ -53,14 +91,19 @@ func newAuthAppForTest(t *testing.T, base *platform.BaseService, config *platfor
 		HMACConfig: platformconfig.HMACConfig{Secret: config.HMAC.Secret},
 		AppConfig:  platformconfig.AppConfig{WebDomain: "http://localhost"},
 	}
-	signupService := signupUC.NewService(base, signupServiceConfig)
-	signupHandler := signupUC.NewHandler(signupService, "test-recaptcha-key", privPEM)
+	// Use the same pgClient created above for signup and login services
+	verifRepoForSignup := authRepository.NewPostgresVerificationRepository(pgClient)
+	authRepoForLogin := authRepository.NewPostgresAuthRepository(pgClient)
+	
+	signupService := signupUC.NewService(verifRepoForSignup, signupServiceConfig)
+	fakeVerifier := &testutil.FakeRecaptchaVerifier{ShouldSucceed: true}
+	signupHandler := signupUC.NewHandler(signupService, fakeVerifier, privPEM)
 
 	loginServiceConfig := &loginUC.ServiceConfig{
 		JWTConfig:  platformconfig.JWTConfig{PublicKey: pubPEM, PrivateKey: privPEM},
 		HMACConfig: platformconfig.HMACConfig{Secret: config.HMAC.Secret},
 	}
-	loginService := loginUC.NewService(base, loginServiceConfig)
+	loginService := loginUC.NewService(authRepoForLogin, loginServiceConfig)
 	loginHandlerConfig := &loginUC.HandlerConfig{
 		WebDomain:           "http://localhost",
 		PrivateKey:          privPEM,
@@ -118,7 +161,8 @@ func newAuthAppForTest(t *testing.T, base *platform.BaseService, config *platfor
 	oauthHandler := oauthUC.NewHandler(oauthService, oauthHandlerConfig, stateStore)
 
 	// Create profile service adapter (using direct call adapter for tests)
-	profileService := profileServices.NewService(base, &platformconfig.Config{
+	// Use the same profileRepo created above
+	profileService := profileServices.NewProfileService(profileRepo, &platformconfig.Config{
 		JWT:      platformconfig.JWTConfig{PublicKey: pubPEM, PrivateKey: privPEM},
 		HMAC:     platformconfig.HMACConfig{Secret: config.HMAC.Secret},
 		App:      platformconfig.AppConfig{WebDomain: "http://localhost"},
@@ -126,7 +170,13 @@ func newAuthAppForTest(t *testing.T, base *platform.BaseService, config *platfor
 	})
 	profileCreator := profile.NewDirectCallAdapter(profileService)
 
-	// Update verification service to use profile creator
+	// Create orchestrator for verification service (reuse same repositories)
+	verifRepo := authRepository.NewPostgresVerificationRepository(pgClient)
+
+	// Create signup orchestrator
+	signupOrchestrator := signupOrchestrator.NewService(authRepo, profileRepo, verifRepo)
+
+	// Update verification service to use profile creator and orchestrator
 	verifyService = verifyUC.NewServiceWithKeys(
 		base,
 		verifyServiceConfig,
@@ -135,6 +185,7 @@ func newAuthAppForTest(t *testing.T, base *platform.BaseService, config *platfor
 		"http://localhost",
 		profileCreator,
 	)
+	verifyService.SetSignupOrchestrator(signupOrchestrator)
 	verifyHandler = verifyUC.NewHandler(verifyService, verifyHandlerConfig)
 
 	// Create JWKS handler
@@ -213,6 +264,22 @@ func TestAuth_Admin_Signup_Persistence(t *testing.T) {
 	// 3. Create a SINGLE isolated test environment. This creates a unique, temporary
 	//    database and returns a repository connected to it. THIS IS OUR SOURCE OF TRUTH.
 	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, &localConfig)
+	
+	// Apply migrations to isolated test schema
+	ctx := context.Background()
+	pgConfig := iso.LegacyConfig.ToServiceConfig(dbi.DatabaseTypePostgreSQL).PostgreSQLConfig
+	pgConfig.Schema = iso.LegacyConfig.PGSchema
+	pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
+	require.NoError(t, err, "Failed to create postgres client")
+	defer pgClient.Close()
+	
+	// Create schema if it doesn't exist
+	schemaSQL := fmt.Sprintf(`CREATE SCHEMA IF NOT EXISTS %s`, iso.LegacyConfig.PGSchema)
+	_, err = pgClient.DB().ExecContext(ctx, schemaSQL)
+	require.NoError(t, err, "Failed to create schema")
+	
+	// Apply migrations (auth + profile)
+	applyAuthAndProfileMigrations(t, ctx, pgClient)
 
 	// 4. Create the application dependencies by INJECTING the ISOLATED repository.
 	serviceCfg := &platform.ServiceConfig{
@@ -221,6 +288,7 @@ func TestAuth_Admin_Signup_Persistence(t *testing.T) {
 		MaxRetries:         3,
 	}
 	baseService := platform.NewBaseServiceWithRepo(iso.Repo, serviceCfg)
+	// Pass the isolated config with schema set in DSN
 	app := newAuthAppForTest(t, baseService, iso.Config)
 
 
@@ -238,24 +306,22 @@ func TestAuth_Admin_Signup_Persistence(t *testing.T) {
 
 	require.Equal(t, http.StatusCreated, resp.StatusCode, "Admin signup failed")
 
-	// 6. VERIFICATION: Use the SAME isolated repository to verify the result.
+	// 6. VERIFICATION: Use the new AuthRepository to verify the result.
 	t.Logf("Admin signup successful! Verifying persistence in isolated database")
-	ctx := context.Background()
+	verifyCtx := context.Background()
 	actualUsername := strings.ReplaceAll(email, "+", " ")
+
+	// Create postgres client and repository for verification (reuse existing client)
+	authRepo := authRepository.NewPostgresAuthRepository(pgClient)
 
 	// Use `require.Eventually` for robustness. The verification is now checking the correct database.
 	require.Eventually(t, func() bool {
-		queryObj := &dbi.Query{
-			Conditions: []dbi.Field{
-				{Name: "data->>'username'", Value: actualUsername, Operator: "=", IsJSONB: true},
-			},
-		}
-		countResult := <-iso.Repo.Count(ctx, "userAuth", queryObj)
-		if countResult.Error != nil {
-			t.Logf("Verification query failed: %v", countResult.Error)
+		user, err := authRepo.FindByUsername(verifyCtx, actualUsername)
+		if err != nil {
+			t.Logf("Verification query failed: %v", err)
 			return false
 		}
-		return countResult.Count == 1
+		return user != nil && user.Username == actualUsername && user.Role == "admin"
 	}, 5*time.Second, 100*time.Millisecond, "Admin user did not appear in the isolated database after creation")
 
 	t.Logf("Success: Admin user was correctly created and verified in its isolated database.")

@@ -86,7 +86,7 @@ func TestRateLimit_DifferentIPs_IndependentLimits(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		req := httptest.NewRequest("POST", "/test", strings.NewReader("{}"))
 		req.Header.Set(types.HeaderContentType, "application/json")
-		req.RemoteAddr = "192.168.1.1:8080" // Set RemoteAddr directly
+		req.RemoteAddr = "192.168.1.1:9099" // Set RemoteAddr directly
 
 		resp, err := app.Test(req)
 		require.NoError(t, err)
@@ -110,7 +110,7 @@ func TestRateLimit_DifferentIPs_IndependentLimits(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		req := httptest.NewRequest("POST", "/test", strings.NewReader("{}"))
 		req.Header.Set(types.HeaderContentType, "application/json")
-		req.RemoteAddr = "192.168.1.2:8080" // Different IP
+		req.RemoteAddr = "192.168.1.2:9099" // Different IP
 
 		resp, err := app2.Test(req)
 		require.NoError(t, err)

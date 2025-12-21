@@ -18,7 +18,7 @@ This service handles all authentication, authorization, and user management logi
    docker-compose up --build
    ```
 
-The service will be available at `http://localhost:8080`.
+The service will be available at `http://localhost:9099`.
 
 ## Configuration
 

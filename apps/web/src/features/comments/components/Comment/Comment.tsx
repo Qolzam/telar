@@ -11,19 +11,19 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import ThumbUpOutlinedIcon from '@mui/icons-material/ThumbUpOutlined';
-import ThumbUpIcon from '@mui/icons-material/ThumbUp';
-import ThumbDownOutlinedIcon from '@mui/icons-material/ThumbDownOutlined';
-import ThumbDownIcon from '@mui/icons-material/ThumbDown';
+import { useTheme } from '@mui/material/styles';
+import FavoriteIcon from '@mui/icons-material/Favorite';
+import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import MessageIcon from '@mui/icons-material/Message';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import { formatDistanceToNow } from 'date-fns';
 import type { Comment as CommentModel } from '@telar/sdk';
-import { useLikeCommentMutation, useUpdateCommentMutation, useCommentRepliesQuery } from '../../client';
-import { useState, useEffect } from 'react';
+import { useToggleLikeCommentMutation, useUpdateCommentMutation } from '../../client';
+import { useState } from 'react';
 import { CreateCommentForm } from '../CreateCommentForm';
 import { ConfirmDeleteDialog } from '../ConfirmDeleteDialog';
+import { ReplyList } from '../ReplyList';
 import { useSession } from '@/features/auth/client';
 
 interface CommentProps {
@@ -31,14 +31,19 @@ interface CommentProps {
   currentUserId?: string;
   onEdit?: (comment: CommentModel) => void;
   onDelete?: (comment: CommentModel) => void;
-  replies?: CommentModel[];
 }
 
-export function Comment({ comment, currentUserId, onEdit, onDelete, replies = [] }: CommentProps) {
+
+export function Comment({ comment, currentUserId, onEdit, onDelete }: CommentProps) {
+  const theme = useTheme();
+  const textPrimary = `var(--mui-palette-text-primary, ${theme.palette.text.primary})`;
+  const textSecondary = `var(--mui-palette-text-secondary, ${theme.palette.text.secondary})`;
+  const primaryMain = `var(--mui-palette-primary-main, ${theme.palette.primary.main})`;
+  const errorMain = `var(--mui-palette-error-main, ${theme.palette.error.main})`;
   const createdAt = new Date(comment.createdDate);
   const canModify = currentUserId && currentUserId === comment.ownerUserId;
   const { user } = useSession();
-  const likeMutation = useLikeCommentMutation(comment.postId);
+  const toggleLikeMutation = useToggleLikeCommentMutation(comment.postId);
   const updateMutation = useUpdateCommentMutation(comment.postId);
   
   // Use session user's avatar if this is the current user's comment, otherwise use comment.ownerAvatar
@@ -55,17 +60,13 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
   const menuOpen = Boolean(menuEl);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [repliesExpanded, setRepliesExpanded] = useState(false);
-  const [isLiked, setIsLiked] = useState(false);
-  const [isDisliked, setIsDisliked] = useState(false);
-  const [optimisticScore, setOptimisticScore] = useState(comment.score || 0);
-  const { data: replyPages, fetchNextPage, hasNextPage, refetch, isFetching } =
-    useCommentRepliesQuery(comment.objectId, 10);
-  const lazyReplies = (replyPages?.pages ?? []).flat();
+  const [activeReplyId, setActiveReplyId] = useState<string | null>(null);
+  
+  const handleReplyClick = (targetId: string | null) => {
+    setActiveReplyId((prev) => (prev === targetId ? null : targetId));
+  };
 
-  // Update optimistic score when comment score changes
-  useEffect(() => {
-    setOptimisticScore(comment.score || 0);
-  }, [comment.score]);
+  const isLiked = comment.isLiked || false;
 
   const handleSave = async () => {
     await updateMutation.mutateAsync({ objectId: comment.objectId, text: draft });
@@ -73,56 +74,13 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
   };
 
   const handleLikeToggle = async () => {
-    // Toggle like state optimistically
-    const newLikedState = !isLiked;
-    const newDislikedState = false; // Liking removes dislike
-    
-    setIsLiked(newLikedState);
-    setIsDisliked(newDislikedState);
-    
-    // Calculate score change: if was disliked, need to add 2 (remove dislike + add like)
-    // If was liked, remove 1. If was neither, add 1.
-    const scoreDelta = isDisliked ? 2 : isLiked ? -1 : 1;
-    setOptimisticScore((prev) => prev + scoreDelta);
-    
-    try {
-      const delta = isDisliked ? 2 : isLiked ? -1 : 1;
-      await likeMutation.mutateAsync({
-        commentId: comment.objectId,
-        delta,
-      });
-    } catch (error) {
-      // Revert on error
-      setIsLiked(!newLikedState);
-      setIsDisliked(isDisliked);
-      setOptimisticScore((prev) => prev - scoreDelta);
-    }
-  };
 
-  const handleDislikeToggle = async () => {
-    // Toggle dislike state optimistically
-    const newDislikedState = !isDisliked;
-    const newLikedState = false; // Disliking removes like
-    
-    setIsDisliked(newDislikedState);
-    setIsLiked(newLikedState);
-    
-    // Calculate score change: if was liked, need to remove 2 (remove like + add dislike)
-    // If was disliked, add 1. If was neither, remove 1.
-    const scoreDelta = isLiked ? -2 : isDisliked ? 1 : -1;
-    setOptimisticScore((prev) => prev + scoreDelta);
-    
     try {
-      const delta = isLiked ? -2 : isDisliked ? 1 : -1;
-      await likeMutation.mutateAsync({
-        commentId: comment.objectId,
-        delta,
-      });
+      // The mutation handles optimistic updates automatically
+      await toggleLikeMutation.mutateAsync(comment.objectId);
     } catch (error) {
-      // Revert on error
-      setIsDisliked(!newDislikedState);
-      setIsLiked(isLiked);
-      setOptimisticScore((prev) => prev - scoreDelta);
+      // Error handling is done in the mutation's onError callback
+      console.error('Failed to toggle like:', error);
     }
   };
 
@@ -136,7 +94,7 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
         {displayName?.[0]?.toUpperCase()}
       </Avatar>
 
-      <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+      <Box sx={{ flexGrow: 1, minWidth: 0, ml: comment.parentCommentId ? '20px' : 0 }}>
         <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: '8px' }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Typography 
@@ -147,7 +105,7 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
                 fontWeight: 700,
                 lineHeight: '20px',
                 letterSpacing: '-0.084px',
-                color: '#1E293B',
+                color: textPrimary,
               }}
             >
               {displayName}
@@ -160,7 +118,7 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
                 fontWeight: 500,
                 lineHeight: '16px',
                 letterSpacing: '-0.06px',
-                color: '#475569',
+                color: textSecondary,
               }}
             >
             {formatDistanceToNow(createdAt, { addSuffix: true })}
@@ -171,7 +129,10 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
               <IconButton
                 size="small"
                 aria-label="More options"
-                onClick={(e) => setMenuEl(e.currentTarget)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuEl(e.currentTarget);
+                }}
                 sx={{ color: 'grey.400', '&:hover': { color: 'grey.600' } }}
               >
                 <MoreVertIcon fontSize="small" />
@@ -184,7 +145,8 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
                 transformOrigin={{ vertical: 'top', horizontal: 'right' }}
               >
                 <MenuItem
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     setMenuEl(null);
                     setIsEditing(true);
                     setDraft(comment.text);
@@ -193,7 +155,8 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
                   Edit
                 </MenuItem>
                 <MenuItem
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     setMenuEl(null);
                     setConfirmOpen(true);
                   }}
@@ -205,6 +168,40 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
           )}
         </Box>
 
+        {/* Two-Tier Architecture: Show "Replying to @User" indicator before comment text */}
+        {comment.replyToUserId && comment.replyToDisplayName && (
+          <Box sx={{ mb: 0.5 }}>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{
+                fontFamily: 'PlusJakartaSans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                fontSize: '12px',
+                fontWeight: 400,
+                lineHeight: '16px',
+                letterSpacing: '-0.06px',
+              }}
+            >
+              Replying to{' '}
+              <Typography
+                component="span"
+                variant="caption"
+                sx={{
+                  fontFamily: 'PlusJakartaSans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  color: 'primary.main',
+                  cursor: 'pointer',
+                  '&:hover': {
+                    textDecoration: 'underline',
+                  },
+                }}
+              >
+                @{comment.replyToDisplayName}
+              </Typography>
+            </Typography>
+          </Box>
+        )}
         {!isEditing ? (
           <Typography 
             sx={{ 
@@ -215,7 +212,7 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
               fontSize: '14px',
               fontWeight: 400,
               lineHeight: '22.4px',
-              color: '#475569',
+              color: textSecondary,
             }}
           >
             {comment.text}
@@ -256,12 +253,13 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
         <Box sx={{ display: 'flex', alignItems: 'center', gap: '16px', mt: '8px' }}>
           <Button
             onClick={handleLikeToggle}
-            disabled={likeMutation.isPending}
+            disabled={toggleLikeMutation.isPending}
             sx={{
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              color: '#475569',
+              color: isLiked ? '#EF4444' : '#475569',
+              color: isLiked ? errorMain : textSecondary,
               textTransform: 'none',
               minWidth: 'auto',
               padding: '0',
@@ -272,16 +270,16 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
               letterSpacing: '-0.084px',
               '&:hover': {
                 backgroundColor: 'transparent',
-                color: '#1E293B',
+                color: isLiked ? errorMain : textPrimary,
               },
             }}
           >
             {isLiked ? (
-              <ThumbUpIcon sx={{ fontSize: 18, color: '#475569' }} />
+              <FavoriteIcon sx={{ fontSize: 18, color: errorMain }} />
             ) : (
-              <ThumbUpOutlinedIcon sx={{ fontSize: 18, color: '#475569' }} />
+              <FavoriteBorderIcon sx={{ fontSize: 18, color: textSecondary }} />
             )}
-            {(optimisticScore > 0 || comment.score > 0) && (
+            {comment.score > 0 && (
               <Typography 
                 component="span" 
                 sx={{ 
@@ -290,55 +288,11 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
                   fontWeight: 600,
                   lineHeight: '20px',
                   letterSpacing: '-0.084px',
-                  color: '#1E293B',
+                  color: textPrimary,
                 }}
               >
-                {optimisticScore > 0 ? optimisticScore : comment.score}
+                {comment.score}
               </Typography>
-            )}
-          </Button>
-
-          <Button
-            onClick={handleDislikeToggle}
-            disabled={likeMutation.isPending}
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              color: '#475569',
-              textTransform: 'none',
-              minWidth: 'auto',
-              padding: '0',
-              fontFamily: 'PlusJakartaSans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-              fontSize: '14px',
-              fontWeight: 600,
-              lineHeight: '20px',
-              letterSpacing: '-0.084px',
-              '&:hover': {
-                backgroundColor: 'transparent',
-                color: '#1E293B',
-              },
-            }}
-          >
-            {isDisliked ? (
-              <ThumbDownIcon sx={{ fontSize: 18, color: '#475569' }} />
-            ) : (
-              <ThumbDownOutlinedIcon sx={{ fontSize: 18, color: '#475569' }} />
-            )}
-            {optimisticScore < 0 && (
-              <Typography 
-                component="span" 
-                sx={{ 
-                  fontFamily: 'PlusJakartaSans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-                  fontSize: '14px',
-                  fontWeight: 600,
-                  lineHeight: '20px',
-                  letterSpacing: '-0.084px',
-                  color: '#1E293B',
-                }}
-              >
-                {Math.abs(optimisticScore)}
-          </Typography>
             )}
           </Button>
 
@@ -348,7 +302,7 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              color: '#1E293B',
+              color: textPrimary,
               textTransform: 'none',
               minWidth: 'auto',
               padding: '0',
@@ -359,32 +313,25 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
               letterSpacing: '-0.084px',
               '&:hover': {
                 backgroundColor: 'transparent',
-                color: '#1E293B',
+                color: textPrimary,
               },
             }}
           >
-            <MessageIcon sx={{ fontSize: 18, color: '#475569' }} />
+            <MessageIcon sx={{ fontSize: 18, color: textSecondary }} />
             <Typography component="span" sx={{ fontSize: '13px', fontWeight: 600 }}>
               Reply
             </Typography>
           </Button>
         </Box>
-        {!!(replies.length || comment.replyCount || lazyReplies.length) && (
-            <Button
-              onClick={async () => {
-                setRepliesExpanded((v) => !v);
-                if (!repliesExpanded) {
-                  // First expand: if no replies passed down, load first page
-                  if (!replies.length && lazyReplies.length === 0) {
-                    await refetch();
-                  }
-                }
-              }}
+        {/* Two-Tier Architecture: Only show replies for root comments (parentCommentId is null) */}
+        {!comment.parentCommentId && (comment.replyCount || 0) > 0 && (
+          <Button
+            onClick={() => setRepliesExpanded((v) => !v)}
             sx={{
               display: 'flex',
               alignItems: 'center',
               gap: '4px',
-              color: '#4F46E5',
+              color: primaryMain,
               textTransform: 'none',
               px: 0,
               mt: '12px',
@@ -395,54 +342,45 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
               letterSpacing: '-0.084px',
               '&:hover': {
                 backgroundColor: 'transparent',
-                color: '#4338CA',
+                color: primaryMain,
               },
             }}
-            aria-label={repliesExpanded ? 'Hide replies' : `See ${replies.length || comment.replyCount || 0} Replies`}
-            >
+            aria-label={repliesExpanded ? 'Hide replies' : `See ${comment.replyCount || 0} Replies`}
+          >
             <KeyboardArrowDownIcon
               sx={{
                 fontSize: 16,
-                color: '#4F46E5',
+                color: primaryMain,
                 transition: 'transform 0.2s',
                 transform: repliesExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
               }}
             />
-            {repliesExpanded ? 'Hide Replies' : `See ${replies.length || comment.replyCount || 0} Replies`}
-            </Button>
+            {repliesExpanded ? 'Hide Replies' : `See ${comment.replyCount || 0} Replies`}
+          </Button>
         )}
-        {repliesExpanded && (replies.length > 0 || lazyReplies.length > 0) && (
-          <Box sx={{ mt: '16px', pl: '56px' }}>
-            {(replies.length > 0 ? replies : lazyReplies).map((r) => (
-              <Box key={r.objectId} sx={{ mb: '24px' }}>
-                <Comment
-                  comment={r}
-                  currentUserId={currentUserId}
-                  onDelete={onDelete}
-                  // Do not pass further replies to keep single-level nesting
-                  replies={[]}
-                />
-              </Box>
-            ))}
-            {hasNextPage && (
-              <Button
-                size="small"
-                variant="text"
-                onClick={() => fetchNextPage()}
-                disabled={isFetching}
-                sx={{ color: (t) => t.palette.primary.main, textTransform: 'none', px: 0, mt: 0.5 }}
-              >
-                {isFetching ? 'Loading…' : 'Load more replies'}
-              </Button>
-            )}
-          </Box>
+        {repliesExpanded && !comment.parentCommentId && (
+          <ReplyList
+            rootId={comment.objectId}
+            postId={comment.postId}
+            currentUserId={currentUserId}
+            onDelete={onDelete}
+            activeReplyId={activeReplyId}
+            onReplyClick={handleReplyClick}
+          />
         )}
         {replyOpen && (
           <Box sx={{ mt: '12px' }}>
             <CreateCommentForm
               postId={comment.postId}
               parentCommentId={comment.objectId}
-              onSuccess={() => setReplyOpen(false)}
+              replyToDisplayName={comment.ownerDisplayName}
+              onSuccess={() => {
+                setReplyOpen(false);
+
+                if (!repliesExpanded) {
+                  setRepliesExpanded(true);
+                }
+              }}
             />
           </Box>
         )}

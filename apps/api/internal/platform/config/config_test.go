@@ -74,7 +74,7 @@ func TestLoadFromMap(t *testing.T) {
 		cfg, err := LoadFromMap(testEnv)
 		require.NoError(t, err)
 
-		require.Equal(t, 8080, cfg.Server.Port)
+		require.Equal(t, 9099, cfg.Server.Port)
 		require.False(t, cfg.Server.Debug)
 		require.Equal(t, 1*time.Hour, cfg.Cache.TTL)
 		require.Equal(t, "postgresql", cfg.Database.Type)
@@ -132,7 +132,7 @@ func TestLoadFromMap(t *testing.T) {
 
 		cfg, err := LoadFromMap(testEnv)
 		require.NoError(t, err)
-		require.Equal(t, 8080, cfg.Server.Port)
+		require.Equal(t, 9099, cfg.Server.Port)
 	})
 
 	t.Run("Handles boolean parsing errors gracefully", func(t *testing.T) {

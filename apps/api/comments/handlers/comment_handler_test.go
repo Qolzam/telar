@@ -29,7 +29,8 @@ type MockCommentService struct {
 	getCommentsByUserFunc            func(ctx context.Context, userID uuid.UUID, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error)
 	queryCommentsFunc                func(ctx context.Context, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error)
 	queryCommentsWithCursorFunc      func(ctx context.Context, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error)
-	updateCommentFunc                func(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) error
+	queryRepliesWithCursorFunc       func(ctx context.Context, parentID uuid.UUID, cursor string, limit int) (*models.CommentsListResponse, error)
+	updateCommentFunc                func(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) (*models.Comment, error)
 	updateCommentProfileFunc         func(ctx context.Context, userID uuid.UUID, displayName, avatar string) error
 	incrementScoreFunc               func(ctx context.Context, commentID uuid.UUID, delta int, user *types.UserContext) error
 	deleteCommentFunc                func(ctx context.Context, commentID uuid.UUID, postID uuid.UUID, user *types.UserContext) error
@@ -38,16 +39,6 @@ type MockCommentService struct {
 	validateCommentOwnershipFunc     func(ctx context.Context, commentID uuid.UUID, userID uuid.UUID) error
 	createIndexFunc                  func(ctx context.Context, indexes map[string]interface{}) error
 	deleteByOwnerFunc                func(ctx context.Context, owner uuid.UUID, objectId uuid.UUID) error
-	setFieldFunc                     func(ctx context.Context, objectId uuid.UUID, field string, value interface{}) error
-	incrementFieldFunc               func(ctx context.Context, objectId uuid.UUID, field string, delta int) error
-	updateByOwnerFunc                func(ctx context.Context, objectId uuid.UUID, owner uuid.UUID, fields map[string]interface{}) error
-	updateProfileForOwnerFunc        func(ctx context.Context, owner uuid.UUID, displayName, avatar string) error
-	updateFieldsFunc                 func(ctx context.Context, commentID uuid.UUID, updates map[string]interface{}) error
-	incrementFieldsFunc              func(ctx context.Context, commentID uuid.UUID, increments map[string]interface{}) error
-	updateAndIncrementFieldsFunc     func(ctx context.Context, commentID uuid.UUID, updates map[string]interface{}, increments map[string]interface{}) error
-	updateFieldsWithOwnershipFunc    func(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID, updates map[string]interface{}) error
-	deleteWithOwnershipFunc          func(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID) error
-	incrementFieldsWithOwnershipFunc func(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID, increments map[string]interface{}) error
 
 	// Mock state for testing
 	shouldFail   bool
@@ -88,7 +79,7 @@ func (m *MockCommentService) GetCommentsByPost(ctx context.Context, postID uuid.
 	if m.shouldFail {
 		return nil, m.failureError
 	}
-	return nil, nil
+	return &models.CommentsListResponse{Comments: []models.CommentResponse{}, HasNext: false}, nil
 }
 
 func (m *MockCommentService) GetCommentsByUser(ctx context.Context, userID uuid.UUID, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error) {
@@ -96,6 +87,18 @@ func (m *MockCommentService) GetCommentsByUser(ctx context.Context, userID uuid.
 		return m.getCommentsByUserFunc(ctx, userID, filter)
 	}
 	return nil, nil
+}
+
+func (m *MockCommentService) GetReplyCount(ctx context.Context, parentID uuid.UUID) (int64, error) {
+	return 0, nil
+}
+
+func (m *MockCommentService) GetReplyCountsBulk(ctx context.Context, parentIDs []uuid.UUID) (map[uuid.UUID]int64, error) {
+	return make(map[uuid.UUID]int64), nil
+}
+
+func (m *MockCommentService) GetRootCommentCount(ctx context.Context, postID uuid.UUID) (int64, error) {
+	return 0, nil
 }
 
 func (m *MockCommentService) QueryComments(ctx context.Context, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error) {
@@ -109,17 +112,24 @@ func (m *MockCommentService) QueryCommentsWithCursor(ctx context.Context, filter
 	if m.queryCommentsWithCursorFunc != nil {
 		return m.queryCommentsWithCursorFunc(ctx, filter)
 	}
-	return nil, nil
+	return &models.CommentsListResponse{Comments: []models.CommentResponse{}, HasNext: false}, nil
 }
 
-func (m *MockCommentService) UpdateComment(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) error {
+func (m *MockCommentService) QueryRepliesWithCursor(ctx context.Context, parentID uuid.UUID, cursor string, limit int) (*models.CommentsListResponse, error) {
+	if m.queryRepliesWithCursorFunc != nil {
+		return m.queryRepliesWithCursorFunc(ctx, parentID, cursor, limit)
+	}
+	return &models.CommentsListResponse{Comments: []models.CommentResponse{}, HasNext: false}, nil
+}
+
+func (m *MockCommentService) UpdateComment(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) (*models.Comment, error) {
 	if m.updateCommentFunc != nil {
 		return m.updateCommentFunc(ctx, commentID, req, user)
 	}
 	if m.shouldFail {
-		return m.failureError
+		return nil, m.failureError
 	}
-	return nil
+	return nil, nil
 }
 
 func (m *MockCommentService) UpdateCommentProfile(ctx context.Context, userID uuid.UUID, displayName, avatar string) error {
@@ -177,75 +187,15 @@ func (m *MockCommentService) ValidateCommentOwnership(ctx context.Context, comme
 	return nil
 }
 
-func (m *MockCommentService) SetField(ctx context.Context, objectId uuid.UUID, field string, value interface{}) error {
-	if m.setFieldFunc != nil {
-		return m.setFieldFunc(ctx, objectId, field, value)
-	}
-	return nil
+func (m *MockCommentService) ToggleLike(ctx context.Context, commentID uuid.UUID, userID uuid.UUID) (*models.Comment, int64, bool, error) {
+	return nil, 0, false, nil
 }
 
-func (m *MockCommentService) IncrementField(ctx context.Context, objectId uuid.UUID, field string, delta int) error {
-	if m.incrementFieldFunc != nil {
-		return m.incrementFieldFunc(ctx, objectId, field, delta)
-	}
-	return nil
+func (m *MockCommentService) GetUserVotesForComments(ctx context.Context, commentIDs []uuid.UUID, userID uuid.UUID) (map[uuid.UUID]bool, error) {
+	return make(map[uuid.UUID]bool), nil
 }
 
-func (m *MockCommentService) UpdateByOwner(ctx context.Context, objectId uuid.UUID, owner uuid.UUID, fields map[string]interface{}) error {
-	if m.updateByOwnerFunc != nil {
-		return m.updateByOwnerFunc(ctx, objectId, owner, fields)
-	}
-	return nil
-}
-
-func (m *MockCommentService) UpdateProfileForOwner(ctx context.Context, owner uuid.UUID, displayName, avatar string) error {
-	if m.updateProfileForOwnerFunc != nil {
-		return m.updateProfileForOwnerFunc(ctx, owner, displayName, avatar)
-	}
-	return nil
-}
-
-func (m *MockCommentService) UpdateFields(ctx context.Context, commentID uuid.UUID, updates map[string]interface{}) error {
-	if m.updateFieldsFunc != nil {
-		return m.updateFieldsFunc(ctx, commentID, updates)
-	}
-	return nil
-}
-
-func (m *MockCommentService) IncrementFields(ctx context.Context, commentID uuid.UUID, increments map[string]interface{}) error {
-	if m.incrementFieldsFunc != nil {
-		return m.incrementFieldsFunc(ctx, commentID, increments)
-	}
-	return nil
-}
-
-func (m *MockCommentService) UpdateAndIncrementFields(ctx context.Context, commentID uuid.UUID, updates map[string]interface{}, increments map[string]interface{}) error {
-	if m.updateAndIncrementFieldsFunc != nil {
-		return m.updateAndIncrementFieldsFunc(ctx, commentID, updates, increments)
-	}
-	return nil
-}
-
-func (m *MockCommentService) UpdateFieldsWithOwnership(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID, updates map[string]interface{}) error {
-	if m.updateFieldsWithOwnershipFunc != nil {
-		return m.updateFieldsWithOwnershipFunc(ctx, commentID, ownerID, updates)
-	}
-	return nil
-}
-
-func (m *MockCommentService) DeleteWithOwnership(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID) error {
-	if m.deleteWithOwnershipFunc != nil {
-		return m.deleteWithOwnershipFunc(ctx, commentID, ownerID)
-	}
-	return nil
-}
-
-func (m *MockCommentService) IncrementFieldsWithOwnership(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID, increments map[string]interface{}) error {
-	if m.incrementFieldsWithOwnershipFunc != nil {
-		return m.incrementFieldsWithOwnershipFunc(ctx, commentID, ownerID, increments)
-	}
-	return nil
-}
+// Legacy map-based methods removed from mock - use type-safe methods instead
 
 // Test cases
 
@@ -516,15 +466,11 @@ func TestCommentHandler_UpdateComment_Success(t *testing.T) {
 	}
 
 	mockService := &MockCommentService{
-		updateCommentFunc: func(ctx context.Context, id uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) error {
+		updateCommentFunc: func(ctx context.Context, id uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) (*models.Comment, error) {
 			assert.Equal(t, commentID, id)
 			assert.Equal(t, commentID, req.ObjectId)
 			assert.Equal(t, "Updated comment text", req.Text)
 			assert.Equal(t, userID, user.UserID)
-			return nil
-		},
-		getCommentFunc: func(ctx context.Context, id uuid.UUID) (*models.Comment, error) {
-			assert.Equal(t, commentID, id)
 			return updatedComment, nil
 		},
 	}
@@ -612,8 +558,8 @@ func TestCommentHandler_UpdateComment_AuthorizationError(t *testing.T) {
 	userID, _ := uuid.NewV4()
 
 	mockService := &MockCommentService{
-		updateCommentFunc: func(ctx context.Context, id uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) error {
-			return errors.New("unauthorized")
+		updateCommentFunc: func(ctx context.Context, id uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) (*models.Comment, error) {
+			return nil, errors.New("unauthorized")
 		},
 	}
 
@@ -756,8 +702,10 @@ func TestCommentHandler_GetCommentsByPost_Success(t *testing.T) {
 	}
 
 	mockService := &MockCommentService{
-		getCommentsByPostFunc: func(ctx context.Context, pID uuid.UUID, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error) {
-			assert.Equal(t, postID, pID)
+		queryCommentsWithCursorFunc: func(ctx context.Context, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error) {
+			assert.NotNil(t, filter)
+			assert.NotNil(t, filter.PostId)
+			assert.Equal(t, postID, *filter.PostId)
 			return expectedComments, nil
 		},
 	}
@@ -780,10 +728,10 @@ func TestCommentHandler_GetCommentsByPost_Success(t *testing.T) {
 	// Verify response
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var response []models.CommentResponse
+	var response models.CommentsListResponse
 	err = json.NewDecoder(resp.Body).Decode(&response)
 	require.NoError(t, err)
-	assert.Equal(t, 2, len(response))
+	assert.Equal(t, 2, len(response.Comments))
 }
 
 func TestCommentHandler_GetCommentsByPost_WithPagination(t *testing.T) {
@@ -947,8 +895,8 @@ func TestCommentHandler_ErrorResponseFormats(t *testing.T) {
 			name: "Service returns authorization error",
 			setupMock: func() *MockCommentService {
 				return &MockCommentService{
-					updateCommentFunc: func(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) error {
-						return errors.New("unauthorized")
+					updateCommentFunc: func(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) (*models.Comment, error) {
+						return nil, errors.New("unauthorized")
 					},
 				}
 			},

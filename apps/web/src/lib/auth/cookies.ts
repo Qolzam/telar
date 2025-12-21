@@ -1,6 +1,6 @@
 
 export const COOKIE_CONFIG = {
-  SESSION_NAME: 'session',
+  SESSION_NAME: 'access_token',
   MAX_AGE: 7 * 24 * 60 * 60, // 7 days in seconds
   PATH: '/',
   SAME_SITE: 'lax' as const,

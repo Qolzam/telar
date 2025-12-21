@@ -12,8 +12,6 @@ import (
 type PostService interface {
 	// Create operations
 	CreatePost(ctx context.Context, req *models.CreatePostRequest, user *types.UserContext) (*models.Post, error)
-	CreateIndex(ctx context.Context, indexes map[string]interface{}) error
-	CreateIndexes(ctx context.Context) error
 
 	// Read operations
 	GetPost(ctx context.Context, postID uuid.UUID) (*models.Post, error)
@@ -21,11 +19,15 @@ type PostService interface {
 	GetPostsByUser(ctx context.Context, userID uuid.UUID, filter *models.PostQueryFilter) (*models.PostsListResponse, error)
 	QueryPosts(ctx context.Context, filter *models.PostQueryFilter) (*models.PostsListResponse, error)
 	SearchPosts(ctx context.Context, query string, filter *models.PostQueryFilter) (*models.PostsListResponse, error)
-	
+	SearchPostsLite(ctx context.Context, query string, limit int) ([]models.PostResponse, error)
+
 	// Cursor-based pagination operations (new optimized methods)
 	QueryPostsWithCursor(ctx context.Context, filter *models.PostQueryFilter) (*models.PostsListResponse, error)
 	SearchPostsWithCursor(ctx context.Context, query string, filter *models.PostQueryFilter) (*models.PostsListResponse, error)
 	GetCursorInfo(ctx context.Context, postID uuid.UUID, sortBy, sortOrder string) (*models.CursorInfo, error)
+
+	// Bulk fetch by IDs (unordered from DB; caller may re-order)
+	GetPostsByIDs(ctx context.Context, ids []uuid.UUID) ([]*models.Post, error)
 
 	// Update operations
 	UpdatePost(ctx context.Context, postID uuid.UUID, req *models.UpdatePostRequest, user *types.UserContext) error
@@ -44,7 +46,7 @@ type PostService interface {
 	// Utility operations
 	GenerateURLKey(ctx context.Context, postID uuid.UUID, user *types.UserContext) (string, error)
 	ValidatePostOwnership(ctx context.Context, postID uuid.UUID, userID uuid.UUID) error
-	
+
 	// Backward compatibility methods (for existing handlers)
 	SetField(ctx context.Context, objectId uuid.UUID, field string, value interface{}) error
 	IncrementField(ctx context.Context, objectId uuid.UUID, field string, delta int) error
@@ -59,4 +61,3 @@ type PostService interface {
 	// Response conversion
 	ConvertPostToResponse(ctx context.Context, post *models.Post) models.PostResponse
 }
-

@@ -11,6 +11,7 @@ import type {
   CreateCommentRequest,
   UpdateCommentRequest,
   CommentQueryFilter,
+  CommentsListResponse,
 } from './types';
 
 export interface ICommentsApi {
@@ -18,15 +19,17 @@ export interface ICommentsApi {
   updateComment(data: UpdateCommentRequest): Promise<Comment>;
   getCommentsByPost(
     postId: string,
-    filter?: Partial<Pick<CommentQueryFilter, 'page' | 'limit'>>,
-  ): Promise<Comment[]>;
+    cursor?: string,
+    limit?: number,
+  ): Promise<CommentsListResponse>;
   getComment(commentId: string): Promise<Comment>;
   deleteComment(commentId: string, postId: string): Promise<void>;
-  likeComment(commentId: string, delta?: number): Promise<void>;
+  toggleLike(commentId: string): Promise<Comment>;
   getCommentReplies(
     parentCommentId: string,
-    filter?: Partial<Pick<CommentQueryFilter, 'page' | 'limit'>>,
-  ): Promise<Comment[]>;
+    cursor?: string,
+    limit?: number,
+  ): Promise<CommentsListResponse>;
 }
 
 export const commentsApi = (client: ApiClient): ICommentsApi => ({
@@ -40,17 +43,26 @@ export const commentsApi = (client: ApiClient): ICommentsApi => ({
 
   async getCommentsByPost(
     postId: string,
-    filter?: Partial<Pick<CommentQueryFilter, 'page' | 'limit'>>,
-  ): Promise<Comment[]> {
+    cursor?: string,
+    limit?: number,
+  ): Promise<CommentsListResponse> {
     const params = new URLSearchParams();
     params.append('postId', postId);
-    if (filter?.page) params.append('page', filter.page.toString());
-    if (filter?.limit) params.append('limit', filter.limit.toString());
+    
+    // Cursor-based pagination only (required for 1M+ users performance)
+    if (cursor) {
+      params.append('cursor', cursor);
+    }
+    
+    if (limit) {
+      params.append('limit', limit.toString());
+    }
 
     const url =
       ENDPOINTS.COMMENTS.GET_BY_POST +
       (params.toString() ? `?${params.toString()}` : '');
-    return client.get<Comment[]>(url);
+    
+    return client.get<CommentsListResponse>(url);
   },
 
   async getComment(commentId: string): Promise<Comment> {
@@ -63,24 +75,28 @@ export const commentsApi = (client: ApiClient): ICommentsApi => ({
     await client.delete<void>(url);
   },
 
-  async likeComment(commentId: string, delta = 1): Promise<void> {
-    await client.put<void>(ENDPOINTS.COMMENTS.SCORE, {
-      commentId,
-      delta,
-    });
+  async toggleLike(commentId: string): Promise<Comment> {
+    const url = ENDPOINTS.COMMENTS.TOGGLE_LIKE(commentId);
+    return client.post<Comment>(url, {});
   },
 
   async getCommentReplies(
     parentCommentId: string,
-    filter?: Partial<Pick<CommentQueryFilter, 'page' | 'limit'>>,
-  ): Promise<Comment[]> {
+    cursor?: string,
+    limit?: number,
+  ): Promise<CommentsListResponse> {
     const params = new URLSearchParams();
-    if (filter?.page) params.append('page', filter.page.toString());
-    if (filter?.limit) params.append('limit', filter.limit.toString());
-    const url = `${ENDPOINTS.COMMENTS.GET_BY_ID(parentCommentId)}/replies${
+    // Cursor-based pagination only (required for 1M+ users performance)
+    if (cursor) {
+      params.append('cursor', cursor);
+    }
+    if (limit) {
+      params.append('limit', limit.toString());
+    }
+    const url = `${ENDPOINTS.COMMENTS.GET_REPLIES(parentCommentId)}${
       params.toString() ? `?${params.toString()}` : ''
     }`;
-    return client.get<Comment[]>(url);
+    return client.get<CommentsListResponse>(url);
   },
 });
 

@@ -168,7 +168,11 @@ export class ApiClient {
 
     try {
       const errorJson: ApiErrorResponse = JSON.parse(errorText);
+      if (errorJson.details && typeof errorJson.details === 'string') {
+        errorMessage = errorJson.details;
+      } else {
       errorMessage = errorJson.message || errorJson.error || errorMessage;
+      }
       errorCode = errorJson.code;
     } catch {
       errorMessage = errorText || errorMessage;

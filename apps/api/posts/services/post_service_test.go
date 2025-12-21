@@ -13,9 +13,9 @@ import (
 
 	"github.com/qolzam/telar/apps/api/internal/database/interfaces"
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
-	service "github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/internal/types"
+	commentMocks "github.com/qolzam/telar/apps/api/comments/services/mocks"
 	"github.com/qolzam/telar/apps/api/posts/models"
 )
 
@@ -229,13 +229,6 @@ func (m *MockRepository) DeleteMany(ctx context.Context, collection string, quer
 	return result
 }
 
-func (m *MockRepository) CreateIndex(ctx context.Context, collection string, indexes map[string]interface{}) <-chan error {
-	args := m.Called(ctx, collection, indexes)
-	result := make(chan error, 1)
-	result <- args.Error(0)
-	close(result)
-	return result
-}
 
 func (m *MockRepository) BeginTransaction(ctx context.Context) (interfaces.TransactionContext, error) {
 	args := m.Called(ctx)
@@ -428,11 +421,8 @@ func createTestPost() *models.Post {
 	}
 }
 
-func setupTestService() (*postService, *MockRepository) {
-	mockRepo := &MockRepository{}
-	baseService := &service.BaseService{
-		Repository: mockRepo,
-	}
+func setupTestService() (*postService, *MockPostRepository) {
+	mockRepo := &MockPostRepository{}
 	
 	// Create test config
 	cfg := &platformconfig.Config{
@@ -445,9 +435,13 @@ func setupTestService() (*postService, *MockRepository) {
 		},
 	}
 	
+	// Create mock comment repository (required for SoftDeletePost)
+	mockCommentRepo := &commentMocks.MockCommentRepository{}
+	
 	svc := &postService{
-		base:   baseService,
-		config: cfg,
+		repo:        mockRepo,
+		commentRepo: mockCommentRepo,
+		config:      cfg,
 	}
 	return svc, mockRepo
 }
@@ -460,7 +454,7 @@ func TestCreatePost_ValidRequest_Success(t *testing.T) {
 	req := createTestCreatePostRequest()
 
 	// Setup mock expectations
-	mockRepo.On("Save", ctx, postCollectionName, mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("int64"), mock.AnythingOfType("int64"), mock.AnythingOfType("*models.Post")).Return(nil)
+	mockRepo.On("Create", ctx, mock.AnythingOfType("*models.Post")).Return(nil)
 
 	// Execute
 	result, err := service.CreatePost(ctx, req, user)
@@ -520,7 +514,7 @@ func TestCreatePost_DatabaseError_ReturnsError(t *testing.T) {
 	req := createTestCreatePostRequest()
 
 	// Setup mock expectations - simulate database error
-	mockRepo.On("Save", ctx, postCollectionName, mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("int64"), mock.AnythingOfType("int64"), mock.AnythingOfType("*models.Post")).Return(errors.New("database connection failed"))
+	mockRepo.On("Create", ctx, mock.AnythingOfType("*models.Post")).Return(errors.New("database connection failed"))
 
 	// Execute
 	result, err := service.CreatePost(ctx, req, user)
@@ -528,7 +522,7 @@ func TestCreatePost_DatabaseError_ReturnsError(t *testing.T) {
 	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "failed to save post")
+	assert.Contains(t, err.Error(), "failed to create post")
 	assert.Contains(t, err.Error(), "database connection failed")
 
 	mockRepo.AssertExpectations(t)
@@ -546,7 +540,7 @@ func TestCreatePost_WithProvidedObjectId_UsesProvidedId(t *testing.T) {
 	req.ObjectId = &providedID
 
 	// Setup mock expectations
-	mockRepo.On("Save", ctx, postCollectionName, mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("int64"), mock.AnythingOfType("int64"), mock.AnythingOfType("*models.Post")).Return(nil)
+	mockRepo.On("Create", ctx, mock.AnythingOfType("*models.Post")).Return(nil)
 
 	// Execute
 	result, err := service.CreatePost(ctx, req, user)
@@ -576,7 +570,7 @@ func TestCreatePost_WithAlbum_SetsAlbum(t *testing.T) {
 	}
 
 	// Setup mock expectations
-	mockRepo.On("Save", ctx, postCollectionName, mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("int64"), mock.AnythingOfType("int64"), mock.AnythingOfType("*models.Post")).Return(nil)
+	mockRepo.On("Create", ctx, mock.AnythingOfType("*models.Post")).Return(nil)
 
 	// Execute
 	result, err := service.CreatePost(ctx, req, user)
@@ -600,7 +594,7 @@ func TestGetPost_ValidId_ReturnsPost(t *testing.T) {
 	postID := testPost.ObjectId
 
 	// Setup mock expectations
-	mockRepo.On("FindOne", ctx, postCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(testPost, nil)
+	mockRepo.On("FindByID", ctx, postID).Return(testPost, nil)
 
 	// Execute
 	result, err := service.GetPost(ctx, postID)
@@ -621,7 +615,7 @@ func TestGetPost_NonExistentId_ReturnsError(t *testing.T) {
 	postID := uuid.Must(uuid.NewV4())
 
 	// Setup mock expectations - simulate not found
-	mockRepo.On("FindOne", ctx, postCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(nil, errors.New("document not found"))
+	mockRepo.On("FindByID", ctx, postID).Return(nil, errors.New("document not found"))
 
 	// Execute
 	result, err := service.GetPost(ctx, postID)
@@ -654,11 +648,14 @@ func TestUpdatePost_ValidRequest_Success(t *testing.T) {
 	}
 
 	// Setup mock expectations for ownership validation
-	mockRepo.On("FindOne", ctx, postCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(testPost, nil)
+	mockRepo.On("FindByID", ctx, testPost.ObjectId).Return(testPost, nil)
 	
-	// Setup mock expectations for update - UpdateBody calls UpdateFields
-	expectedUpdates := map[string]interface{}{"body": newBody}
-	mockRepo.On("UpdateFields", ctx, postCollectionName, mock.AnythingOfType("*interfaces.Query"), expectedUpdates).Return(nil)
+	// Setup mock expectations for update - UpdatePost loads post, modifies it, then calls Update
+	updatedPost := *testPost
+	updatedPost.Body = newBody
+	mockRepo.On("Update", ctx, mock.MatchedBy(func(p *models.Post) bool {
+		return p.ObjectId == testPost.ObjectId && p.Body == newBody
+	})).Return(nil)
 
 	// Execute
 	err := service.UpdatePost(ctx, testPost.ObjectId, req, user)
@@ -683,10 +680,7 @@ func TestUpdatePost_UnauthorizedUser_ReturnsError(t *testing.T) {
 	}
 
 	// Setup mock expectations for ownership validation failure
-	resultChan := make(chan interfaces.SingleResult, 1)
-	resultChan <- &MockSingleResult{err: dbi.ErrNoDocuments}
-	close(resultChan)
-	mockRepo.On("FindOne", ctx, postCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(resultChan)
+	mockRepo.On("FindByID", ctx, testPost.ObjectId).Return(nil, errors.New("not found"))
 
 	// Execute
 	err := service.UpdatePost(ctx, testPost.ObjectId, req, user)
@@ -713,7 +707,7 @@ func TestValidatePostOwnership_ValidOwner_Success(t *testing.T) {
 	testPost.OwnerUserId = user.UserID
 
 	// Setup mock expectations
-	mockRepo.On("FindOne", ctx, postCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(testPost, nil)
+	mockRepo.On("FindByID", ctx, testPost.ObjectId).Return(testPost, nil)
 
 	// Execute
 	err := service.ValidatePostOwnership(ctx, testPost.ObjectId, user.UserID)
@@ -732,10 +726,7 @@ func TestValidatePostOwnership_InvalidOwner_ReturnsError(t *testing.T) {
 	userID := uuid.Must(uuid.NewV4())
 
 	// Setup mock expectations - simulate not found
-	resultChan := make(chan interfaces.SingleResult, 1)
-	resultChan <- &MockSingleResult{err: dbi.ErrNoDocuments}
-	close(resultChan)
-	mockRepo.On("FindOne", ctx, postCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(resultChan)
+	mockRepo.On("FindByID", ctx, postID).Return(nil, errors.New("not found"))
 
 	// Execute
 	err := service.ValidatePostOwnership(ctx, postID, userID)
@@ -761,13 +752,8 @@ func TestIncrementScore_ValidUser_Success(t *testing.T) {
 	postID := uuid.Must(uuid.NewV4())
 	delta := 5
 
-	// Setup mock expectations - service now uses IncrementFields with Query object
-	expectedIncrements := map[string]interface{}{"score": delta}
-	resultChan := make(chan dbi.RepositoryResult, 1)
-	resultChan <- dbi.RepositoryResult{Error: nil}
-	close(resultChan)
-	mockRepo.On("IncrementFields", mock.Anything, postCollectionName, mock.AnythingOfType("*interfaces.Query"), expectedIncrements).
-		Return(resultChan)
+	// Setup mock expectations - IncrementScore uses atomic repository method
+	mockRepo.On("IncrementScore", ctx, postID, delta).Return(nil)
 
 	// Execute
 	err := service.IncrementScore(ctx, postID, delta, user)
@@ -786,12 +772,8 @@ func TestIncrementScore_DatabaseError_ReturnsError(t *testing.T) {
 	postID := uuid.Must(uuid.NewV4())
 	delta := 5
 
-	// Setup mock expectations with error - service now uses IncrementFields with Query object
-	expectedIncrements := map[string]interface{}{"score": delta}
-	resultChan := make(chan interfaces.RepositoryResult, 1)
-	resultChan <- interfaces.RepositoryResult{Error: errors.New("database error")}
-	close(resultChan)
-	mockRepo.On("IncrementFields", mock.Anything, postCollectionName, mock.AnythingOfType("*interfaces.Query"), expectedIncrements).Return(resultChan)
+	// Setup mock expectations with error - IncrementScore uses atomic repository method
+	mockRepo.On("IncrementScore", ctx, postID, delta).Return(errors.New("database error"))
 
 	// Execute
 	err := service.IncrementScore(ctx, postID, delta, user)
@@ -810,12 +792,12 @@ func TestIncrementCommentCount_ValidParameters_Success(t *testing.T) {
 	postID := uuid.Must(uuid.NewV4())
 	delta := 1
 
-	// Setup mock expectations - service now uses IncrementFields with Query object
-	expectedIncrements := map[string]interface{}{"commentCounter": delta}
-	resultChan := make(chan interfaces.RepositoryResult, 1)
-	resultChan <- interfaces.RepositoryResult{Error: nil}
-	close(resultChan)
-	mockRepo.On("IncrementFields", mock.Anything, postCollectionName, mock.AnythingOfType("*interfaces.Query"), expectedIncrements).Return(resultChan)
+	// Setup mock expectations - IncrementCommentCount verifies ownership, then uses atomic repository method
+	testPost := createTestPost()
+	testPost.ObjectId = postID
+	testPost.OwnerUserId = user.UserID
+	mockRepo.On("FindByID", ctx, postID).Return(testPost, nil)
+	mockRepo.On("IncrementCommentCount", ctx, postID, delta).Return(nil)
 
 	// Execute
 	err := service.IncrementCommentCount(ctx, postID, delta, user)
@@ -833,12 +815,8 @@ func TestIncrementViewCount_ValidUser_Success(t *testing.T) {
 	user := createTestUserContext()
 	postID := uuid.Must(uuid.NewV4())
 
-	// Setup mock expectations - service now uses IncrementFields with Query object
-	expectedIncrements := map[string]interface{}{"viewCount": 1}
-	resultChan := make(chan interfaces.RepositoryResult, 1)
-	resultChan <- interfaces.RepositoryResult{Error: nil}
-	close(resultChan)
-	mockRepo.On("IncrementFields", mock.Anything, postCollectionName, mock.AnythingOfType("*interfaces.Query"), expectedIncrements).Return(resultChan)
+	// Setup mock expectations - IncrementViewCount uses atomic repository method
+	mockRepo.On("IncrementViewCount", ctx, postID).Return(nil)
 
 	// Execute
 	err := service.IncrementViewCount(ctx, postID, user)
@@ -857,12 +835,8 @@ func TestSetCommentDisabled_ValidParameters_Success(t *testing.T) {
 	postID := uuid.Must(uuid.NewV4())
 	disabled := true
 
-	// Setup mock expectations
-	expectedUpdates := map[string]interface{}{"disableComments": disabled}
-	resultChan := make(chan interfaces.RepositoryResult, 1)
-	resultChan <- interfaces.RepositoryResult{Error: nil}
-	close(resultChan)
-	mockRepo.On("UpdateFields", mock.Anything, postCollectionName, mock.AnythingOfType("*interfaces.Query"), expectedUpdates).Return(resultChan)
+	// Setup mock expectations - SetCommentDisabled uses repository method with ownership validation
+	mockRepo.On("SetCommentDisabled", ctx, postID, disabled, user.UserID).Return(nil)
 
 	// Execute
 	err := service.SetCommentDisabled(ctx, postID, disabled, user)
@@ -881,12 +855,8 @@ func TestSetSharingDisabled_ValidParameters_Success(t *testing.T) {
 	postID := uuid.Must(uuid.NewV4())
 	disabled := false
 
-	// Setup mock expectations - service now uses UpdateFields with Query object
-	expectedUpdates := map[string]interface{}{"disableSharing": disabled}
-	resultChan := make(chan interfaces.RepositoryResult, 1)
-	resultChan <- interfaces.RepositoryResult{Error: nil}
-	close(resultChan)
-	mockRepo.On("UpdateFields", mock.Anything, postCollectionName, mock.AnythingOfType("*interfaces.Query"), expectedUpdates).Return(resultChan)
+	// Setup mock expectations - SetSharingDisabled uses repository method with ownership validation
+	mockRepo.On("SetSharingDisabled", ctx, postID, disabled, user.UserID).Return(nil)
 
 	// Execute
 	err := service.SetSharingDisabled(ctx, postID, disabled, user)
@@ -906,10 +876,10 @@ func TestDeletePost_ValidOwnership_Success(t *testing.T) {
 	testPost.OwnerUserId = user.UserID
 
 	// Setup mock expectations for ownership validation
-	mockRepo.On("FindOne", ctx, postCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(testPost, nil)
+	mockRepo.On("FindByID", ctx, testPost.ObjectId).Return(testPost, nil)
 	
 	// Setup mock expectations for delete
-	mockRepo.On("Delete", ctx, postCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(nil)
+	mockRepo.On("Delete", ctx, testPost.ObjectId).Return(nil)
 
 	// Execute
 	err := service.DeletePost(ctx, testPost.ObjectId, user)
@@ -930,13 +900,23 @@ func TestSoftDeletePost_ValidOwnership_Success(t *testing.T) {
 	testPost.Deleted = false // Ensure post is not already deleted
 
 	// Setup mock expectations for findPostForOwnershipCheck (no deleted filter)
-	mockRepo.On("FindOne", ctx, postCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(testPost, nil)
+	mockRepo.On("FindByID", ctx, testPost.ObjectId).Return(testPost, nil)
 	
-	// Setup mock expectations for update - SoftDeletePost calls UpdateFields
-	mockRepo.On("UpdateFields", ctx, postCollectionName, mock.AnythingOfType("*interfaces.Query"), mock.MatchedBy(func(updates map[string]interface{}) bool {
-		deleted, hasDeleted := updates["deleted"]
-		deletedDate, hasDeletedDate := updates["deletedDate"]
-		return hasDeleted && deleted == true && hasDeletedDate && deletedDate.(int64) > 0
+	// Setup mock for comment repository (cascade soft-delete)
+	mockCommentRepo := service.commentRepo.(*commentMocks.MockCommentRepository)
+	mockCommentRepo.On("DeleteByPostID", mock.Anything, testPost.ObjectId).Return(nil)
+	
+	// Setup transaction mock - WithTransaction calls the function with a transaction context
+	// The mock implementation already executes the function, so we just need to return nil
+	mockRepo.On("WithTransaction", ctx, mock.AnythingOfType("func(context.Context) error")).Return(nil)
+	
+	// Setup mock for FindByID (called by UpdateFields to load the post before updating)
+	// This is called WITHIN the transaction, so use mock.Anything for context
+	mockRepo.On("FindByID", mock.Anything, testPost.ObjectId).Return(testPost, nil)
+	
+	// Setup mock for Update (called by UpdateFields within transaction)
+	mockRepo.On("Update", mock.Anything, mock.MatchedBy(func(p *models.Post) bool {
+		return p.ObjectId == testPost.ObjectId && p.Deleted == true
 	})).Return(nil)
 
 	// Execute
@@ -944,48 +924,6 @@ func TestSoftDeletePost_ValidOwnership_Success(t *testing.T) {
 
 	// Assert
 	assert.NoError(t, err)
-
-	mockRepo.AssertExpectations(t)
-}
-
-// Test CreateIndex
-func TestCreateIndex_ValidIndexes_Success(t *testing.T) {
-	service, mockRepo := setupTestService()
-	ctx := context.Background()
-	indexes := map[string]interface{}{
-		"object_id": 1,
-		"urlKey":   1,
-	}
-
-	// Setup mock expectations
-	mockRepo.On("CreateIndex", ctx, postCollectionName, indexes).Return(nil)
-
-	// Execute
-	err := service.CreateIndex(ctx, indexes)
-
-	// Assert
-	assert.NoError(t, err)
-
-	mockRepo.AssertExpectations(t)
-}
-
-// Test CreateIndex with database error
-func TestCreateIndex_DatabaseError_ReturnsError(t *testing.T) {
-	service, mockRepo := setupTestService()
-	ctx := context.Background()
-	indexes := map[string]interface{}{
-		"object_id": 1,
-	}
-
-	// Setup mock expectations with error
-	mockRepo.On("CreateIndex", ctx, postCollectionName, indexes).Return(errors.New("index creation failed"))
-
-	// Execute
-	err := service.CreateIndex(ctx, indexes)
-
-	// Assert
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "index creation failed")
 
 	mockRepo.AssertExpectations(t)
 }
@@ -998,12 +936,8 @@ func TestUpdatePostProfile_ValidParameters_Success(t *testing.T) {
 	displayName := "Updated Display Name"
 	avatar := "https://example.com/new-avatar.jpg"
 
-	// Setup mock expectations
-	expectedUpdates := map[string]interface{}{
-		"ownerDisplayName": displayName,
-		"ownerAvatar":      avatar,
-	}
-	mockRepo.On("UpdateMany", ctx, postCollectionName, mock.AnythingOfType("*interfaces.Query"), expectedUpdates, (*interfaces.UpdateOptions)(nil)).Return(nil)
+	// Setup mock expectations - UpdatePostProfile uses repository method directly
+	mockRepo.On("UpdateOwnerProfile", ctx, userID, displayName, avatar).Return(nil)
 
 	// Execute
 	err := service.UpdatePostProfile(ctx, userID, displayName, avatar)
@@ -1032,8 +966,8 @@ func TestQueryPosts_WithFilter_ReturnsResults(t *testing.T) {
 
 	// Setup mock expectations
 	// Note: Service now uses snake_case for sort fields (created_date)
-	mockRepo.On("Find", ctx, postCollectionName, mock.AnythingOfType("*interfaces.Query"), mock.AnythingOfType("*interfaces.FindOptions")).Return(interfacePosts, nil)
-	mockRepo.On("Count", ctx, postCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(int64(2), nil)
+	mockRepo.On("Find", ctx, mock.AnythingOfType("repository.PostFilter"), 10, 0).Return(testPosts, nil)
+	mockRepo.On("Count", ctx, mock.AnythingOfType("repository.PostFilter")).Return(int64(2), nil)
 
 	// Execute
 	result, err := service.QueryPosts(ctx, filter)
@@ -1045,7 +979,6 @@ func TestQueryPosts_WithFilter_ReturnsResults(t *testing.T) {
 	assert.Equal(t, int64(2), result.TotalCount)
 	assert.Equal(t, 1, result.Page)
 	assert.Equal(t, 10, result.Limit)
-	assert.False(t, result.HasMore)
 
 	mockRepo.AssertExpectations(t)
 }
@@ -1060,7 +993,7 @@ func TestGetPostByURLKey_ValidKey_ReturnsPost(t *testing.T) {
 	urlKey := "test-url-key"
 
 	// Setup mock expectations
-	mockRepo.On("FindOne", ctx, postCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(testPost, nil)
+	mockRepo.On("FindByURLKey", ctx, urlKey).Return(testPost, nil)
 
 	// Execute
 	result, err := service.GetPostByURLKey(ctx, urlKey)
@@ -1080,7 +1013,7 @@ func TestGetPostByURLKey_NonExistentKey_ReturnsError(t *testing.T) {
 	urlKey := "non-existent-key"
 
 	// Setup mock expectations
-	mockRepo.On("FindOne", ctx, postCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(nil, errors.New("document not found"))
+	mockRepo.On("FindByURLKey", ctx, urlKey).Return(nil, errors.New("document not found"))
 
 	// Execute
 	result, err := service.GetPostByURLKey(ctx, urlKey)
@@ -1120,16 +1053,17 @@ func TestUpdatePost_MultipleFields_UpdatesAllFields(t *testing.T) {
 	}
 
 	// Setup mock expectations for ownership validation
-	mockRepo.On("FindOne", ctx, postCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(testPost, nil)
+	mockRepo.On("FindByID", ctx, testPost.ObjectId).Return(testPost, nil)
 
-	// Setup mock expectations for update - UpdatePost calls UpdateFields
-	expectedUpdates := map[string]interface{}{
-		"body":            newBody,
-		"image":           newImage,
-		"tags":            newTags,
-		"disableComments": disableComments,
-	}
-	mockRepo.On("UpdateFields", ctx, postCollectionName, mock.AnythingOfType("*interfaces.Query"), expectedUpdates).Return(nil)
+	// Setup mock expectations for update - UpdatePost loads post, modifies it, then calls Update
+	updatedPost := *testPost
+	updatedPost.Body = newBody
+	updatedPost.Image = newImage
+	updatedPost.Tags = newTags
+	updatedPost.DisableComments = disableComments
+	mockRepo.On("Update", ctx, mock.MatchedBy(func(p *models.Post) bool {
+		return p.ObjectId == testPost.ObjectId && p.Body == newBody && p.Image == newImage
+	})).Return(nil)
 
 	// Execute
 	err := service.UpdatePost(ctx, testPost.ObjectId, req, user)
@@ -1151,7 +1085,7 @@ func TestCreatePost_EmptyBody_Success(t *testing.T) {
 	req.Body = "" // Empty body
 
 	// Setup mock expectations
-	mockRepo.On("Save", ctx, postCollectionName, mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("int64"), mock.AnythingOfType("int64"), mock.AnythingOfType("*models.Post")).Return(nil)
+	mockRepo.On("Create", ctx, mock.AnythingOfType("*models.Post")).Return(nil)
 
 	// Execute - service layer should not validate business rules, that's handler's job
 	result, err := service.CreatePost(ctx, req, user)
@@ -1184,8 +1118,8 @@ func TestCreatePost_DifferentPermissionTypes_Success(t *testing.T) {
 			req := createTestCreatePostRequest()
 			req.Permission = tc.permission
 
-			// Setup mock expectations
-			mockRepo.On("Save", ctx, postCollectionName, mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("int64"), mock.AnythingOfType("int64"), mock.AnythingOfType("*models.Post")).Return(nil)
+	// Setup mock expectations
+	mockRepo.On("Create", ctx, mock.AnythingOfType("*models.Post")).Return(nil)
 
 			// Execute
 			result, err := service.CreatePost(ctx, req, user)

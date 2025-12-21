@@ -2,72 +2,31 @@ package database
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	uuid "github.com/gofrs/uuid"
+	"github.com/qolzam/telar/apps/api/comments/models"
+	commentRepository "github.com/qolzam/telar/apps/api/comments/repository"
+	postsRepository "github.com/qolzam/telar/apps/api/posts/repository"
+	authRepository "github.com/qolzam/telar/apps/api/auth/repository"
+	authModels "github.com/qolzam/telar/apps/api/auth/models"
+	postsModels "github.com/qolzam/telar/apps/api/posts/models"
+	"github.com/qolzam/telar/apps/api/internal/database/postgres"
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
-	platform "github.com/qolzam/telar/apps/api/internal/platform"
-	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/internal/testutil"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// Database configuration tests
-func TestDatabaseConfiguration_PostgreSQL(t *testing.T) {
+// TestCommentRepository_CRUD tests basic CRUD operations using CommentRepository
+func TestCommentRepository_CRUD(t *testing.T) {
 	if !testutil.ShouldRunDatabaseTests() {
 		t.Skip("set RUN_DB_TESTS=1 to run database tests")
 	}
 
-	// Get the shared connection pool
-	suite := testutil.Setup(t)
-	
-	// Create isolated test environment with transaction
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
-	if iso.Repo == nil {
-		t.Skip("PostgreSQL not available, skipping test")
-	}
-
-	ctx := context.Background()
-	
-	// Test with valid configuration
-	t.Run("ValidConfiguration", func(t *testing.T) {
-		
-		base, err := platform.NewBaseService(ctx, iso.Config)
-		
-		assert.NoError(t, err)
-		assert.NotNil(t, base)
-		assert.NotNil(t, base.Repository)
-	})
-	
-	// Test with invalid configuration
-	t.Run("InvalidConfiguration", func(t *testing.T) {
-		platformCfg := &platformconfig.Config{
-			Database: platformconfig.DatabaseConfig{
-				Type: dbi.DatabaseTypePostgreSQL,
-				Postgres: platformconfig.PostgreSQLConfig{
-					Host:     "invalid-host-12345",
-					Port:     5432,
-					Username: "invalid",
-					Password: "invalid",
-					Database: "test",
-					SSLMode:  "disable",
-				},
-			},
-		}
-		_, err := platform.NewBaseService(ctx, platformCfg)
-		
-		// Should fail to connect to invalid host
-		assert.Error(t, err)
-	})
-}
-
-// Database operations tests for Comments - MongoDB tests removed, PostgreSQL only
-
-func TestDatabaseOperations_PostgreSQL_Comments(t *testing.T) {
-	t.Parallel()
-	
 	suite := testutil.Setup(t)
 	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
 	if iso.Repo == nil {
@@ -75,169 +34,102 @@ func TestDatabaseOperations_PostgreSQL_Comments(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	baseService := platform.NewBaseServiceWithRepo(iso.Repo, iso.Config.ToPlatformConfig(dbi.DatabaseTypePostgreSQL))
+
+	// Create PostRepository and apply migrations
+	postRepo, err := postsRepository.NewPostgresRepositoryForTest(ctx, iso)
+	require.NoError(t, err, "failed to create PostRepository")
+
+	// Create AuthRepository for test user
+	pgConfig := iso.LegacyConfig.ToServiceConfig(dbi.DatabaseTypePostgreSQL).PostgreSQLConfig
+	pgConfig.Schema = iso.LegacyConfig.PGSchema
+	pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
+	require.NoError(t, err, "failed to create postgres client for auth")
 	
-	const testCollection = "comments_database_test"
+	setSearchPathSQL := fmt.Sprintf(`SET search_path TO %s`, iso.LegacyConfig.PGSchema)
+	_, err = pgClient.DB().ExecContext(ctx, setSearchPathSQL)
+	require.NoError(t, err, "failed to set search_path for auth client")
 	
-	// Test basic CRUD operations for comments in PostgreSQL
+	authRepo := authRepository.NewPostgresAuthRepository(pgClient)
+
+	// Create CommentRepository
+	commentRepo, err := commentRepository.NewPostgresCommentRepositoryForTest(ctx, iso)
+	require.NoError(t, err, "failed to create CommentRepository")
+
+	// Create test user and post
+	userID := uuid.Must(uuid.NewV4())
+	postID := uuid.Must(uuid.NewV4())
+	now := time.Now()
+
+	userAuth := &authModels.UserAuth{
+		ObjectId:      userID,
+		Username:      "testuser@example.com",
+		Password:      []byte("test_password"),
+		Role:          "user",
+		EmailVerified: true,
+		CreatedDate:   now.Unix(),
+		LastUpdated:   now.Unix(),
+	}
+	err = authRepo.CreateUser(ctx, userAuth)
+	require.NoError(t, err, "failed to create test user")
+
+	post := &postsModels.Post{
+		ObjectId:         postID,
+		OwnerUserId:      userID,
+		PostTypeId:       1,
+		Body:             "Test post",
+		Tags:             pq.StringArray{"test"},
+		CreatedDate:      now.Unix(),
+		LastUpdated:      now.Unix(),
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		Permission:       "Public",
+	}
+	err = postRepo.Create(ctx, post)
+	require.NoError(t, err, "failed to create test post")
+
+	// Test CRUD operations
 	t.Run("BasicCRUDOperations", func(t *testing.T) {
-		objectID := uuid.Must(uuid.NewV4())
-		postID := uuid.Must(uuid.NewV4())
-		userID := uuid.Must(uuid.NewV4())
-		now := time.Now().Unix()
+		commentID := uuid.Must(uuid.NewV4())
 		
-		testComment := map[string]interface{}{
-			"objectId":     objectID,
-			"postId":       postID,
-			"ownerUserId":  userID,
-			"text":         "This is a test comment",
-			"score":        0,
-			"createdDate":  now,
-			"lastUpdated":  now,
+		// Create comment
+		comment := &models.Comment{
+			ObjectId:    commentID,
+			PostId:      postID,
+			OwnerUserId: userID,
+			Text:        "This is a test comment",
+			Score:       0,
+			CreatedDate: now.Unix(),
+			LastUpdated: now.Unix(),
 		}
+		err := commentRepo.Create(ctx, comment)
+		assert.NoError(t, err, "failed to create comment")
 		
-		// Create comment - using new Save signature
-		saveResult := <-baseService.Repository.Save(ctx, testCollection, objectID, userID, now, now, testComment)
-		assert.NoError(t, saveResult.Error)
+		// Read comment
+		found, err := commentRepo.FindByID(ctx, commentID)
+		assert.NoError(t, err, "failed to find comment")
+		assert.NotNil(t, found)
+		assert.Equal(t, comment.Text, found.Text)
 		
-		// Read comment - using Query object
-		query := &dbi.Query{
-			Conditions: []dbi.Field{
-				{Name: "object_id", Value: objectID, Operator: "="},
-			},
-		}
-		findResult := <-baseService.Repository.FindOne(ctx, testCollection, query)
-		assert.NoError(t, findResult.Error())
-		assert.False(t, findResult.NoResult())
-		
-		// Update comment - using UpdateFields
-		updateQuery := &dbi.Query{
-			Conditions: []dbi.Field{
-				{Name: "object_id", Value: objectID, Operator: "="},
-			},
-		}
-		updates := map[string]interface{}{
-			"text":        "Updated test comment",
-			"lastUpdated": time.Now().Unix(),
-		}
-		updateResult := <-baseService.Repository.UpdateFields(ctx, testCollection, updateQuery, updates)
-		assert.NoError(t, updateResult.Error)
+		// Update comment
+		found.Text = "Updated test comment"
+		found.LastUpdated = time.Now().Unix()
+		err = commentRepo.Update(ctx, found)
+		assert.NoError(t, err, "failed to update comment")
 		
 		// Verify update
-		findUpdatedResult := <-baseService.Repository.FindOne(ctx, testCollection, query)
-		assert.NoError(t, findUpdatedResult.Error())
+		updated, err := commentRepo.FindByID(ctx, commentID)
+		assert.NoError(t, err)
+		assert.Equal(t, "Updated test comment", updated.Text)
 		
-		// Delete comment - using Query object
-		deleteQuery := &dbi.Query{
-			Conditions: []dbi.Field{
-				{Name: "object_id", Value: objectID, Operator: "="},
-			},
+		// Delete comment (soft delete)
+		err = commentRepo.Delete(ctx, commentID)
+		assert.NoError(t, err, "failed to delete comment")
+		
+		// Verify deletion (should return deleted comment but marked as deleted)
+		deleted, err := commentRepo.FindByID(ctx, commentID)
+		// Note: Repository may return deleted comments, service layer filters them
+		if err == nil {
+			assert.True(t, deleted.Deleted, "comment should be marked as deleted")
 		}
-		deleteResult := <-baseService.Repository.Delete(ctx, testCollection, deleteQuery)
-		assert.NoError(t, deleteResult.Error)
 	})
 }
-
-// Connection pooling and concurrent access tests for comments - MongoDB tests removed
-// All MongoDB tests have been removed - PostgreSQL only
-
-func setupPostgreSQLTestService(t *testing.T, ctx context.Context) *platform.BaseService {
-	suite := testutil.Setup(t)
-	iso := testutil.NewIsolatedTest(t, dbi.DatabaseTypePostgreSQL, suite.Config())
-	if iso.Repo == nil {
-		t.Skip("PostgreSQL not available, skipping test")
-	}
-	
-	baseService := platform.NewBaseServiceWithRepo(iso.Repo, iso.Config.ToPlatformConfig(dbi.DatabaseTypePostgreSQL))
-	return baseService
-}
-
-// All MongoDB tests removed - PostgreSQL only
-	if !testutil.ShouldRunDatabaseTests() {
-		t.Skip("set RUN_DB_TESTS=1 to run database tests")
-	}
-	if testing.Short() {
-		t.Skip("skipping performance test in short mode")
-	}
-	
-	ctx := context.Background()
-	base := setupMongoDBTestService(t, ctx)
-	
-	const testCollection = "comments_performance_test"
-	
-	t.Run("BulkCommentOperations", func(t *testing.T) {
-		const numComments = 100
-		var commentIDs []uuid.UUID
-		postID := uuid.Must(uuid.NewV4())
-		userID := uuid.Must(uuid.NewV4())
-		
-		start := time.Now()
-		
-		// Bulk insert comments
-		for i := 0; i < numComments; i++ {
-			commentID := uuid.Must(uuid.NewV4())
-			commentIDs = append(commentIDs, commentID)
-			
-			testComment := map[string]interface{}{
-				"objectId":     commentID,
-				"postId":       postID,
-				"ownerUserId":  userID,
-				"text":         "Bulk comment test",
-				"score":        0,
-				"createdDate":  time.Now().Unix(),
-				"index":        i,
-			}
-			
-			saveResult := <-base.Repository.Save(ctx, testCollection, testComment)
-			if saveResult.Error != nil {
-				t.Fatalf("bulk comment insert error at index %d: %v", i, saveResult.Error)
-			}
-		}
-		
-		insertDuration := time.Since(start)
-		t.Logf("Inserted %d comments in %v (%.2f comments/sec)", numComments, insertDuration, float64(numComments)/insertDuration.Seconds())
-		
-		// Bulk read comments
-		start = time.Now()
-		for _, commentID := range commentIDs {
-			findResult := <-base.Repository.FindOne(ctx, testCollection, map[string]interface{}{"objectId": commentID})
-			if findResult.Error() != nil {
-				t.Fatalf("bulk comment read error: %v", findResult.Error())
-			}
-		}
-		readDuration := time.Since(start)
-		t.Logf("Read %d comments in %v (%.2f comments/sec)", numComments, readDuration, float64(numComments)/readDuration.Seconds())
-		
-		// Test comment query performance
-		start = time.Now()
-		limit := int64(100)
-		findByPostResult := <-base.Repository.Find(ctx, testCollection,
-			map[string]interface{}{"postId": postID},
-			&dbi.FindOptions{
-				Limit: &limit,
-				Sort:  map[string]int{"createdDate": -1},
-			})
-		queryDuration := time.Since(start)
-		assert.NoError(t, findByPostResult.Error())
-		t.Logf("Queried comments by postId in %v", queryDuration)
-		
-		// Bulk delete comments (single filter for determinism) and verify cleanup
-		start = time.Now()
-		deleteResult := <-base.Repository.Delete(ctx, testCollection, map[string]interface{}{})
-		require.NoError(t, deleteResult.Error)
-		deleteDuration := time.Since(start)
-		t.Logf("Deleted %d comments in %v (%.2f comments/sec)", numComments, deleteDuration, float64(numComments)/deleteDuration.Seconds())
-
-		// Verify cleanup
-		countAfter := <-base.Repository.Count(ctx, testCollection, map[string]interface{}{})
-		require.NoError(t, countAfter.Error)
-		require.Equal(t, int64(0), countAfter.Count)
-	})
-}
-
-// BenchmarkBulkOperations_MongoDB_Comments - removed (MongoDB tests removed)
-// Error recovery tests for comments - MongoDB tests removed
-// Helper functions for test setup
-// setupMongoDBTestService - removed (MongoDB tests removed)
-// Duplicate setupPostgreSQLTestService - removed (keeping first one)
-// Index performance tests for comments - MongoDB tests removed

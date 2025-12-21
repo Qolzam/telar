@@ -4,8 +4,11 @@ import (
 	"context"
 	"testing"
 
+	authRepository "github.com/qolzam/telar/apps/api/auth/repository"
+	adminRepository "github.com/qolzam/telar/apps/api/auth/admin/repository"
+	profileRepository "github.com/qolzam/telar/apps/api/profile/repository"
+	"github.com/qolzam/telar/apps/api/internal/database/postgres"
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
-	platform "github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/internal/testutil"
 	"github.com/stretchr/testify/require"
@@ -23,8 +26,16 @@ func TestAdminService_CheckCreateLogin_Coverage(t *testing.T) {
 
 	ctx := context.Background()
 
-	base, err := platform.NewBaseService(ctx, iso.Config)
+	// Create postgres client for repositories
+	pgConfig := iso.LegacyConfig.ToServiceConfig(dbi.DatabaseTypePostgreSQL).PostgreSQLConfig
+	pgConfig.Schema = iso.LegacyConfig.PGSchema
+	pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
 	require.NoError(t, err)
+
+	// Create repositories
+	authRepo := authRepository.NewPostgresAuthRepository(pgClient)
+	profileRepo := profileRepository.NewPostgresProfileRepository(pgClient)
+	adminRepo := adminRepository.NewPostgresAdminRepository(pgClient)
 
 	platformCfg := &platformconfig.Config{
 		JWT: platformconfig.JWTConfig{
@@ -35,7 +46,7 @@ func TestAdminService_CheckCreateLogin_Coverage(t *testing.T) {
 			Secret: "test-secret",
 		},
 	}
-	s := NewService(base, "test-private-key", platformCfg)
+	s := NewService(authRepo, profileRepo, adminRepo, "test-private-key", platformCfg)
 
 	// CheckAdmin should run without panic even if none exists
 	_, _ = s.CheckAdmin(ctx)

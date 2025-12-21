@@ -15,7 +15,6 @@ import (
 	platform "github.com/qolzam/telar/apps/api/internal/platform"
 	"github.com/qolzam/telar/apps/api/internal/types"
 	"github.com/qolzam/telar/apps/api/internal/utils"
-	profileModels "github.com/qolzam/telar/apps/api/profile/models"
 	profileServices "github.com/qolzam/telar/apps/api/profile/services"
 )
 
@@ -92,7 +91,9 @@ func buildQueryFromFilter(filter *models.DatabaseFilter) *dbi.Query {
 }
 
 type Service struct {
-	base              *platform.BaseService
+	base              *platform.BaseService // Deprecated: use repositories instead
+	verifRepo         VerificationRepository
+	authRepo          AuthRepository
 	config            *ServiceConfig
 	hmacUtil          *HMACUtil
 	securityValidator *SecurityValidator
@@ -100,12 +101,51 @@ type Service struct {
 	orgName           string
 	webDomain         string
 	profileCreator    profileServices.ProfileServiceClient
+	signupOrchestrator signupOrchestrator // Orchestrator for atomic user+profile creation
+}
+
+// VerificationRepository interface to avoid circular dependency
+type VerificationRepository interface {
+	FindByID(ctx context.Context, verificationID uuid.UUID) (*models.UserVerification, error)
+	MarkUsed(ctx context.Context, verificationID uuid.UUID) error
+	UpdateVerificationCode(ctx context.Context, verificationID uuid.UUID, newCode string, newExpiresAt int64) error
+	SaveVerification(ctx context.Context, verification *models.UserVerification) error
+	DeleteExpired(ctx context.Context, beforeTime int64) error
+}
+
+// AuthRepository interface to avoid circular dependency
+type AuthRepository interface {
+	CreateUser(ctx context.Context, userAuth *models.UserAuth) error
+}
+
+// signupOrchestrator interface to avoid circular dependency
+type signupOrchestrator interface {
+	CompleteSignup(ctx context.Context, verification *models.UserVerification) error
 }
 
 func NewService(base *platform.BaseService, config *ServiceConfig) *Service {
 	service := &Service{
 		base:   base,
 		config: config,
+	}
+
+	// Initialize HMAC utility
+	if config != nil && config.HMACConfig.Secret != "" {
+		service.hmacUtil = NewHMACUtil(config.HMACConfig.Secret)
+	}
+
+	// Initialize security validator (after service is created)
+	service.securityValidator = NewSecurityValidator(service)
+
+	return service
+}
+
+// NewServiceWithRepositories creates a service using repositories instead of base service
+func NewServiceWithRepositories(verifRepo VerificationRepository, authRepo AuthRepository, config *ServiceConfig) *Service {
+	service := &Service{
+		verifRepo: verifRepo,
+		authRepo:  authRepo,
+		config:    config,
 	}
 
 	// Initialize HMAC utility
@@ -129,28 +169,70 @@ func NewServiceWithKeys(base *platform.BaseService, config *ServiceConfig, priva
 	return service
 }
 
+// NewServiceWithRepositoriesAndKeys creates a service with repositories and JWT token generation capability
+func NewServiceWithRepositoriesAndKeys(verifRepo VerificationRepository, authRepo AuthRepository, config *ServiceConfig, privateKey, orgName, webDomain string, profileCreator profileServices.ProfileServiceClient) *Service {
+	service := NewServiceWithRepositories(verifRepo, authRepo, config)
+	service.privateKey = privateKey
+	service.orgName = orgName
+	service.webDomain = webDomain
+	service.profileCreator = profileCreator
+	return service
+}
+
+// SetSignupOrchestrator sets the signup orchestrator for atomic user+profile creation
+func (s *Service) SetSignupOrchestrator(orchestrator signupOrchestrator) {
+	s.signupOrchestrator = orchestrator
+}
+
 func (s *Service) verifyUserByCode(ctx context.Context, userId uuid.UUID, verifyId uuid.UUID, remoteIp string, code string, target string) (bool, error) {
-    // Load verification
-	query := newVerificationQueryBuilder().WhereObjectID(verifyId).Build()
-	res := <-s.base.Repository.FindOne(ctx, userVerificationCollectionName, query)
-	var uv struct {
-		ObjectId        uuid.UUID `json:"objectId" bson:"objectId"`
-		Code            string    `json:"code" bson:"code"`
-		Target          string    `json:"target" bson:"target"`
-		Counter         int64     `json:"counter" bson:"counter"`
-		CreatedDate     int64     `json:"created_date" bson:"created_date"`
-		RemoteIpAddress string    `json:"remoteIpAddress" bson:"remoteIpAddress"`
-		IsVerified      bool      `json:"isVerified" bson:"isVerified"`
-		LastUpdated     int64     `json:"last_updated" bson:"last_updated"`
-		HashedPassword  []byte    `json:"hashedPassword" bson:"hashedPassword"`
-		ExpiresAt       int64     `json:"expiresAt" bson:"expiresAt"`
-		Used            bool      `json:"used" bson:"used"`
-	}
-	if err := res.Decode(&uv); err != nil {
-		if errors.Is(err, dbi.ErrNoDocuments) {
-			return false, fmt.Errorf("verification record not found")
+	// Use repository if available, otherwise fall back to base
+	var uv *models.UserVerification
+	if s.verifRepo != nil {
+		var err error
+		uv, err = s.verifRepo.FindByID(ctx, verifyId)
+		if err != nil {
+			return false, fmt.Errorf("verification record not found: %w", err)
 		}
-		return false, fmt.Errorf("decode userVerification: %w", err)
+	} else {
+		// Fallback to base service
+		if s.base == nil {
+			return false, fmt.Errorf("verification service not properly initialized")
+		}
+		query := newVerificationQueryBuilder().WhereObjectID(verifyId).Build()
+		res := <-s.base.Repository.FindOne(ctx, userVerificationCollectionName, query)
+		var uvStruct struct {
+			ObjectId        uuid.UUID `json:"objectId" bson:"objectId"`
+			Code            string    `json:"code" bson:"code"`
+			Target          string    `json:"target" bson:"target"`
+			Counter         int64     `json:"counter" bson:"counter"`
+			CreatedDate     int64     `json:"created_date" bson:"created_date"`
+			RemoteIpAddress string    `json:"remoteIpAddress" bson:"remoteIpAddress"`
+			IsVerified      bool      `json:"isVerified" bson:"isVerified"`
+			LastUpdated     int64     `json:"last_updated" bson:"last_updated"`
+			HashedPassword  []byte    `json:"hashedPassword" bson:"hashedPassword"`
+			ExpiresAt       int64     `json:"expiresAt" bson:"expiresAt"`
+			Used            bool      `json:"used" bson:"used"`
+		}
+		if err := res.Decode(&uvStruct); err != nil {
+			if errors.Is(err, dbi.ErrNoDocuments) {
+				return false, fmt.Errorf("verification record not found")
+			}
+			return false, fmt.Errorf("decode userVerification: %w", err)
+		}
+		// Convert to UserVerification model
+		uv = &models.UserVerification{
+			ObjectId:        uvStruct.ObjectId,
+			Code:            uvStruct.Code,
+			Target:          uvStruct.Target,
+			Counter:         uvStruct.Counter,
+			CreatedDate:     uvStruct.CreatedDate,
+			RemoteIpAddress: uvStruct.RemoteIpAddress,
+			IsVerified:      uvStruct.IsVerified,
+			LastUpdated:     uvStruct.LastUpdated,
+			HashedPassword:  uvStruct.HashedPassword,
+			ExpiresAt:       uvStruct.ExpiresAt,
+			Used:            uvStruct.Used,
+		}
 	}
 	if uv.RemoteIpAddress != remoteIp {
 		return false, fmt.Errorf("verifyUserByCode/differentRemoteAddress")
@@ -164,11 +246,22 @@ func (s *Service) verifyUserByCode(ctx context.Context, userId uuid.UUID, verify
 	}
     if uv.Code != code {
         uv.LastUpdated = utils.UTCNowUnix()
-		update := map[string]interface{}{"last_updated": uv.LastUpdated, "counter": newCounter}
-		updateQuery := newVerificationQueryBuilder().WhereObjectID(verifyId).Build()
-		err := (<-s.base.Repository.UpdateFields(ctx, userVerificationCollectionName, updateQuery, update)).Error
-		if err != nil {
-			return false, fmt.Errorf("createCodeVerification/updateVerificationCode")
+		// Use repository if available, otherwise fall back to base
+		if s.verifRepo != nil {
+			// Update counter and last_updated using UpdateVerificationCode (reuse same code)
+			err := s.verifRepo.UpdateVerificationCode(ctx, verifyId, uv.Code, uv.ExpiresAt)
+			if err != nil {
+				return false, fmt.Errorf("createCodeVerification/updateVerificationCode: %w", err)
+			}
+		} else if s.base != nil {
+			update := map[string]interface{}{"last_updated": uv.LastUpdated, "counter": newCounter}
+			updateQuery := newVerificationQueryBuilder().WhereObjectID(verifyId).Build()
+			err := (<-s.base.Repository.UpdateFields(ctx, userVerificationCollectionName, updateQuery, update)).Error
+			if err != nil {
+				return false, fmt.Errorf("createCodeVerification/updateVerificationCode")
+			}
+		} else {
+			return false, fmt.Errorf("verification service not properly initialized")
 		}
         return false, fmt.Errorf("createCodeVerification/wrongPinCod")
     }
@@ -184,11 +277,21 @@ func (s *Service) verifyUserByCode(ctx context.Context, userId uuid.UUID, verify
 			return false, fmt.Errorf("verifyUserByCode/codeExpired")
 		}
 	}
-	update := map[string]interface{}{"last_updated": nowMillis, "counter": newCounter, "isVerified": true, "used": true}
-	updateQuery := newVerificationQueryBuilder().WhereObjectID(verifyId).Build()
-	err := (<-s.base.Repository.UpdateFields(ctx, userVerificationCollectionName, updateQuery, update)).Error
-	if err != nil {
-		return false, fmt.Errorf("createCodeVerification/updateVerificationCode")
+	// Mark verification as used and verified
+	if s.verifRepo != nil {
+		err := s.verifRepo.MarkUsed(ctx, verifyId)
+		if err != nil {
+			return false, fmt.Errorf("createCodeVerification/updateVerificationCode: %w", err)
+		}
+	} else if s.base != nil {
+		update := map[string]interface{}{"last_updated": nowMillis, "counter": newCounter, "isVerified": true, "used": true}
+		updateQuery := newVerificationQueryBuilder().WhereObjectID(verifyId).Build()
+		err := (<-s.base.Repository.UpdateFields(ctx, userVerificationCollectionName, updateQuery, update)).Error
+		if err != nil {
+			return false, fmt.Errorf("createCodeVerification/updateVerificationCode")
+		}
+	} else {
+		return false, fmt.Errorf("verification service not properly initialized")
 	}
     return true, nil
 }
@@ -205,7 +308,24 @@ type userAuthDoc struct {
 }
 
 func (s *Service) createUserAuth(ctx context.Context, ua userAuthDoc) error {
-	// Save user authentication record using new Save signature
+	// Use repository if available, otherwise fall back to base
+	if s.authRepo != nil {
+		userAuth := &models.UserAuth{
+			ObjectId:      ua.ObjectId,
+			Username:      ua.Username,
+			Password:      ua.Password,
+			EmailVerified: ua.EmailVerified,
+			PhoneVerified: ua.PhoneVerified,
+			Role:          ua.Role,
+			CreatedDate:   ua.CreatedDate,
+			LastUpdated:   ua.LastUpdated,
+		}
+		return s.authRepo.CreateUser(ctx, userAuth)
+	}
+	// Fallback to base service
+	if s.base == nil {
+		return fmt.Errorf("verification service not properly initialized")
+	}
 	saveResult := <-s.base.Repository.Save(ctx, userAuthCollectionName, ua.ObjectId, ua.ObjectId, ua.CreatedDate, ua.LastUpdated, ua)
 	return saveResult.Error
 }
@@ -260,6 +380,14 @@ func (s *Service) VerifyPhoneCode(ctx context.Context, verificationId string, co
 
 // SaveUserVerification saves a user verification record
 func (s *Service) SaveUserVerification(ctx context.Context, userVerification *models.UserVerification) error {
+	// Use repository if available, otherwise fall back to base
+	if s.verifRepo != nil {
+		return s.verifRepo.SaveVerification(ctx, userVerification)
+	}
+	// Fallback to base service
+	if s.base == nil {
+		return authErrors.WrapDatabaseError(fmt.Errorf("verification service not properly initialized"))
+	}
 	result := <-s.base.Repository.Save(ctx, userVerificationCollectionName, userVerification.ObjectId, userVerification.UserId, userVerification.CreatedDate, userVerification.LastUpdated, userVerification)
 	if result.Error != nil {
 		return authErrors.WrapDatabaseError(fmt.Errorf("failed to save user verification: %w", result.Error))
@@ -269,6 +397,16 @@ func (s *Service) SaveUserVerification(ctx context.Context, userVerification *mo
 
 // FindUserVerification finds a user verification record
 func (s *Service) FindUserVerification(ctx context.Context, filter *models.DatabaseFilter) (*models.UserVerification, error) {
+	// Use repository if available, otherwise fall back to base
+	if s.verifRepo != nil && filter.ObjectId != nil {
+		return s.verifRepo.FindByID(ctx, *filter.ObjectId)
+	}
+	
+	// Fallback to base service for backward compatibility
+	if s.base == nil {
+		return nil, authErrors.WrapUserNotFoundError(fmt.Errorf("user verification not found"))
+	}
+	
 	query := buildQueryFromFilter(filter)
 	res := <-s.base.Repository.FindOne(ctx, userVerificationCollectionName, query)
 	
@@ -313,7 +451,7 @@ func (s *Service) VerifySignup(ctx context.Context, params VerifySignupParams) (
 		ObjectId: &params.VerificationId,
 	})
 	if err != nil {
-		return nil, authErrors.NewUserNotFoundError("verification record not found")
+		return nil, authErrors.NewUserNotFoundError(fmt.Sprintf("verification record not found: %v", err))
 	}
 
 	// 2. Validate the verification code
@@ -340,52 +478,14 @@ func (s *Service) VerifySignup(ctx context.Context, params VerifySignupParams) (
 	if !success {
 		return nil, fmt.Errorf("verification unsuccessful")
 	}
-	// 6. Create user account and profile
-	// Create user authentication record
-	userAuth := userAuthDoc{
-		ObjectId:      verification.UserId,
-		Username:      verification.Target,
-		Password:      verification.HashedPassword,
-		EmailVerified: verification.TargetType == "email",
-		PhoneVerified: verification.TargetType == "phone",
-		Role:          "user",
-		CreatedDate:   time.Now().Unix(),
-		LastUpdated:   time.Now().Unix(),
+	
+	// 6. Create user account and profile atomically using orchestrator
+	if s.signupOrchestrator == nil {
+		return nil, authErrors.NewSystemError("signup orchestrator not available")
 	}
 
-	if err := s.createUserAuth(ctx, userAuth); err != nil {
-		return nil, fmt.Errorf("failed to create user auth: %w", err)
-	}
-
-	// Create user profile - Use stored full name from signup form
-	fullName := verification.FullName
-	if fullName == "" {
-		// Fallback for legacy verification records without stored full name
-		fullName = extractFullNameFromTarget(verification.Target)
-	}
-
-	socialName := generateSocialName(fullName, verification.UserId.String())
-	createdDate := time.Now().Unix()
-	emptyStr := ""
-
-	profileReq := &profileModels.CreateProfileRequest{
-		ObjectId:    verification.UserId,
-		FullName:    &fullName,
-		Email:       &verification.Target,
-		SocialName:  &socialName,
-		Avatar:      &emptyStr,
-		Banner:      &emptyStr,
-		TagLine:     &emptyStr,
-		CreatedDate: &createdDate,
-		LastUpdated: &createdDate,
-	}
-
-	if s.profileCreator == nil {
-		return nil, authErrors.NewSystemError("profile service not available")
-	}
-
-	if err := s.profileCreator.CreateProfileOnSignup(ctx, profileReq); err != nil {
-		return nil, authErrors.NewSystemError(fmt.Sprintf("failed to create user profile: %v", err))
+	if err := s.signupOrchestrator.CompleteSignup(ctx, verification); err != nil {
+		return nil, fmt.Errorf("failed to complete signup: %w", err)
 	}
 
 	// 7. Generate access token for successful verification
@@ -481,7 +581,29 @@ func (s *Service) validateHMACSignature(ctx context.Context, params *VerifySignu
 
 // findUserProfile finds a user profile by user ID
 func (s *Service) findUserProfile(ctx context.Context, userId uuid.UUID) (*userProfileData, error) {
-	// Use a simple query builder for user profile
+	// Use profileCreator if available (preferred method)
+	if s.profileCreator != nil {
+		profile, err := s.profileCreator.GetProfile(ctx, userId)
+		if err != nil {
+			return nil, fmt.Errorf("user profile not found: %w", err)
+		}
+		return &userProfileData{
+			ObjectId:    profile.ObjectId,
+			FullName:    profile.FullName,
+			Email:       profile.Email,
+			SocialName:  profile.SocialName,
+			Avatar:      profile.Avatar,
+			Banner:      profile.Banner,
+			TagLine:     profile.Tagline,
+			CreatedDate: profile.CreatedDate,
+		}, nil
+	}
+	
+	// Fallback to base service for backward compatibility
+	if s.base == nil {
+		return nil, fmt.Errorf("verification service not properly initialized")
+	}
+	
 	query := &dbi.Query{
 		Conditions: []dbi.Field{
 			{

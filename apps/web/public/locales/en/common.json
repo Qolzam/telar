@@ -1,12 +1,12 @@
 {
   "app": {
     "name": "Telar",
-    "tagline": "Modern Social Network Platform",
+    "tagline": "AI Community Engine",
     "description": "Connect with friends and share your moments"
   },
   "navigation": {
-    "home": "Home",
-    "dashboard": "Dashboard",
+    "home": "Discover",
+    "dashboard": "Discover",
     "profile": "Profile",
     "settings": "Settings",
     "messages": "Messages",
@@ -15,6 +15,7 @@
     "openMenu": "Open navigation menu",
     "accountMenu": "Account menu",
     "posts": "Posts",
+    "bookmarks": "Saved",
     "connections": "Connections",
     "search": "Search"
   },

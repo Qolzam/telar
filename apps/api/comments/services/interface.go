@@ -20,14 +20,17 @@ type CommentService interface {
 	GetCommentsByUser(ctx context.Context, userID uuid.UUID, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error)
 	QueryComments(ctx context.Context, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error)
 	GetReplyCount(ctx context.Context, parentID uuid.UUID) (int64, error)
+	GetReplyCountsBulk(ctx context.Context, parentIDs []uuid.UUID) (map[uuid.UUID]int64, error)
 	
 	// Cursor-based pagination operations (new optimized methods)
 	QueryCommentsWithCursor(ctx context.Context, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error)
+	QueryRepliesWithCursor(ctx context.Context, parentID uuid.UUID, cursor string, limit int) (*models.CommentsListResponse, error)
 
 	// Update operations
-	UpdateComment(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) error
+	UpdateComment(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) (*models.Comment, error)
 	UpdateCommentProfile(ctx context.Context, userID uuid.UUID, displayName, avatar string) error
 	IncrementScore(ctx context.Context, commentID uuid.UUID, delta int, user *types.UserContext) error
+	ToggleLike(ctx context.Context, commentID uuid.UUID, userID uuid.UUID) (*models.Comment, int64, bool, error) // Returns (comment, newScore, isLiked, error) - comment returned to avoid re-fetch
 
 	// Delete operations
 	DeleteComment(ctx context.Context, commentID uuid.UUID, postID uuid.UUID, user *types.UserContext) error
@@ -37,22 +40,12 @@ type CommentService interface {
 
 	// Utility operations
 	ValidateCommentOwnership(ctx context.Context, commentID uuid.UUID, userID uuid.UUID) error
-	
-	// Backward compatibility methods (for existing handlers)
-	SetField(ctx context.Context, objectId uuid.UUID, field string, value interface{}) error
-	IncrementField(ctx context.Context, objectId uuid.UUID, field string, delta int) error
-	UpdateByOwner(ctx context.Context, objectId uuid.UUID, owner uuid.UUID, fields map[string]interface{}) error
-	UpdateProfileForOwner(ctx context.Context, owner uuid.UUID, displayName, avatar string) error
-
-	// Field operations for flexible updates
-	UpdateFields(ctx context.Context, commentID uuid.UUID, updates map[string]interface{}) error
-	IncrementFields(ctx context.Context, commentID uuid.UUID, increments map[string]interface{}) error
-	UpdateAndIncrementFields(ctx context.Context, commentID uuid.UUID, updates map[string]interface{}, increments map[string]interface{}) error
-	UpdateFieldsWithOwnership(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID, updates map[string]interface{}) error
-	DeleteWithOwnership(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID) error
-	IncrementFieldsWithOwnership(ctx context.Context, commentID uuid.UUID, ownerID uuid.UUID, increments map[string]interface{}) error
 
 	// GetRootCommentCount counts root comments (non-reply comments) for a post
 	GetRootCommentCount(ctx context.Context, postID uuid.UUID) (int64, error)
+
+	// GetUserVotesForComments bulk checks which comments the user has liked
+	// Returns a map of CommentID -> bool (true if user liked it)
+	GetUserVotesForComments(ctx context.Context, commentIDs []uuid.UUID, userID uuid.UUID) (map[uuid.UUID]bool, error)
 }
 

@@ -28,6 +28,7 @@ const importTranslations = async (lng: string, ns: string): Promise<Record<strin
         if (ns === 'validation') translations.validation = await import('../../../public/locales/en/validation.json').then(m => m.default);
         if (ns === 'dashboard') translations.dashboard = await import('../../../public/locales/en/dashboard.json').then(m => m.default);
         if (ns === 'profile') translations.profile = await import('../../../public/locales/en/profile.json').then(m => m.default);
+        if (ns === 'posts') translations.posts = await import('../../../public/locales/en/posts.json').then(m => m.default);
         break;
       case 'fa':
         if (ns === 'common') translations.common = await import('../../../public/locales/fa/common.json').then(m => m.default);
@@ -36,6 +37,7 @@ const importTranslations = async (lng: string, ns: string): Promise<Record<strin
         if (ns === 'validation') translations.validation = await import('../../../public/locales/fa/validation.json').then(m => m.default);
         if (ns === 'dashboard') translations.dashboard = await import('../../../public/locales/fa/dashboard.json').then(m => m.default);
         if (ns === 'profile') translations.profile = await import('../../../public/locales/fa/profile.json').then(m => m.default);
+        if (ns === 'posts') translations.posts = await import('../../../public/locales/fa/posts.json').then(m => m.default);
         break;
       case 'zh':
         if (ns === 'common') translations.common = await import('../../../public/locales/zh/common.json').then(m => m.default);
@@ -44,6 +46,7 @@ const importTranslations = async (lng: string, ns: string): Promise<Record<strin
         if (ns === 'validation') translations.validation = await import('../../../public/locales/zh/validation.json').then(m => m.default);
         if (ns === 'dashboard') translations.dashboard = await import('../../../public/locales/zh/dashboard.json').then(m => m.default);
         if (ns === 'profile') translations.profile = await import('../../../public/locales/zh/profile.json').then(m => m.default);
+        if (ns === 'posts') translations.posts = await import('../../../public/locales/zh/posts.json').then(m => m.default);
         break;
       case 'ar':
         if (ns === 'common') translations.common = await import('../../../public/locales/ar/common.json').then(m => m.default);
@@ -52,6 +55,7 @@ const importTranslations = async (lng: string, ns: string): Promise<Record<strin
         if (ns === 'validation') translations.validation = await import('../../../public/locales/ar/validation.json').then(m => m.default);
         if (ns === 'dashboard') translations.dashboard = await import('../../../public/locales/ar/dashboard.json').then(m => m.default);
         if (ns === 'profile') translations.profile = await import('../../../public/locales/ar/profile.json').then(m => m.default);
+        if (ns === 'posts') translations.posts = await import('../../../public/locales/ar/posts.json').then(m => m.default);
         break;
       case 'es':
         if (ns === 'common') translations.common = await import('../../../public/locales/es/common.json').then(m => m.default);
@@ -60,6 +64,7 @@ const importTranslations = async (lng: string, ns: string): Promise<Record<strin
         if (ns === 'validation') translations.validation = await import('../../../public/locales/es/validation.json').then(m => m.default);
         if (ns === 'dashboard') translations.dashboard = await import('../../../public/locales/es/dashboard.json').then(m => m.default);
         if (ns === 'profile') translations.profile = await import('../../../public/locales/es/profile.json').then(m => m.default);
+        if (ns === 'posts') translations.posts = await import('../../../public/locales/es/posts.json').then(m => m.default);
         break;
       case 'fr':
         if (ns === 'common') translations.common = await import('../../../public/locales/fr/common.json').then(m => m.default);
@@ -68,6 +73,7 @@ const importTranslations = async (lng: string, ns: string): Promise<Record<strin
         if (ns === 'validation') translations.validation = await import('../../../public/locales/fr/validation.json').then(m => m.default);
         if (ns === 'dashboard') translations.dashboard = await import('../../../public/locales/fr/dashboard.json').then(m => m.default);
         if (ns === 'profile') translations.profile = await import('../../../public/locales/fr/profile.json').then(m => m.default);
+        if (ns === 'posts') translations.posts = await import('../../../public/locales/fr/posts.json').then(m => m.default);
         break;
     }
   } catch (error) {

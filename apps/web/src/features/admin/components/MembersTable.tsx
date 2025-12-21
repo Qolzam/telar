@@ -148,7 +148,7 @@ export function MembersTable() {
       </Table>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', p: 2 }}>
         <Typography variant="caption">
-          Showing {rows.length} of {data?.total ?? 0}
+          Showing {rows.length} of {data?.members?.length ?? 0}
         </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
           <IconButton
@@ -160,7 +160,7 @@ export function MembersTable() {
           </IconButton>
           <IconButton
             size="small"
-            disabled={!!data && offset + limit >= (data.total ?? 0)}
+            disabled={!!data && offset + limit >= (data.members?.length ?? 0)}
             onClick={() => setOffset(offset + limit)}
           >
             <Typography variant="button">Next</Typography>

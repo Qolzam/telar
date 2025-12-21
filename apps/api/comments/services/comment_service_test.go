@@ -1,3 +1,8 @@
+// Copyright (c) 2024 Telar Social
+//
+// This software is released under the MIT License.
+// https://opensource.org/licenses/MIT
+
 package services
 
 import (
@@ -12,358 +17,20 @@ import (
 
 	commentsErrors "github.com/qolzam/telar/apps/api/comments/errors"
 	"github.com/qolzam/telar/apps/api/comments/models"
-	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
-	"github.com/qolzam/telar/apps/api/internal/database/interfaces"
-	service "github.com/qolzam/telar/apps/api/internal/platform"
+	commentRepository "github.com/qolzam/telar/apps/api/comments/repository"
+	"github.com/qolzam/telar/apps/api/comments/services/mocks"
+	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/internal/types"
 )
 
-// MockRepository implements a mock repository for testing
-type MockRepository struct {
-	mock.Mock
-}
-
-func (m *MockRepository) Save(ctx context.Context, collectionName string, objectID uuid.UUID, ownerUserID uuid.UUID, createdDate, lastUpdated int64, data interface{}) <-chan interfaces.RepositoryResult {
-	args := m.Called(ctx, collectionName, objectID, ownerUserID, createdDate, lastUpdated, data)
-	result := make(chan interfaces.RepositoryResult, 1)
-	result <- interfaces.RepositoryResult{Error: args.Error(0)}
-	close(result)
-	return result
-}
-
-func (m *MockRepository) SaveMany(ctx context.Context, collectionName string, items []interfaces.SaveItem) <-chan interfaces.RepositoryResult {
-	args := m.Called(ctx, collectionName, items)
-	result := make(chan interfaces.RepositoryResult, 1)
-	result <- interfaces.RepositoryResult{Error: args.Error(0)}
-	close(result)
-	return result
-}
-
-func (m *MockRepository) FindOne(ctx context.Context, collection string, query *interfaces.Query) <-chan interfaces.SingleResult {
-	args := m.Called(ctx, collection, query)
-
-	// Allow callers to provide a pre-built channel
-	if len(args) > 0 {
-		if ch, ok := args.Get(0).(<-chan interfaces.SingleResult); ok {
-			return ch
-		}
-	}
-
-	result := make(chan interfaces.SingleResult, 1)
-	if len(args) > 0 && args.Get(0) != nil {
-		result <- &MockSingleResult{
-			document: args.Get(0),
-			err:      nil,
-		}
-	} else {
-		err := args.Error(0)
-		if err == nil && len(args) > 1 {
-			err = args.Error(1)
-		}
-		result <- &MockSingleResult{err: err}
-	}
-	close(result)
-	return result
-}
-
-func (m *MockRepository) Find(ctx context.Context, collection string, query *interfaces.Query, options *interfaces.FindOptions) <-chan interfaces.QueryResult {
-	args := m.Called(ctx, collection, query, options)
-	result := make(chan interfaces.QueryResult, 1)
-
-	if args.Get(0) != nil {
-		result <- &MockCursor{
-			documents: args.Get(0).([]interface{}),
-			err:       args.Error(1),
-		}
-	} else {
-		result <- &MockCursor{err: args.Error(1)}
-	}
-	close(result)
-	return result
-}
-
-func (m *MockRepository) Update(ctx context.Context, collection string, query *interfaces.Query, data interface{}, opts *interfaces.UpdateOptions) <-chan interfaces.RepositoryResult {
-	args := m.Called(ctx, collection, query, data, opts)
-	result := make(chan interfaces.RepositoryResult, 1)
-	result <- interfaces.RepositoryResult{Error: args.Error(0)}
-	close(result)
-	return result
-}
-
-func (m *MockRepository) Count(ctx context.Context, collection string, query *interfaces.Query) <-chan interfaces.CountResult {
-	args := m.Called(ctx, collection, query)
-	result := make(chan interfaces.CountResult, 1)
-	result <- interfaces.CountResult{Count: args.Get(0).(int64), Error: args.Error(1)}
-	close(result)
-	return result
-}
-
-func (m *MockRepository) UpdateFields(ctx context.Context, collection string, query *interfaces.Query, updates map[string]interface{}) <-chan interfaces.RepositoryResult {
-	args := m.Called(ctx, collection, query, updates)
-
-	if len(args) > 0 {
-		if ch, ok := args.Get(0).(<-chan interfaces.RepositoryResult); ok {
-			return ch
-		}
-		if ch, ok := args.Get(0).(chan interfaces.RepositoryResult); ok {
-			return ch
-		}
-	}
-
-	result := make(chan interfaces.RepositoryResult, 1)
-	var err error
-	if len(args) > 0 {
-		if e, ok := args.Get(0).(error); ok {
-			err = e
-		} else {
-			err = args.Error(0)
-		}
-	} else {
-		err = args.Error(0)
-	}
-	result <- interfaces.RepositoryResult{Error: err}
-	close(result)
-	return result
-}
-
-func (m *MockRepository) UpdateMany(ctx context.Context, collection string, query *interfaces.Query, data interface{}, opts *interfaces.UpdateOptions) <-chan interfaces.RepositoryResult {
-	args := m.Called(ctx, collection, query, data, opts)
-	result := make(chan interfaces.RepositoryResult, 1)
-	result <- interfaces.RepositoryResult{Error: args.Error(0)}
-	close(result)
-	return result
-}
-
-func (m *MockRepository) IncrementFields(ctx context.Context, collection string, query *interfaces.Query, increments map[string]interface{}) <-chan interfaces.RepositoryResult {
-	args := m.Called(ctx, collection, query, increments)
-
-	if len(args) > 0 {
-		if ch, ok := args.Get(0).(<-chan interfaces.RepositoryResult); ok {
-			return ch
-		}
-		if ch, ok := args.Get(0).(chan interfaces.RepositoryResult); ok {
-			return ch
-		}
-	}
-
-	result := make(chan interfaces.RepositoryResult, 1)
-	var err error
-	if len(args) > 0 {
-		if e, ok := args.Get(0).(error); ok {
-			err = e
-		} else {
-			err = args.Error(0)
-		}
-	} else {
-		err = args.Error(0)
-	}
-	result <- interfaces.RepositoryResult{Error: err}
-	close(result)
-	return result
-}
-
-func (m *MockRepository) UpdateAndIncrement(ctx context.Context, collection string, query *interfaces.Query, updates map[string]interface{}, increments map[string]interface{}) <-chan interfaces.RepositoryResult {
-	args := m.Called(ctx, collection, query, updates, increments)
-	result := make(chan interfaces.RepositoryResult, 1)
-	result <- interfaces.RepositoryResult{Error: args.Error(0)}
-	close(result)
-	return result
-}
-
-func (m *MockRepository) UpdateWithOwnership(ctx context.Context, collection string, entityID interface{}, ownerID interface{}, updates map[string]interface{}) <-chan interfaces.RepositoryResult {
-	args := m.Called(ctx, collection, entityID, ownerID, updates)
-	result := make(chan interfaces.RepositoryResult, 1)
-	result <- interfaces.RepositoryResult{Error: args.Error(0)}
-	close(result)
-	return result
-}
-
-func (m *MockRepository) DeleteWithOwnership(ctx context.Context, collection string, entityID interface{}, ownerID interface{}) <-chan interfaces.RepositoryResult {
-	args := m.Called(ctx, collection, entityID, ownerID)
-	result := make(chan interfaces.RepositoryResult, 1)
-	result <- interfaces.RepositoryResult{Error: args.Error(0)}
-	close(result)
-	return result
-}
-
-func (m *MockRepository) IncrementWithOwnership(ctx context.Context, collection string, entityID interface{}, ownerID interface{}, increments map[string]interface{}) <-chan interfaces.RepositoryResult {
-	args := m.Called(ctx, collection, entityID, ownerID, increments)
-	result := make(chan interfaces.RepositoryResult, 1)
-	result <- interfaces.RepositoryResult{Error: args.Error(0)}
-	close(result)
-	return result
-}
-
-func (m *MockRepository) Delete(ctx context.Context, collection string, query *interfaces.Query) <-chan interfaces.RepositoryResult {
-	args := m.Called(ctx, collection, query)
-	result := make(chan interfaces.RepositoryResult, 1)
-	result <- interfaces.RepositoryResult{Error: args.Error(0)}
-	close(result)
-	return result
-}
-
-func (m *MockRepository) DeleteMany(ctx context.Context, collection string, queries []*interfaces.Query) <-chan interfaces.RepositoryResult {
-	args := m.Called(ctx, collection, queries)
-	result := make(chan interfaces.RepositoryResult, 1)
-	result <- interfaces.RepositoryResult{Error: args.Error(0)}
-	close(result)
-	return result
-}
-
-func (m *MockRepository) CreateIndex(ctx context.Context, collection string, indexes map[string]interface{}) <-chan error {
-	args := m.Called(ctx, collection, indexes)
-	result := make(chan error, 1)
-	result <- args.Error(0)
-	close(result)
-	return result
-}
-
-func (m *MockRepository) BeginTransaction(ctx context.Context) (interfaces.TransactionContext, error) {
-	args := m.Called(ctx)
-	return args.Get(0).(interfaces.TransactionContext), args.Error(1)
-}
-
-func (m *MockRepository) Begin(ctx context.Context) (interfaces.Transaction, error) {
-	args := m.Called(ctx)
-	return args.Get(0).(interfaces.Transaction), args.Error(1)
-}
-
-func (m *MockRepository) BeginWithConfig(ctx context.Context, config *interfaces.TransactionConfig) (interfaces.Transaction, error) {
-	args := m.Called(ctx, config)
-	return args.Get(0).(interfaces.Transaction), args.Error(1)
-}
-
-func (m *MockRepository) WithTransaction(ctx context.Context, fn func(ctx context.Context) error) error {
-	args := m.Called(ctx, fn)
-	return args.Error(0)
-}
-
-func (m *MockRepository) Ping(ctx context.Context) <-chan error {
-	args := m.Called(ctx)
-	result := make(chan error, 1)
-	result <- args.Error(0)
-	close(result)
-	return result
-}
-
-func (m *MockRepository) Close() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
-func (m *MockRepository) FindWithCursor(ctx context.Context, collection string, query *interfaces.Query, opts *interfaces.CursorFindOptions) <-chan interfaces.QueryResult {
-	args := m.Called(ctx, collection, query, opts)
-	result := make(chan interfaces.QueryResult, 1)
-
-	if args.Get(0) != nil {
-		result <- &MockCursor{
-			documents: args.Get(0).([]interface{}),
-			err:       args.Error(1),
-		}
-	} else {
-		result <- &MockCursor{err: args.Error(1)}
-	}
-	close(result)
-	return result
-}
-
-func (m *MockRepository) CountWithFilter(ctx context.Context, collection string, query *interfaces.Query) <-chan interfaces.CountResult {
-	args := m.Called(ctx, collection, query)
-	result := make(chan interfaces.CountResult, 1)
-	result <- interfaces.CountResult{Count: args.Get(0).(int64), Error: args.Error(1)}
-	close(result)
-	return result
-}
-
-func (m *MockRepository) UpdateFieldsWithOwnership(ctx context.Context, collection string, query *interfaces.Query, ownerID interface{}, updates map[string]interface{}) <-chan interfaces.RepositoryResult {
-	args := m.Called(ctx, collection, query, ownerID, updates)
-	result := make(chan interfaces.RepositoryResult, 1)
-	result <- interfaces.RepositoryResult{Error: args.Error(0)}
-	close(result)
-	return result
-}
-
-// MockSingleResult implements SingleResult interface
-type MockSingleResult struct {
-	document interface{}
-	err      error
-}
-
-func (m *MockSingleResult) Error() error {
-	return m.err
-}
-
-func (m *MockSingleResult) NoResult() bool {
-	return m.document == nil && m.err != nil
-}
-
-func (m *MockSingleResult) Decode(v interface{}) error {
-	if m.err != nil {
-		return m.err
-	}
-	if m.document == nil {
-		return dbi.ErrNoDocuments
-	}
-	
-	// Simple mock decode
-	if comment, ok := m.document.(*models.Comment); ok {
-		if targetComment, ok := v.(*models.Comment); ok {
-			*targetComment = *comment
-			return nil
-		}
-	}
-	return errors.New("decode error")
-}
-
-// MockCursor implements QueryResult interface  
-type MockCursor struct {
-	documents []interface{}
-	current   int
-	err       error
-}
-
-func (m *MockCursor) Error() error {
-	return m.err
-}
-
-func (m *MockCursor) Next() bool {
-	if m.err != nil {
-		return false
-	}
-	return m.current < len(m.documents)
-}
-
-func (m *MockCursor) Decode(v interface{}) error {
-	if m.err != nil {
-		return m.err
-	}
-	if m.current >= len(m.documents) {
-		return errors.New("no more documents")
-	}
-	
-	// Simple mock decode
-	if comment, ok := m.documents[m.current].(*models.Comment); ok {
-		if targetComment, ok := v.(*models.Comment); ok {
-			*targetComment = *comment
-			m.current++
-			return nil
-		}
-	}
-	return errors.New("decode error")
-}
-
-func (m *MockCursor) Close() {
-	// No-op for mock
-}
-
-// Test helper functions
 func createTestUserContext() *types.UserContext {
+	userID := uuid.Must(uuid.NewV4())
 	return &types.UserContext{
-		UserID:      uuid.Must(uuid.NewV4()),
+		UserID:      userID,
 		Username:    "test@example.com",
 		DisplayName: "Test User",
-		SocialName:  "testuser",
 		Avatar:      "https://example.com/avatar.jpg",
+		SocialName:  "testuser",
 		SystemRole:  "user",
 		CreatedDate: time.Now().Unix(),
 	}
@@ -372,51 +39,76 @@ func createTestUserContext() *types.UserContext {
 func createTestCreateCommentRequest() *models.CreateCommentRequest {
 	postID := uuid.Must(uuid.NewV4())
 	return &models.CreateCommentRequest{
-		PostId: postID,
-		Text:   "This is a test comment",
+		PostId:          postID,
+		Text:            "This is a test comment",
+		ParentCommentId: nil, // Root comment
 	}
 }
 
-func createTestComment() *models.Comment {
+func createTestComment() models.Comment {
 	commentID := uuid.Must(uuid.NewV4())
-	userID := uuid.Must(uuid.NewV4())
 	postID := uuid.Must(uuid.NewV4())
-	
-	return &models.Comment{
+	userID := uuid.Must(uuid.NewV4())
+	now := time.Now().Unix()
+	return models.Comment{
 		ObjectId:         commentID,
 		PostId:           postID,
-		Score:            0,
-		Text:             "Test comment text",
 		OwnerUserId:      userID,
 		OwnerDisplayName: "Test User",
 		OwnerAvatar:      "https://example.com/avatar.jpg",
+		Text:             "Test comment text",
+		Score:            0,
 		Deleted:          false,
 		DeletedDate:      0,
-		CreatedDate:      time.Now().Unix(),
-		LastUpdated:      0,
+		ParentCommentId:  nil,
+		CreatedDate:      now,
+		LastUpdated:      now,
 	}
 }
 
-func setupTestService() (*commentService, *MockRepository) {
-	mockRepo := &MockRepository{}
-	baseService := &service.BaseService{
-		Repository: mockRepo,
-	}
+func setupTestService() (*commentService, *mocks.MockCommentRepository, *mocks.MockPostRepository) {
+	mockCommentRepo := &mocks.MockCommentRepository{}
+	mockPostRepo := &mocks.MockPostRepository{}
+	cfg := &platformconfig.Config{}
 	svc := &commentService{
-		base: baseService,
+		commentRepo:      mockCommentRepo,
+		postRepo:         mockPostRepo,
+		cacheService:     nil,
+		config:           cfg,
+		postStatsUpdater: nil,
 	}
-	return svc, mockRepo
+	return svc, mockCommentRepo, mockPostRepo
 }
 
-// Test CreateComment with valid request
+// Test CreateComment with valid request (root comment)
 func TestCreateComment_ValidRequest_Success(t *testing.T) {
-	service, mockRepo := setupTestService()
+	service, mockCommentRepo, mockPostRepo := setupTestService()
 	ctx := context.Background()
 	user := createTestUserContext()
 	req := createTestCreateCommentRequest()
+	req.ParentCommentId = nil // Root comment
 
-	// Setup mock expectations
-	mockRepo.On("Save", ctx, commentCollectionName, mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("int64"), mock.AnythingOfType("int64"), mock.AnythingOfType("*models.Comment")).Return(nil)
+	// Setup mock expectations for transaction
+	mockPostRepo.On("WithTransaction", ctx, mock.AnythingOfType("func(context.Context) error")).Return(nil).Run(func(args mock.Arguments) {
+		fn := args.Get(1).(func(context.Context) error)
+		// Execute the transaction function
+		fn(ctx)
+	})
+
+	// Setup expectations for Create (called within transaction)
+	mockCommentRepo.On("Create", mock.Anything, mock.AnythingOfType("*models.Comment")).Return(nil).Run(func(args mock.Arguments) {
+		comment := args.Get(1).(*models.Comment)
+		assert.Equal(t, req.PostId, comment.PostId)
+		assert.Equal(t, req.Text, comment.Text)
+		assert.Equal(t, user.UserID, comment.OwnerUserId)
+		assert.Equal(t, user.DisplayName, comment.OwnerDisplayName)
+		assert.Equal(t, user.Avatar, comment.OwnerAvatar)
+		assert.False(t, comment.Deleted)
+		assert.Nil(t, comment.ParentCommentId)
+	})
+
+	// Setup expectations for IncrementCommentCount (called within transaction)
+	mockPostRepo.On("IncrementCommentCount", mock.Anything, req.PostId, 1).Return(nil)
 
 	// Execute
 	result, err := service.CreateComment(ctx, req, user)
@@ -434,12 +126,54 @@ func TestCreateComment_ValidRequest_Success(t *testing.T) {
 	assert.NotEqual(t, uuid.Nil, result.ObjectId)
 	assert.Greater(t, result.CreatedDate, int64(0))
 
-	mockRepo.AssertExpectations(t)
+	mockCommentRepo.AssertExpectations(t)
+	mockPostRepo.AssertExpectations(t)
+}
+
+// Test CreateComment with reply (no count increment)
+func TestCreateComment_Reply_NoCountIncrement(t *testing.T) {
+	service, mockCommentRepo, mockPostRepo := setupTestService()
+	ctx := context.Background()
+	user := createTestUserContext()
+	req := createTestCreateCommentRequest()
+	parentID := uuid.Must(uuid.NewV4())
+	req.ParentCommentId = &parentID // Reply comment
+
+	mockCommentRepo.On("FindByID", ctx, parentID).Return(&models.Comment{
+		ObjectId:         parentID,
+		PostId:           req.PostId,
+		OwnerUserId:      user.UserID,
+		OwnerDisplayName: user.DisplayName,
+		Deleted:          false,
+	}, nil)
+
+	// Setup expectations for Create (no transaction for replies)
+	mockCommentRepo.On("Create", ctx, mock.AnythingOfType("*models.Comment")).Return(nil).Run(func(args mock.Arguments) {
+		comment := args.Get(1).(*models.Comment)
+		assert.Equal(t, req.PostId, comment.PostId)
+		assert.Equal(t, req.Text, comment.Text)
+		assert.NotNil(t, comment.ParentCommentId)
+		assert.Equal(t, parentID, *comment.ParentCommentId)
+	})
+
+	// Execute
+	result, err := service.CreateComment(ctx, req, user)
+
+	// Assert
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.NotNil(t, result.ParentCommentId)
+	assert.Equal(t, parentID, *result.ParentCommentId)
+
+	// Verify IncrementCommentCount was NOT called for replies
+	mockPostRepo.AssertNotCalled(t, "IncrementCommentCount")
+	mockPostRepo.AssertNotCalled(t, "WithTransaction")
+	mockCommentRepo.AssertExpectations(t)
 }
 
 // Test CreateComment with nil request
 func TestCreateComment_NilRequest_ReturnsError(t *testing.T) {
-	service, _ := setupTestService()
+	service, _, _ := setupTestService()
 	ctx := context.Background()
 	user := createTestUserContext()
 
@@ -454,7 +188,7 @@ func TestCreateComment_NilRequest_ReturnsError(t *testing.T) {
 
 // Test CreateComment with nil user context
 func TestCreateComment_NilUserContext_ReturnsError(t *testing.T) {
-	service, _ := setupTestService()
+	service, _, _ := setupTestService()
 	ctx := context.Background()
 	req := createTestCreateCommentRequest()
 
@@ -467,36 +201,16 @@ func TestCreateComment_NilUserContext_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "user context is required")
 }
 
-// Test CreateComment with database error
-func TestCreateComment_DatabaseError_ReturnsError(t *testing.T) {
-	service, mockRepo := setupTestService()
-	ctx := context.Background()
-	user := createTestUserContext()
-	req := createTestCreateCommentRequest()
-
-	// Setup mock expectations - simulate database error
-	mockRepo.On("Save", ctx, commentCollectionName, mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("int64"), mock.AnythingOfType("int64"), mock.AnythingOfType("*models.Comment")).Return(errors.New("database connection failed"))
-
-	// Execute
-	result, err := service.CreateComment(ctx, req, user)
-
-	// Assert
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "failed to save comment")
-
-	mockRepo.AssertExpectations(t)
-}
-
 // Test GetComment with valid ID
 func TestGetComment_ValidId_ReturnsComment(t *testing.T) {
-	service, mockRepo := setupTestService()
+	service, mockCommentRepo, _ := setupTestService()
 	ctx := context.Background()
 	testComment := createTestComment()
+	testComment.Deleted = false
 	commentID := testComment.ObjectId
 
 	// Setup mock expectations
-	mockRepo.On("FindOne", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(testComment, nil)
+	mockCommentRepo.On("FindByID", ctx, commentID).Return(&testComment, nil)
 
 	// Execute
 	result, err := service.GetComment(ctx, commentID)
@@ -504,20 +218,21 @@ func TestGetComment_ValidId_ReturnsComment(t *testing.T) {
 	// Assert
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.Equal(t, testComment.ObjectId, result.ObjectId)
+	assert.Equal(t, commentID, result.ObjectId)
 	assert.Equal(t, testComment.Text, result.Text)
+	assert.Equal(t, testComment.Score, result.Score)
 
-	mockRepo.AssertExpectations(t)
+	mockCommentRepo.AssertExpectations(t)
 }
 
 // Test GetComment with non-existent ID
 func TestGetComment_NonExistentId_ReturnsError(t *testing.T) {
-	service, mockRepo := setupTestService()
+	service, mockCommentRepo, _ := setupTestService()
 	ctx := context.Background()
 	commentID := uuid.Must(uuid.NewV4())
 
-	// Setup mock expectations - simulate not found
-	mockRepo.On("FindOne", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(nil, errors.New("document not found"))
+	// Setup mock expectations - return not found error
+	mockCommentRepo.On("FindByID", ctx, commentID).Return(nil, errors.New("comment not found"))
 
 	// Execute
 	result, err := service.GetComment(ctx, commentID)
@@ -525,323 +240,253 @@ func TestGetComment_NonExistentId_ReturnsError(t *testing.T) {
 	// Assert
 	assert.Error(t, err)
 	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "failed to decode comment")
+	assert.Equal(t, commentsErrors.ErrCommentNotFound, err)
 
-	mockRepo.AssertExpectations(t)
+	mockCommentRepo.AssertExpectations(t)
+}
+
+// Test GetComment with deleted comment
+func TestGetComment_DeletedComment_ReturnsError(t *testing.T) {
+	service, mockCommentRepo, _ := setupTestService()
+	ctx := context.Background()
+	testComment := createTestComment()
+	testComment.Deleted = true
+	commentID := testComment.ObjectId
+
+	// Setup mock expectations
+	mockCommentRepo.On("FindByID", ctx, commentID).Return(&testComment, nil)
+
+	// Execute
+	result, err := service.GetComment(ctx, commentID)
+
+	// Assert
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Equal(t, commentsErrors.ErrCommentNotFound, err)
+
+	mockCommentRepo.AssertExpectations(t)
 }
 
 // Test UpdateComment with valid request
 func TestUpdateComment_ValidRequest_Success(t *testing.T) {
-	service, mockRepo := setupTestService()
-	ctx := context.Background()
-	user := createTestUserContext()
-	testComment := createTestComment()
-	testComment.OwnerUserId = user.UserID // Ensure ownership
-	
-	newText := "Updated comment text"
-	req := &models.UpdateCommentRequest{
-		ObjectId: testComment.ObjectId,
-		Text:     newText,
-	}
-
-	// Setup mock expectations for ownership validation
-	mockRepo.On("FindOne", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(testComment, nil)
-	
-	// Setup mock expectations for update
-	mockRepo.On("UpdateFields", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query"), mock.MatchedBy(func(updates map[string]interface{}) bool {
-		return updates["text"] == newText
-	})).Return(nil)
-	
-	// Mock the GetComment call that happens after update for cache invalidation
-	mockRepo.On("FindOne", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(testComment, nil)
-
-	// Execute
-	err := service.UpdateComment(ctx, testComment.ObjectId, req, user)
-
-	// Assert
-	assert.NoError(t, err)
-
-	mockRepo.AssertExpectations(t)
-}
-
-// Test UpdateComment with ownership validation failure
-func TestUpdateComment_UnauthorizedUser_ReturnsError(t *testing.T) {
-	service, mockRepo := setupTestService()
-	ctx := context.Background()
-	user := createTestUserContext()
-	testComment := createTestComment()
-	// Different user ID to simulate unauthorized access
-	
-	newText := "Updated comment text"
-	req := &models.UpdateCommentRequest{
-		ObjectId: testComment.ObjectId,
-		Text:     newText,
-	}
-
-	// Setup mock expectations for ownership validation failure
-	// fetchOwnedComment returns ErrCommentNotFound when document not found
-	// When document is nil, Decode returns dbi.ErrNoDocuments
-	// Pass nil as document and nil as error to create MockSingleResult{document: nil, err: nil}
-	mockRepo.On("FindOne", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(nil, nil)
-
-	// Execute
-	err := service.UpdateComment(ctx, testComment.ObjectId, req, user)
-
-	// Assert
-	assert.Error(t, err)
-	// fetchOwnedComment returns ErrCommentNotFound which wraps to "comment not found"
-	assert.Contains(t, err.Error(), "not found")
-
-	mockRepo.AssertExpectations(t)
-}
-
-// Test ValidateCommentOwnership with valid ownership
-func TestValidateCommentOwnership_ValidOwner_Success(t *testing.T) {
-	service, mockRepo := setupTestService()
+	service, mockCommentRepo, _ := setupTestService()
 	ctx := context.Background()
 	user := createTestUserContext()
 	testComment := createTestComment()
 	testComment.OwnerUserId = user.UserID
+	testComment.Deleted = false
+	commentID := testComment.ObjectId
+
+	req := &models.UpdateCommentRequest{
+		ObjectId: commentID,
+		Text:     "Updated comment text",
+	}
 
 	// Setup mock expectations
-	mockRepo.On("FindOne", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(testComment, nil)
+	mockCommentRepo.On("FindByID", ctx, commentID).Return(&testComment, nil)
+	mockCommentRepo.On("Update", ctx, mock.AnythingOfType("*models.Comment")).Return(nil).Run(func(args mock.Arguments) {
+		comment := args.Get(1).(*models.Comment)
+		assert.Equal(t, "Updated comment text", comment.Text)
+		assert.Greater(t, comment.LastUpdated, int64(0))
+	})
 
 	// Execute
-	err := service.ValidateCommentOwnership(ctx, testComment.ObjectId, user.UserID)
+	updatedComment, err := service.UpdateComment(ctx, commentID, req, user)
 
 	// Assert
 	assert.NoError(t, err)
-
-	mockRepo.AssertExpectations(t)
+	assert.NotNil(t, updatedComment)
+	assert.Equal(t, "Updated comment text", updatedComment.Text)
+	assert.Greater(t, updatedComment.LastUpdated, int64(0))
+	mockCommentRepo.AssertExpectations(t)
 }
 
-// Test ValidateCommentOwnership with invalid ownership
-func TestValidateCommentOwnership_InvalidOwner_ReturnsError(t *testing.T) {
-	service, mockRepo := setupTestService()
+// Test UpdateComment with unauthorized user
+func TestUpdateComment_UnauthorizedUser_ReturnsError(t *testing.T) {
+	service, mockCommentRepo, _ := setupTestService()
 	ctx := context.Background()
-	commentID := uuid.Must(uuid.NewV4())
-	userID := uuid.Must(uuid.NewV4())
+	user := createTestUserContext()
+	testComment := createTestComment()
+	testComment.OwnerUserId = uuid.Must(uuid.NewV4()) // Different user
+	testComment.Deleted = false
+	commentID := testComment.ObjectId
 
-	// Setup mock expectations - simulate not found
-	// fetchOwnedComment returns ErrCommentNotFound when document not found
-	// When document is nil, Decode returns dbi.ErrNoDocuments
-	// Pass nil as document and nil as error to create MockSingleResult{document: nil, err: nil}
-	mockRepo.On("FindOne", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(nil, nil)
+	req := &models.UpdateCommentRequest{
+		ObjectId: commentID,
+		Text:     "Updated comment text",
+	}
+
+	// Setup mock expectations
+	mockCommentRepo.On("FindByID", ctx, commentID).Return(&testComment, nil)
 
 	// Execute
-	err := service.ValidateCommentOwnership(ctx, commentID, userID)
+	updatedComment, err := service.UpdateComment(ctx, commentID, req, user)
 
 	// Assert
 	assert.Error(t, err)
-	// ValidateCommentOwnership just returns the error from fetchOwnedComment
-	assert.ErrorIs(t, err, commentsErrors.ErrCommentNotFound)
+	assert.Nil(t, updatedComment)
+	assert.Equal(t, commentsErrors.ErrCommentOwnershipRequired, err)
 
-	mockRepo.AssertExpectations(t)
+	mockCommentRepo.AssertExpectations(t)
 }
 
 // Test IncrementScore with valid user
 func TestIncrementScore_ValidUser_Success(t *testing.T) {
-	service, mockRepo := setupTestService()
+	service, mockCommentRepo, _ := setupTestService()
 	ctx := context.Background()
 	user := createTestUserContext()
 	commentID := uuid.Must(uuid.NewV4())
 	delta := 5
 
 	// Setup mock expectations
-	// IncrementScore -> IncrementFields doesn't call FindOne, it just builds a query and calls IncrementFields
-	mockRepo.On("IncrementFields", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query"), mock.MatchedBy(func(increments map[string]interface{}) bool {
-		return increments["score"] == delta
-	})).Return(nil)
+	mockCommentRepo.On("IncrementScore", ctx, commentID, delta).Return(nil)
 
 	// Execute
 	err := service.IncrementScore(ctx, commentID, delta, user)
 
 	// Assert
 	assert.NoError(t, err)
-
-	mockRepo.AssertExpectations(t)
+	mockCommentRepo.AssertExpectations(t)
 }
 
 // Test IncrementScore with database error
 func TestIncrementScore_DatabaseError_ReturnsError(t *testing.T) {
-	service, mockRepo := setupTestService()
+	service, mockCommentRepo, _ := setupTestService()
 	ctx := context.Background()
 	user := createTestUserContext()
 	commentID := uuid.Must(uuid.NewV4())
 	delta := 5
 
 	// Setup mock expectations with error
-	// IncrementScore -> IncrementFields doesn't call FindOne, it just builds a query and calls IncrementFields
-	mockRepo.On("IncrementFields", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query"), mock.MatchedBy(func(increments map[string]interface{}) bool {
-		return increments["score"] == delta
-	})).Return(errors.New("database error"))
+	mockCommentRepo.On("IncrementScore", ctx, commentID, delta).Return(errors.New("database connection failed"))
 
 	// Execute
 	err := service.IncrementScore(ctx, commentID, delta, user)
 
 	// Assert
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to increment fields")
+	assert.Contains(t, err.Error(), "failed to increment score")
 
-	mockRepo.AssertExpectations(t)
+	mockCommentRepo.AssertExpectations(t)
 }
 
-// Test DeleteComment with valid ownership
+// Test DeleteComment with valid ownership (root comment)
 func TestDeleteComment_ValidOwnership_Success(t *testing.T) {
-	service, mockRepo := setupTestService()
+	service, mockCommentRepo, mockPostRepo := setupTestService()
 	ctx := context.Background()
 	user := createTestUserContext()
 	testComment := createTestComment()
 	testComment.OwnerUserId = user.UserID
+	testComment.Deleted = false
+	testComment.ParentCommentId = nil // Root comment
+	commentID := testComment.ObjectId
 	postID := testComment.PostId
 
-	// Setup mock expectations for ownership validation
-	mockRepo.On("FindOne", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(testComment, nil)
-	
-	// Setup mock expectations for delete
-	mockRepo.On("Delete", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(nil)
+	// Setup mock expectations for transaction
+	mockPostRepo.On("WithTransaction", ctx, mock.AnythingOfType("func(context.Context) error")).Return(nil).Run(func(args mock.Arguments) {
+		fn := args.Get(1).(func(context.Context) error)
+		fn(ctx)
+	})
+
+	// Setup expectations for FindByID (to verify ownership)
+	mockCommentRepo.On("FindByID", ctx, commentID).Return(&testComment, nil)
+
+	// Setup expectations for Delete (called within transaction)
+	mockCommentRepo.On("Delete", mock.Anything, commentID).Return(nil)
+	mockCommentRepo.On("DeleteRepliesByParentID", mock.Anything, commentID).Return(nil)
+
+	// Setup expectations for IncrementCommentCount (called within transaction)
+	mockPostRepo.On("IncrementCommentCount", mock.Anything, postID, -1).Return(nil)
 
 	// Execute
-	err := service.DeleteComment(ctx, testComment.ObjectId, postID, user)
+	err := service.DeleteComment(ctx, commentID, postID, user)
 
 	// Assert
 	assert.NoError(t, err)
-
-	mockRepo.AssertExpectations(t)
+	mockCommentRepo.AssertExpectations(t)
+	mockPostRepo.AssertExpectations(t)
 }
 
-// Test SoftDeleteComment with valid ownership
-func TestSoftDeleteComment_ValidOwnership_Success(t *testing.T) {
-	service, mockRepo := setupTestService()
+// Test DeleteComment with reply (no count decrement)
+func TestDeleteComment_Reply_NoCountDecrement(t *testing.T) {
+	service, mockCommentRepo, mockPostRepo := setupTestService()
 	ctx := context.Background()
 	user := createTestUserContext()
 	testComment := createTestComment()
 	testComment.OwnerUserId = user.UserID
+	testComment.Deleted = false
+	parentID := uuid.Must(uuid.NewV4())
+	testComment.ParentCommentId = &parentID // Reply comment
+	commentID := testComment.ObjectId
+	postID := testComment.PostId
 
-	// Setup mock expectations for ownership validation
-	mockRepo.On("FindOne", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(testComment, nil)
-	
-	// Setup mock expectations for update
-	mockRepo.On("UpdateFields", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query"), mock.MatchedBy(func(updates map[string]interface{}) bool {
-		deleted, hasDeleted := updates["deleted"]
-		deletedDate, hasDeletedDate := updates["deletedDate"]
-		lastUpdated, hasLastUpdated := updates["lastUpdated"]
-		return hasDeleted && deleted == true && hasDeletedDate && deletedDate.(int64) > 0 && hasLastUpdated && lastUpdated.(int64) > 0
-	})).Return(nil)
-	
-	// Setup mock expectations for GetComment call (used internally by SoftDeleteComment)
-	mockRepo.On("FindOne", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(testComment, nil)
+	// Setup expectations for FindByID (to verify ownership)
+	mockCommentRepo.On("FindByID", ctx, commentID).Return(&testComment, nil)
+
+	// Setup expectations for Delete (no transaction for replies)
+	mockCommentRepo.On("Delete", ctx, commentID).Return(nil)
 
 	// Execute
-	err := service.SoftDeleteComment(ctx, testComment.ObjectId, user)
+	err := service.DeleteComment(ctx, commentID, postID, user)
 
 	// Assert
 	assert.NoError(t, err)
 
-	mockRepo.AssertExpectations(t)
+	// Verify IncrementCommentCount was NOT called for replies
+	mockPostRepo.AssertNotCalled(t, "IncrementCommentCount")
+	mockPostRepo.AssertNotCalled(t, "WithTransaction")
+	mockCommentRepo.AssertExpectations(t)
 }
 
-// Test CreateIndex
-func TestCreateIndex_ValidIndexes_Success(t *testing.T) {
-	service, mockRepo := setupTestService()
+// Test DeleteComment with unauthorized user
+func TestDeleteComment_UnauthorizedUser_ReturnsError(t *testing.T) {
+	service, mockCommentRepo, _ := setupTestService()
 	ctx := context.Background()
-	indexes := map[string]interface{}{
-		"objectId": 1,
-		"postId":   1,
-	}
+	user := createTestUserContext()
+	testComment := createTestComment()
+	testComment.OwnerUserId = uuid.Must(uuid.NewV4()) // Different user
+	testComment.Deleted = false
+	commentID := testComment.ObjectId
+	postID := testComment.PostId
 
 	// Setup mock expectations
-	mockRepo.On("CreateIndex", ctx, commentCollectionName, indexes).Return(nil)
+	mockCommentRepo.On("FindByID", ctx, commentID).Return(&testComment, nil)
 
 	// Execute
-	err := service.CreateIndex(ctx, indexes)
-
-	// Assert
-	assert.NoError(t, err)
-
-	mockRepo.AssertExpectations(t)
-}
-
-// Test CreateIndex with database error
-func TestCreateIndex_DatabaseError_ReturnsError(t *testing.T) {
-	service, mockRepo := setupTestService()
-	ctx := context.Background()
-	indexes := map[string]interface{}{
-		"objectId": 1,
-	}
-
-	// Setup mock expectations with error
-	mockRepo.On("CreateIndex", ctx, commentCollectionName, indexes).Return(errors.New("index creation failed"))
-
-	// Execute
-	err := service.CreateIndex(ctx, indexes)
+	err := service.DeleteComment(ctx, commentID, postID, user)
 
 	// Assert
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "index creation failed")
+	assert.Equal(t, commentsErrors.ErrCommentOwnershipRequired, err)
 
-	mockRepo.AssertExpectations(t)
-}
-
-// Test UpdateCommentProfile
-func TestUpdateCommentProfile_ValidParameters_Success(t *testing.T) {
-	service, mockRepo := setupTestService()
-	ctx := context.Background()
-	userID := uuid.Must(uuid.NewV4())
-	displayName := "Updated Display Name"
-	avatar := "https://example.com/new-avatar.jpg"
-
-	// Setup mock expectations
-	expectedUpdates := mock.MatchedBy(func(updates map[string]interface{}) bool {
-		displayNameMatch := updates["ownerDisplayName"] == displayName
-		avatarMatch := updates["ownerAvatar"] == avatar
-		lastUpdatedMatch := false
-		if lastUpdated, ok := updates["lastUpdated"]; ok {
-			if _, ok := lastUpdated.(int64); ok {
-				lastUpdatedMatch = true
-			}
-		}
-		return displayNameMatch && avatarMatch && lastUpdatedMatch
-	})
-	mockRepo.On("UpdateFields", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query"), expectedUpdates).Return(nil)
-
-	// Execute
-	err := service.UpdateCommentProfile(ctx, userID, displayName, avatar)
-
-	// Assert
-	assert.NoError(t, err)
-
-	mockRepo.AssertExpectations(t)
+	mockCommentRepo.AssertExpectations(t)
 }
 
 // Test GetCommentsByPost with filter
 func TestGetCommentsByPost_WithFilter_ReturnsResults(t *testing.T) {
-	service, mockRepo := setupTestService()
+	service, mockCommentRepo, _ := setupTestService()
 	ctx := context.Background()
 	postID := uuid.Must(uuid.NewV4())
-	
 	filter := &models.CommentQueryFilter{
-		PostId: &postID,
-		Page:   1,
-		Limit:  10,
+		PostId:   &postID,
+		Limit:    10,
+		Page:     1,
+		RootOnly: true,
 	}
 
-	testComments := []*models.Comment{createTestComment(), createTestComment()}
-	interfaceComments := make([]interface{}, len(testComments))
-	for i, comment := range testComments {
-		interfaceComments[i] = comment
-	}
+	expectedComment := createTestComment()
+	expectedComment.PostId = postID
+	expectedComment.ParentCommentId = nil
+	expectedComments := []*models.Comment{&expectedComment}
 
 	// Setup mock expectations
-	expectedOptions := &interfaces.FindOptions{
-		Limit: func() *int64 { l := int64(10); return &l }(),
-		Skip:  func() *int64 { s := int64(0); return &s }(),
-		Sort:  map[string]int{"created_date": -1},
-	}
-	
-	// GetCommentsByPost calls QueryComments which calls getCommentCount
-	mockRepo.On("Count", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(int64(2), nil)
-	mockRepo.On("Find", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query"), expectedOptions).Return(interfaceComments, nil)
+	mockCommentRepo.On("Find", ctx, mock.MatchedBy(func(f commentRepository.CommentFilter) bool {
+		return f.PostID != nil && *f.PostID == postID && f.RootOnly == true
+	}), 10, 0).Return(expectedComments, nil)
+
+	mockCommentRepo.On("Count", ctx, mock.MatchedBy(func(f commentRepository.CommentFilter) bool {
+		return f.PostID != nil && *f.PostID == postID && f.RootOnly == true
+	})).Return(int64(1), nil)
 
 	// Execute
 	result, err := service.GetCommentsByPost(ctx, postID, filter)
@@ -849,204 +494,114 @@ func TestGetCommentsByPost_WithFilter_ReturnsResults(t *testing.T) {
 	// Assert
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.Len(t, result.Comments, 2)
+	assert.Equal(t, 1, result.Count)
+	assert.Len(t, result.Comments, 1)
 	assert.Equal(t, 1, result.Page)
 	assert.Equal(t, 10, result.Limit)
-	assert.False(t, result.HasMore)
 
-	mockRepo.AssertExpectations(t)
+	mockCommentRepo.AssertExpectations(t)
 }
 
-// Test QueryComments with cursor pagination
-func TestQueryCommentsWithCursor_ValidFilter_ReturnsResults(t *testing.T) {
-	service, mockRepo := setupTestService()
+// Test GetReplyCount
+func TestGetReplyCount_Success(t *testing.T) {
+	service, mockCommentRepo, _ := setupTestService()
 	ctx := context.Background()
-	
-	filter := &models.CommentQueryFilter{
-		Limit: 5,
-		Page:  1,
-	}
+	parentID := uuid.Must(uuid.NewV4())
 
-	testComments := []*models.Comment{createTestComment(), createTestComment()}
-	interfaceComments := make([]interface{}, len(testComments))
-	for i, comment := range testComments {
-		interfaceComments[i] = comment
-	}
-
-	// Setup mock expectations for cursor-based query (delegates to regular query)
-	expectedOptions := &interfaces.FindOptions{
-		Limit: func() *int64 { l := int64(5); return &l }(),
-		Skip:  func() *int64 { s := int64(0); return &s }(),
-		Sort:  map[string]int{"created_date": -1},
-	}
-	
-	// QueryCommentsWithCursor calls QueryComments which calls getCommentCount
-	mockRepo.On("Count", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(int64(2), nil)
-	mockRepo.On("Find", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query"), expectedOptions).Return(interfaceComments, nil)
+	// Setup mock expectations
+	mockCommentRepo.On("CountReplies", ctx, parentID).Return(int64(5), nil)
 
 	// Execute
-	result, err := service.QueryCommentsWithCursor(ctx, filter)
+	count, err := service.GetReplyCount(ctx, parentID)
 
 	// Assert
 	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Len(t, result.Comments, 2)
+	assert.Equal(t, int64(5), count)
 
-	mockRepo.AssertExpectations(t)
+	mockCommentRepo.AssertExpectations(t)
 }
 
-// Test UpdateComment with multiple fields
-func TestUpdateComment_MultipleFields_UpdatesAllFields(t *testing.T) {
-	service, mockRepo := setupTestService()
+// Note: Concurrent atomicity testing for ToggleLike is handled by the integration test
+// in repository/comment_votes_test.go, which tests against the real database (thread-safe).
+// Unit tests with mocks are not suitable for concurrent testing when the race detector is enabled.
+
+// Test UpdateCommentProfile
+func TestUpdateCommentProfile_ValidParameters_Success(t *testing.T) {
+	service, mockCommentRepo, _ := setupTestService()
+	ctx := context.Background()
+	userID := uuid.Must(uuid.NewV4())
+	displayName := "Updated Display Name"
+	avatar := "https://example.com/new-avatar.jpg"
+
+	// Setup mock expectations
+	mockCommentRepo.On("UpdateOwnerProfile", ctx, userID, displayName, avatar).Return(nil)
+
+	// Execute
+	err := service.UpdateCommentProfile(ctx, userID, displayName, avatar)
+
+	// Assert
+	assert.NoError(t, err)
+	mockCommentRepo.AssertExpectations(t)
+}
+
+// Test GetRootCommentCount
+func TestGetRootCommentCount_Success(t *testing.T) {
+	service, mockCommentRepo, _ := setupTestService()
+	ctx := context.Background()
+	postID := uuid.Must(uuid.NewV4())
+
+	// Setup mock expectations
+	mockCommentRepo.On("CountByPostID", ctx, postID).Return(int64(10), nil)
+
+	// Execute
+	count, err := service.GetRootCommentCount(ctx, postID)
+
+	// Assert
+	assert.NoError(t, err)
+	assert.Equal(t, int64(10), count)
+
+	mockCommentRepo.AssertExpectations(t)
+}
+
+// Test ValidateCommentOwnership with valid owner
+func TestValidateCommentOwnership_ValidOwner_Success(t *testing.T) {
+	service, mockCommentRepo, _ := setupTestService()
 	ctx := context.Background()
 	user := createTestUserContext()
 	testComment := createTestComment()
 	testComment.OwnerUserId = user.UserID
-
-	newText := "Updated text"
-
-	req := &models.UpdateCommentRequest{
-		ObjectId: testComment.ObjectId,
-		Text:     newText,
-	}
-
-	// Setup mock expectations for ownership validation
-	mockRepo.On("FindOne", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(testComment, nil)
-
-	// Setup mock expectations for GetComment call (used internally by UpdateComment for cache invalidation)
-	mockRepo.On("FindOne", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(testComment, nil)
-
-	// Setup mock expectations for update
-	expectedUpdates := mock.MatchedBy(func(updates map[string]interface{}) bool {
-		textMatch := updates["text"] == newText
-		lastUpdatedMatch := false
-		if lastUpdated, ok := updates["lastUpdated"]; ok {
-			if _, ok := lastUpdated.(int64); ok {
-				lastUpdatedMatch = true
-			}
-		}
-		return textMatch && lastUpdatedMatch
-	})
-	mockRepo.On("UpdateFields", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query"), expectedUpdates).Return(nil)
-
-	// Execute
-	err := service.UpdateComment(ctx, testComment.ObjectId, req, user)
-
-	// Assert
-	assert.NoError(t, err)
-
-	mockRepo.AssertExpectations(t)
-}
-
-// Test business logic edge cases
-
-// Test CreateComment with empty text (should pass service validation)
-func TestCreateComment_EmptyText_Success(t *testing.T) {
-	service, mockRepo := setupTestService()
-	ctx := context.Background()
-	user := createTestUserContext()
-	req := createTestCreateCommentRequest()
-	req.Text = "" // Empty text
+	testComment.Deleted = false
 
 	// Setup mock expectations
-	mockRepo.On("Save", ctx, commentCollectionName, mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("int64"), mock.AnythingOfType("int64"), mock.AnythingOfType("*models.Comment")).Return(nil)
-
-	// Execute - service layer should not validate business rules, that's handler's job
-	result, err := service.CreateComment(ctx, req, user)
-
-	// Assert
-	assert.NoError(t, err) // Service layer accepts empty text
-	assert.NotNil(t, result)
-	assert.Equal(t, "", result.Text)
-
-	mockRepo.AssertExpectations(t)
-}
-
-// Test DeleteCommentsByPost
-func TestDeleteCommentsByPost_ValidOwnership_Success(t *testing.T) {
-	service, mockRepo := setupTestService()
-	ctx := context.Background()
-	user := createTestUserContext()
-	postID := uuid.Must(uuid.NewV4())
-
-	// Setup mock expectations for delete
-	mockRepo.On("Delete", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(nil)
+	mockCommentRepo.On("FindByID", ctx, testComment.ObjectId).Return(&testComment, nil)
 
 	// Execute
-	err := service.DeleteCommentsByPost(ctx, postID, user)
+	err := service.ValidateCommentOwnership(ctx, testComment.ObjectId, user.UserID)
 
 	// Assert
 	assert.NoError(t, err)
-
-	mockRepo.AssertExpectations(t)
+	mockCommentRepo.AssertExpectations(t)
 }
 
-// Test GetCommentsByUser
-func TestGetCommentsByUser_ValidUser_ReturnsComments(t *testing.T) {
-	service, mockRepo := setupTestService()
+// Test ValidateCommentOwnership with invalid owner
+func TestValidateCommentOwnership_InvalidOwner_ReturnsError(t *testing.T) {
+	service, mockCommentRepo, _ := setupTestService()
 	ctx := context.Background()
+	commentID := uuid.Must(uuid.NewV4())
 	userID := uuid.Must(uuid.NewV4())
-	
-	filter := &models.CommentQueryFilter{
-		OwnerUserId: &userID,
-		Page:        1,
-		Limit:       10,
-	}
-
-	testComments := []*models.Comment{createTestComment(), createTestComment()}
-	interfaceComments := make([]interface{}, len(testComments))
-	for i, comment := range testComments {
-		interfaceComments[i] = comment
-	}
+	testComment := createTestComment()
+	testComment.OwnerUserId = uuid.Must(uuid.NewV4()) // Different user
+	testComment.Deleted = false
 
 	// Setup mock expectations
-	expectedOptions := &interfaces.FindOptions{
-		Limit: func() *int64 { l := int64(10); return &l }(),
-		Skip:  func() *int64 { s := int64(0); return &s }(),
-		Sort:  map[string]int{"created_date": -1},
-	}
-	
-	// GetCommentsByUser calls QueryComments which calls getCommentCount
-	mockRepo.On("Count", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query")).Return(int64(2), nil)
-	mockRepo.On("Find", ctx, commentCollectionName, mock.AnythingOfType("*interfaces.Query"), expectedOptions).Return(interfaceComments, nil)
+	mockCommentRepo.On("FindByID", ctx, commentID).Return(&testComment, nil)
 
 	// Execute
-	result, err := service.GetCommentsByUser(ctx, userID, filter)
+	err := service.ValidateCommentOwnership(ctx, commentID, userID)
 
 	// Assert
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Len(t, result.Comments, 2)
+	assert.Error(t, err)
+	assert.Equal(t, commentsErrors.ErrCommentNotFound, err)
 
-	mockRepo.AssertExpectations(t)
-}
-
-// Test concurrent validation scenarios
-func TestCreateComment_ConcurrentRequests_Success(t *testing.T) {
-	service, mockRepo := setupTestService()
-	ctx := context.Background()
-	user := createTestUserContext()
-
-	// Simulate multiple concurrent requests
-	numRequests := 5
-	mockRepo.On("Save", ctx, commentCollectionName, mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("uuid.UUID"), mock.AnythingOfType("int64"), mock.AnythingOfType("int64"), mock.AnythingOfType("*models.Comment")).Return(nil).Times(numRequests)
-
-	// Execute concurrent requests
-	done := make(chan bool, numRequests)
-	for i := 0; i < numRequests; i++ {
-		go func() {
-			req := createTestCreateCommentRequest()
-			result, err := service.CreateComment(ctx, req, user)
-			assert.NoError(t, err)
-			assert.NotNil(t, result)
-			done <- true
-		}()
-	}
-
-	// Wait for all requests to complete
-	for i := 0; i < numRequests; i++ {
-		<-done
-	}
-
-	mockRepo.AssertExpectations(t)
+	mockCommentRepo.AssertExpectations(t)
 }

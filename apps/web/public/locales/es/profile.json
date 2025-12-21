@@ -5,6 +5,10 @@
     "followers": "Followers",
     "following": "Following"
   },
-  "about": "About",
-  "editProfile": "Edit Profile"
+  "about": {
+    "title": "Acerca de",
+    "worksAt": "Trabaja en",
+    "defaultTagline": "Compartiendo pensamientos y conectando con la comunidad"
+  },
+  "editProfile": "Editar Perfil"
 }

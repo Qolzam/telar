@@ -51,9 +51,11 @@ func RegisterRoutes(app *fiber.App, handlers *PostsHandlers, cfg *platformconfig
 	// --- Service-to-Service Routes (HMAC-Only) ---
 	// These are actions on the collection, so we group them.
 	s2sActions := group.Group("/actions", hmacMiddleware)
-	s2sActions.Post("/index", handlers.PostHandler.CreateIndex)
 	s2sActions.Put("/score", handlers.PostHandler.IncrementScore)
 	s2sActions.Put("/comment/count", handlers.PostHandler.IncrementCommentCount)
+
+	// Public search endpoint for autocomplete
+	group.Get("/search", handlers.PostHandler.SearchPosts)
 
 	// --- User-Facing Routes (Dual Auth) ---
 	userGroup := group.Group("", dualAuthMiddleware)
@@ -70,13 +72,13 @@ func RegisterRoutes(app *fiber.App, handlers *PostsHandlers, cfg *platformconfig
 
 	// Base query route (backward compatibility)
 	userGroup.Get("/", handlers.PostHandler.QueryPosts) // GET /posts/
-	
+
 	// --- Query Sub-Group for Collection-Level Queries ---
 	// This completely disambiguates cursor query routes from specific resource routes.
 	// Cursor-based queries go here to avoid route conflicts with /:postId
 	queryGroup := userGroup.Group("/queries")
-	queryGroup.Get("/cursor", handlers.PostHandler.QueryPostsWithCursor)    // GET /posts/queries/cursor
-	queryGroup.Get("/search/cursor", handlers.PostHandler.SearchPostsWithCursor) // GET /posts/queries/search/cursor
+	queryGroup.Get("/cursor", handlers.PostHandler.QueryPostsWithCursor)
+	queryGroup.Get("/search/cursor", handlers.PostHandler.SearchPostsWithCursor)
 
 	// --- Parameterized Routes for Specific Resources (MUST BE LAST) ---
 	// These routes operate on a single post, identified by a parameter.
