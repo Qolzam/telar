@@ -18,7 +18,7 @@ export const SDK_CONFIG = {
    */
   GO_API_BASE_URL: typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_API_URL 
     ? process.env.NEXT_PUBLIC_API_URL 
-    : 'http://localhost:8080',
+    : 'http://localhost:9099',
 
   /**
    * Default request timeout in milliseconds
@@ -60,16 +60,15 @@ export const ENDPOINTS = {
     UPDATE: '/profile',
     BY_IDS: '/profile/ids',
     QUERY: '/profile',
+    SEARCH: '/profile/search',
   },
 
   /**
-   * Future: Posts endpoints (will call Go API directly)
+   * Posts endpoints (direct Go API calls)
    */
-  // POSTS: {
-  //   GET_FEED: '/posts',
-  //   CREATE: '/posts',
-  //   LIKE: (postId: string) => `/posts/${postId}/like`,
-  // },
+  POSTS: {
+    SEARCH: '/posts/search',
+  },
   /**
    * Comments endpoints (direct Go API calls)
    * Mirrors Go API routes in apps/api/comments/routes.go
@@ -92,6 +91,26 @@ export const ENDPOINTS = {
    */
   VOTES: {
     VOTE: '/votes', // POST /votes with { postId, typeId }
+  },
+
+  /**
+   * Bookmarks endpoints (direct Go API calls)
+   * Mirrors Go API routes in apps/api/bookmarks/routes.go
+   */
+  BOOKMARKS: {
+    TOGGLE: (postId: string) => `/bookmarks/${postId}/toggle`,
+    LIST: '/bookmarks',
+  },
+
+  /**
+   * Storage endpoints (direct Go API calls)
+   * Mirrors Go API routes in apps/api/storage/routes.go
+   */
+  STORAGE: {
+    INIT: '/storage/upload/init',
+    CONFIRM: '/storage/upload/confirm',
+    GET_URL: (fileId: string) => `/storage/files/${fileId}/url`,
+    DELETE: (fileId: string) => `/storage/files/${fileId}`,
   },
 } as const;
 

@@ -2,7 +2,6 @@
 
 import { useTranslation } from 'react-i18next';
 import { Box, Card, CardHeader, Link, Stack } from '@mui/material';
-import EmailIcon from '@mui/icons-material/Email';
 import BusinessIcon from '@mui/icons-material/Business';
 import LanguageIcon from '@mui/icons-material/Language';
 import type { UserProfileModel } from '@telar/sdk';
@@ -19,23 +18,9 @@ export function ProfileAbout({ profile }: ProfileAboutProps) {
       <CardHeader title={t('about.title')} />
 
       <Stack spacing={2} sx={{ p: 3 }}>
-        {profile.tagLine && (
-          <Box sx={{ typography: 'body2', color: 'text.secondary' }}>
-            {profile.tagLine}
-          </Box>
-        )}
-
-        {profile.email && (
-          <Stack
-            direction={{ xs: 'column', sm: 'row' }}
-            spacing={2}
-            alignItems={{ xs: 'flex-start', sm: 'center' }}
-            sx={{ typography: 'body2' }}
-          >
-            <EmailIcon sx={{ color: 'text.secondary' }} />
-            <Box sx={{ overflowWrap: 'anywhere' }}>{profile.email}</Box>
-          </Stack>
-        )}
+        <Box sx={{ typography: 'body2', color: 'text.secondary' }}>
+          {profile.tagLine || t('about.defaultTagline')}
+        </Box>
 
         {profile.companyName && (
           <Stack

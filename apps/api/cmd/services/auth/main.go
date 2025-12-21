@@ -303,6 +303,6 @@ func main() {
 
 	auth.RegisterRoutes(app, authHandlers, cfg)
 
-	log.Printf("Starting Auth Service on port 8080")
-	log.Fatal(app.Listen(":8080"))
+	log.Printf("Starting Auth Service on port 9099")
+	log.Fatal(app.Listen(":9099"))
 }

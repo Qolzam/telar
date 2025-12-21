@@ -1,6 +1,6 @@
 
 const getInternalApiUrl = () => {
-  const url = process.env.INTERNAL_API_URL || 'http://localhost:8080';
+  const url = process.env.INTERNAL_API_URL || 'http://localhost:9099';
   return url.replace('localhost', '127.0.0.1');
 };
 
@@ -24,6 +24,11 @@ export class ApiError extends Error {
   }
 }
 
+// Generate a unique request ID for tracking
+function generateRequestID(): string {
+  return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+}
+
 /**
  * Make HTTP request to Go API
  * 
@@ -40,6 +45,9 @@ export async function apiRequest<T>(
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), API_CONFIG.TIMEOUT);
 
+  // Generate or use existing request ID
+  const requestID = (options.headers && (options.headers as Record<string, string>)['X-Request-ID']) || generateRequestID();
+
   try {
     const response = await fetch(url, {
       ...options,
@@ -49,6 +57,7 @@ export async function apiRequest<T>(
         ...(options.headers && (options.headers as Record<string, string>)['Content-Type']
           ? {}
           : { 'Content-Type': 'application/json' }),
+        'X-Request-ID': requestID,
         ...options.headers,
       },
     });

@@ -14,14 +14,14 @@ import (
 
 // CommentFilter represents filtering criteria for querying comments
 type CommentFilter struct {
-	PostID         *uuid.UUID
-	OwnerUserID    *uuid.UUID
+	PostID          *uuid.UUID
+	OwnerUserID     *uuid.UUID
 	ParentCommentID *uuid.UUID
-	RootOnly       bool // If true, only return root comments (parent_comment_id IS NULL)
-	IncludeDeleted bool // If false, filter out deleted comments
-	Deleted        *bool
-	CreatedAfter   *int64
-	CreatedBefore  *int64
+	RootOnly        bool // If true, only return root comments (parent_comment_id IS NULL)
+	IncludeDeleted  bool // If false, filter out deleted comments
+	Deleted         *bool
+	CreatedAfter    *int64
+	CreatedBefore   *int64
 }
 
 // CommentRepository defines the interface for comment-specific database operations
@@ -59,6 +59,8 @@ type CommentRepository interface {
 	// CountByPostID counts root comments (not replies) for a post
 	// This is used for the denormalized comment_count on posts
 	CountByPostID(ctx context.Context, postID uuid.UUID) (int64, error)
+	// CountByPostIDs counts root comments for multiple posts in a single query
+	CountByPostIDs(ctx context.Context, postIDs []uuid.UUID) (map[uuid.UUID]int64, error)
 
 	// CountReplies counts replies to a specific comment
 	CountReplies(ctx context.Context, parentID uuid.UUID) (int64, error)
@@ -84,6 +86,10 @@ type CommentRepository interface {
 	// DeleteByPostID soft deletes all comments for a post (batch operation)
 	DeleteByPostID(ctx context.Context, postID uuid.UUID) error
 
+	// DeleteRepliesByParentID soft deletes all replies to a specific parent comment
+	// Used for cascade delete when a root comment is deleted
+	DeleteRepliesByParentID(ctx context.Context, parentID uuid.UUID) error
+
 	// AddVote attempts to add a vote (like) for a comment
 	// Returns true if a new row was inserted, false if it already existed
 	AddVote(ctx context.Context, commentID, userID uuid.UUID) (bool, error)
@@ -105,4 +111,3 @@ type CommentRepository interface {
 	// This is needed for atomic vote operations that update both comment_votes and comments.score
 	WithTransaction(ctx context.Context, fn func(context.Context) error) error
 }
-

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -54,6 +55,10 @@ func (h *CommentHandler) CreateComment(c *fiber.Ctx) error {
 		return errors.HandleServiceError(c, err)
 	}
 
+	if result == nil {
+		return errors.HandleServiceError(c, fmt.Errorf("comment creation returned nil"))
+	}
+
 	response := h.convertCommentToResponse(result)
 	return c.Status(http.StatusCreated).JSON(response)
 }
@@ -76,20 +81,17 @@ func (h *CommentHandler) UpdateComment(c *fiber.Ctx) error {
 		return errors.HandleUserContextError(c, "Invalid user context")
 	}
 
-	// Update comment
-	err := h.commentService.UpdateComment(c.Context(), req.ObjectId, &req, &user)
+	// Update 
+	updatedComment, err := h.commentService.UpdateComment(c.Context(), req.ObjectId, &req, &user)
 	if err != nil {
 		return errors.HandleServiceError(c, err)
 	}
 
-	// Get updated comment
-	comment, err := h.commentService.GetComment(c.Context(), req.ObjectId)
-	if err != nil {
-		return errors.HandleServiceError(c, err)
+	if updatedComment == nil {
+		return errors.HandleServiceError(c, fmt.Errorf("comment not found after update"))
 	}
 
-	// Convert to response format
-	response := h.convertCommentToResponse(comment)
+	response := h.convertCommentToResponse(updatedComment)
 	return c.Status(http.StatusOK).JSON(response)
 }
 
@@ -130,11 +132,15 @@ func (h *CommentHandler) GetCommentsByPost(c *fiber.Ctx) error {
 	filter.RootOnly = true
 	filter.PostId = &postID
 
+	ctx := c.Context()
+
+
 	// Use cursor-based pagination (always)
-	comments, err := h.commentService.QueryCommentsWithCursor(c.Context(), filter)
+	comments, err := h.commentService.QueryCommentsWithCursor(ctx, filter)
 	if err != nil {
 		return errors.HandleServiceError(c, err)
 	}
+
 
 	// Enrich with reply counts and user votes (BULK OPERATIONS - avoids N+1 queries)
 	commentIDs := make([]uuid.UUID, 0, len(comments.Comments))
@@ -147,8 +153,10 @@ func (h *CommentHandler) GetCommentsByPost(c *fiber.Ctx) error {
 
 	// Bulk-load reply counts (single query instead of N queries)
 	if len(commentIDs) > 0 {
-		replyCountMap, err := h.commentService.GetReplyCountsBulk(c.Context(), commentIDs)
+
+		replyCountMap, err := h.commentService.GetReplyCountsBulk(ctx, commentIDs)
 		if err == nil {
+
 			for i := range comments.Comments {
 				id, _ := uuid.FromString(comments.Comments[i].ObjectId)
 				if id != [16]byte{} {
@@ -162,8 +170,10 @@ func (h *CommentHandler) GetCommentsByPost(c *fiber.Ctx) error {
 
 	// Bulk-load user votes if user is authenticated (single query using ANY operator)
 	if user, ok := c.Locals(types.UserCtxName).(types.UserContext); ok && len(commentIDs) > 0 {
-		voteMap, err := h.commentService.GetUserVotesForComments(c.Context(), commentIDs, user.UserID)
+
+		voteMap, err := h.commentService.GetUserVotesForComments(ctx, commentIDs, user.UserID)
 		if err == nil {
+
 			// Set IsLiked for each comment
 			for i := range comments.Comments {
 				id, _ := uuid.FromString(comments.Comments[i].ObjectId)
@@ -362,6 +372,14 @@ func (h *CommentHandler) convertCommentToResponse(comment *models.Comment) model
 			s := comment.ParentCommentId.String()
 			return &s
 		}(),
+		ReplyToUserId: func() *string {
+			if comment.ReplyToUserId == nil {
+				return nil
+			}
+			s := comment.ReplyToUserId.String()
+			return &s
+		}(),
+		ReplyToDisplayName: comment.ReplyToDisplayName,
 		Text:             comment.Text,
 		Deleted:          comment.Deleted,
 		DeletedDate:      comment.DeletedDate,

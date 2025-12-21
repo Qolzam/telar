@@ -14,7 +14,9 @@ type Comment struct {
 	OwnerDisplayName string    `json:"ownerDisplayName" bson:"ownerDisplayName" db:"ownerDisplayName"`
 	OwnerAvatar      string    `json:"ownerAvatar" bson:"ownerAvatar" db:"ownerAvatar"`
 	PostId           uuid.UUID `json:"postId" bson:"postId" db:"postId"`
-	ParentCommentId  *uuid.UUID `json:"parentCommentId,omitempty" bson:"parentCommentId,omitempty" db:"parentCommentId"`
+	ParentCommentId  *uuid.UUID `json:"parentCommentId,omitempty" bson:"parentCommentId,omitempty" db:"parent_comment_id"` // Always points to root comment (or nil)
+	ReplyToUserId    *uuid.UUID `json:"replyToUserId,omitempty" bson:"replyToUserId,omitempty" db:"reply_to_user_id"` // User being addressed (for UI display)
+	ReplyToDisplayName *string `json:"replyToDisplayName,omitempty" bson:"replyToDisplayName,omitempty" db:"reply_to_display_name"` // Display name of user being replied to (joined from profiles)
 	Text             string    `json:"text" bson:"text" db:"text"`
 	Deleted          bool      `json:"deleted" bson:"deleted" db:"deleted"`
 	DeletedDate      int64     `json:"deletedDate" bson:"deletedDate" db:"deletedDate"`
@@ -69,7 +71,9 @@ type CommentResponse struct {
 	OwnerDisplayName string `json:"ownerDisplayName"`
 	OwnerAvatar      string `json:"ownerAvatar"`
 	PostId           string `json:"postId"`
-	ParentCommentId  *string `json:"parentCommentId,omitempty"`
+	ParentCommentId  *string `json:"parentCommentId,omitempty"` // Always points to root comment (or nil)
+	ReplyToUserId    *string `json:"replyToUserId,omitempty"` // User being addressed (for UI display "Replying to @John")
+	ReplyToDisplayName *string `json:"replyToDisplayName,omitempty"` // Optional: Display name of user being replied to (joined in handler)
 	ReplyCount       int    `json:"replyCount"`
 	Text             string `json:"text"`
 	Deleted          bool   `json:"deleted"`
@@ -91,5 +95,4 @@ type CommentsListResponse struct {
 	Count    int  `json:"count,omitempty"`
 	Page     int  `json:"page,omitempty"`
 	Limit    int  `json:"limit,omitempty"`
-	HasMore  bool `json:"hasMore,omitempty"`
 }

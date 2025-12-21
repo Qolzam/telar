@@ -22,6 +22,7 @@ type Config struct {
 	External   ExternalConfig   `json:"external"`
 	Cache      CacheConfig      `json:"cache"`
 	RateLimits RateLimitsConfig `json:"rateLimits"`
+	Storage    StorageConfig    `json:"storage"`
 }
 
 // ServerConfig holds server-related configuration
@@ -155,6 +156,22 @@ type ClusterConfig struct {
 	Addresses []string `json:"addresses"`
 }
 
+// StorageConfig holds storage provider configuration (Cloudflare R2, AWS S3, etc.)
+type StorageConfig struct {
+	Provider        string   `json:"provider"`         // "r2", "s3", "gcs"
+	AccountID       string   `json:"accountId"`        // Cloudflare Account ID (for R2)
+	AccessKeyID     string   `json:"accessKeyId"`      // Access Key ID
+	SecretAccessKey string   `json:"secretAccessKey"`  // Secret Access Key
+	BucketName      string   `json:"bucketName"`        // Bucket name
+	PublicURL       string   `json:"publicUrl"`        // Public CDN URL (e.g., https://media.telar.press)
+	Region          string   `json:"region"`           // Region (for S3 compatibility)
+	Endpoint              string   `json:"endpoint"`                // Custom endpoint (for R2: https://<account-id>.r2.cloudflarestorage.com)
+	MaxFileSizeMB         int      `json:"maxFileSizeMB"`           // Maximum file size in MB (hard cap, requires client-side compression)
+	AllowedMimeTypes      []string `json:"allowedMimeTypes"`        // Allowed MIME types (comma-separated in env)
+	GlobalDailyUploadLimit int     `json:"globalDailyUploadLimit"`  // Global daily upload limit (Class A protection)
+	UserDailyUploadLimit   int     `json:"userDailyUploadLimit"`    // Per-user daily upload limit
+}
+
 // LoadFromEnv loads configuration from the environment.
 // It follows a clear precedence:
 // 1. Explicit Environment Variables (e.g., set in the shell or by CI)
@@ -191,10 +208,10 @@ func LoadFromEnv() (*Config, error) {
 	config := &Config{
 		Server: ServerConfig{
 			Host:            getEnvOrDefault("HOST", "localhost"),
-			Port:            getEnvAsInt("SERVER_PORT", 8080),
+			Port:            getEnvAsInt("SERVER_PORT", 9099),
 			BaseRoute:       getEnvOrDefault("BASE_ROUTE", "/api"),
-			Gateway:         getEnvOrDefault("GATEWAY", "http://localhost:8080"),
-			InternalGateway: getEnvOrDefault("INTERNAL_GATEWAY", "http://localhost:8080"),
+			Gateway:         getEnvOrDefault("GATEWAY", "http://localhost:9099"),
+			InternalGateway: getEnvOrDefault("INTERNAL_GATEWAY", "http://localhost:9099"),
 			WebDomain:       getEnvOrDefault("WEB_DOMAIN", "http://localhost:3000"),
 			Debug:           getEnvAsBool("DEBUG", false),
 		},
@@ -300,6 +317,20 @@ func LoadFromEnv() (*Config, error) {
 				Duration: getEnvAsDuration("RATE_LIMIT_VERIFICATION_DURATION", 15*time.Minute),
 			},
 		},
+		Storage: StorageConfig{
+			Provider:              getEnvOrDefault("STORAGE_PROVIDER", "r2"),
+			AccountID:             getEnvOrDefault("R2_ACCOUNT_ID", ""),
+			AccessKeyID:           getEnvOrDefault("R2_ACCESS_KEY_ID", ""),
+			SecretAccessKey:       getEnvOrDefault("R2_SECRET_ACCESS_KEY", ""),
+			BucketName:            getEnvOrDefault("R2_BUCKET_NAME", ""),
+			PublicURL:             getEnvOrDefault("R2_PUBLIC_URL", ""),
+			Region:                getEnvOrDefault("R2_REGION", "auto"),
+			Endpoint:              getEnvOrDefault("R2_ENDPOINT", ""),
+			MaxFileSizeMB:         getEnvAsInt("STORAGE_MAX_FILE_SIZE_MB", 2),
+			AllowedMimeTypes:      parseCommaSeparated(getEnvOrDefault("STORAGE_ALLOWED_MIME_TYPES", "image/jpeg,image/png,image/webp")),
+			GlobalDailyUploadLimit: getEnvAsInt("STORAGE_GLOBAL_DAILY_UPLOAD_LIMIT", 30000),
+			UserDailyUploadLimit:   getEnvAsInt("STORAGE_USER_DAILY_UPLOAD_LIMIT", 20),
+		},
 	}
 
 	if err := config.Validate(); err != nil {
@@ -380,10 +411,10 @@ func LoadFromMap(envMap map[string]string) (*Config, error) {
 	config := &Config{
 		Server: ServerConfig{
 			Host:            get("HOST", "localhost"),
-			Port:            getInt("SERVER_PORT", 8080),
+			Port:            getInt("SERVER_PORT", 9099),
 			BaseRoute:       get("BASE_ROUTE", "/api"),
-			Gateway:         get("GATEWAY", "http://localhost:8080"),
-			InternalGateway: get("INTERNAL_GATEWAY", "http://localhost:8080"),
+			Gateway:         get("GATEWAY", "http://localhost:9099"),
+			InternalGateway: get("INTERNAL_GATEWAY", "http://localhost:9099"),
 			WebDomain:       get("WEB_DOMAIN", "http://localhost:3000"),
 			Debug:           getBool("DEBUG", false),
 		},
@@ -489,6 +520,20 @@ func LoadFromMap(envMap map[string]string) (*Config, error) {
 				Duration: getEnvAsDuration("RATE_LIMIT_VERIFICATION_DURATION", 15*time.Minute),
 			},
 		},
+		Storage: StorageConfig{
+			Provider:              get("STORAGE_PROVIDER", "r2"),
+			AccountID:             get("R2_ACCOUNT_ID", ""),
+			AccessKeyID:           get("R2_ACCESS_KEY_ID", ""),
+			SecretAccessKey:       get("R2_SECRET_ACCESS_KEY", ""),
+			BucketName:            get("R2_BUCKET_NAME", ""),
+			PublicURL:             get("R2_PUBLIC_URL", ""),
+			Region:                get("R2_REGION", "auto"),
+			Endpoint:              get("R2_ENDPOINT", ""),
+			MaxFileSizeMB:         getInt("STORAGE_MAX_FILE_SIZE_MB", 2),
+			AllowedMimeTypes:      parseCommaSeparated(get("STORAGE_ALLOWED_MIME_TYPES", "image/jpeg,image/png,image/webp")),
+			GlobalDailyUploadLimit: getInt("STORAGE_GLOBAL_DAILY_UPLOAD_LIMIT", 30000),
+			UserDailyUploadLimit:   getInt("STORAGE_USER_DAILY_UPLOAD_LIMIT", 20),
+		},
 	}
 
 	if err := config.Validate(); err != nil {
@@ -591,4 +636,20 @@ func getEnvBoolOrDefault(key string, defaultValue bool) bool {
 
 func getEnvDurationOrDefault(key string, defaultValue time.Duration) time.Duration {
 	return getEnvAsDuration(key, defaultValue)
+}
+
+// parseCommaSeparated parses a comma-separated string into a slice, trimming whitespace
+func parseCommaSeparated(s string) []string {
+	if s == "" {
+		return []string{}
+	}
+	parts := strings.Split(s, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }

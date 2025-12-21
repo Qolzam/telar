@@ -7,6 +7,7 @@
 import type { Metadata } from 'next';
 import DashboardHeader from '@/components/layouts/DashboardHeader';
 import DashboardSidebar from '@/components/layouts/DashboardSidebar';
+import { TechPreviewBanner } from '@/components/TechPreviewBanner';
 import { Box } from '@mui/material';
 
 export const metadata: Metadata = {
@@ -25,9 +26,11 @@ export default function DashboardLayout({
       
       {/* Main content area */}
       <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
+        <TechPreviewBanner />
+
         {/* Header */}
         <DashboardHeader />
-        
+
         {/* Page content */}
         <Box 
           component="main" 

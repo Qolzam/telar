@@ -30,7 +30,7 @@ type MockCommentService struct {
 	queryCommentsFunc                func(ctx context.Context, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error)
 	queryCommentsWithCursorFunc      func(ctx context.Context, filter *models.CommentQueryFilter) (*models.CommentsListResponse, error)
 	queryRepliesWithCursorFunc       func(ctx context.Context, parentID uuid.UUID, cursor string, limit int) (*models.CommentsListResponse, error)
-	updateCommentFunc                func(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) error
+	updateCommentFunc                func(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) (*models.Comment, error)
 	updateCommentProfileFunc         func(ctx context.Context, userID uuid.UUID, displayName, avatar string) error
 	incrementScoreFunc               func(ctx context.Context, commentID uuid.UUID, delta int, user *types.UserContext) error
 	deleteCommentFunc                func(ctx context.Context, commentID uuid.UUID, postID uuid.UUID, user *types.UserContext) error
@@ -122,14 +122,14 @@ func (m *MockCommentService) QueryRepliesWithCursor(ctx context.Context, parentI
 	return &models.CommentsListResponse{Comments: []models.CommentResponse{}, HasNext: false}, nil
 }
 
-func (m *MockCommentService) UpdateComment(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) error {
+func (m *MockCommentService) UpdateComment(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) (*models.Comment, error) {
 	if m.updateCommentFunc != nil {
 		return m.updateCommentFunc(ctx, commentID, req, user)
 	}
 	if m.shouldFail {
-		return m.failureError
+		return nil, m.failureError
 	}
-	return nil
+	return nil, nil
 }
 
 func (m *MockCommentService) UpdateCommentProfile(ctx context.Context, userID uuid.UUID, displayName, avatar string) error {
@@ -466,15 +466,11 @@ func TestCommentHandler_UpdateComment_Success(t *testing.T) {
 	}
 
 	mockService := &MockCommentService{
-		updateCommentFunc: func(ctx context.Context, id uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) error {
+		updateCommentFunc: func(ctx context.Context, id uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) (*models.Comment, error) {
 			assert.Equal(t, commentID, id)
 			assert.Equal(t, commentID, req.ObjectId)
 			assert.Equal(t, "Updated comment text", req.Text)
 			assert.Equal(t, userID, user.UserID)
-			return nil
-		},
-		getCommentFunc: func(ctx context.Context, id uuid.UUID) (*models.Comment, error) {
-			assert.Equal(t, commentID, id)
 			return updatedComment, nil
 		},
 	}
@@ -562,8 +558,8 @@ func TestCommentHandler_UpdateComment_AuthorizationError(t *testing.T) {
 	userID, _ := uuid.NewV4()
 
 	mockService := &MockCommentService{
-		updateCommentFunc: func(ctx context.Context, id uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) error {
-			return errors.New("unauthorized")
+		updateCommentFunc: func(ctx context.Context, id uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) (*models.Comment, error) {
+			return nil, errors.New("unauthorized")
 		},
 	}
 
@@ -899,8 +895,8 @@ func TestCommentHandler_ErrorResponseFormats(t *testing.T) {
 			name: "Service returns authorization error",
 			setupMock: func() *MockCommentService {
 				return &MockCommentService{
-					updateCommentFunc: func(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) error {
-						return errors.New("unauthorized")
+					updateCommentFunc: func(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) (*models.Comment, error) {
+						return nil, errors.New("unauthorized")
 					},
 				}
 			},

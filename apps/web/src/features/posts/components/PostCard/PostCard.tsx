@@ -1,17 +1,21 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import React from 'react';
 import { Avatar, Card, CardHeader, CardContent, CardActions, IconButton, Typography, Box, Button, Stack, Dialog, DialogTitle, DialogContent, DialogActions, TextField } from '@mui/material';
-import { ChatBubbleOutlineTwoTone, Share, BookmarkBorder } from '@mui/icons-material';
+import { useTheme, alpha } from '@mui/material/styles';
+import { ChatBubbleOutlineTwoTone, Share } from '@mui/icons-material';
 import type { Post } from '@telar/sdk';
 import { formatDistanceToNow } from 'date-fns';
 import { CommentList } from '@/features/comments';
 import { useSession } from '@/features/auth/client';
 import { useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { postsKeys } from '../../client';
 import { VoteButtons } from './VoteButtons';
 import { PostMenu } from './PostMenu';
+import { ShareDialog } from './ShareDialog';
+import { BookmarkButton } from './BookmarkButton';
 import { useUpdatePostMutation, useDeletePostMutation } from '../../client';
 
 interface PostCardProps {
@@ -19,12 +23,36 @@ interface PostCardProps {
 }
 
 export function PostCard({ post }: PostCardProps) {
+  const { t } = useTranslation('posts');
+  const theme = useTheme();
+  const isDarkMode = useMemo(() => {
+    if (theme.palette.mode === 'dark') return true;
+    if (typeof document !== 'undefined') {
+      const scheme = document.documentElement.getAttribute('data-mui-color-scheme') 
+        || document.documentElement.getAttribute('data-color-scheme');
+      return scheme === 'dark';
+    }
+    return false;
+  }, [theme.palette.mode]);
+  const darkCardBackground = '#0f172a';
+  const darkBorder = '#1f2937';
+  const darkTextPrimary = '#e2e8f0';
+  const darkTextSecondary = '#94a3b8';
+  const cardBorder = isDarkMode ? darkBorder : theme.palette.divider;
+  const cardBackground = isDarkMode ? darkCardBackground : theme.palette.background.paper;
+  const textPrimary = isDarkMode ? darkTextPrimary : theme.palette.text.primary;
+  const textSecondary = isDarkMode ? darkTextSecondary : theme.palette.text.secondary;
+  const iconColor = textSecondary;
+  const iconHoverColor = textPrimary;
+  const hoverBg = alpha(textPrimary, 0.08);
+
   // createdDate is in milliseconds (from UTCNowUnix() which returns UnixNano / 1,000,000)
   const formattedDate = formatDistanceToNow(new Date(post.createdDate), { addSuffix: true });
   const [isExpanded, setIsExpanded] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editBody, setEditBody] = useState(post.body);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const queryClient = useQueryClient();
   const { user } = useSession();
   const updatePost = useUpdatePostMutation();
@@ -62,9 +90,12 @@ export function PostCard({ post }: PostCardProps) {
       sx={{ 
         mb: 2,
         borderRadius: '24px',
-        border: '1px solid #E2E8F0',
-        boxShadow: '0 2px 4px -2px rgba(23, 23, 23, 0.06), 0 4px 8px -2px rgba(23, 23, 23, 0.10)',
-        overflow: 'hidden'
+        border: `1px solid var(--mui-palette-divider, ${cardBorder})`,
+        backgroundColor: `var(--mui-palette-background-paper, ${cardBackground})`,
+        boxShadow: isDarkMode 
+          ? '0 12px 40px rgba(0, 0, 0, 0.45)'
+          : '0 2px 4px -2px rgba(23, 23, 23, 0.06), 0 4px 8px -2px rgba(23, 23, 23, 0.10)',
+        overflow: 'hidden',
       }}
     >
       <CardHeader
@@ -85,7 +116,7 @@ export function PostCard({ post }: PostCardProps) {
               fontWeight: 700,
               lineHeight: '20px',
               letterSpacing: '-0.084px',
-              color: '#1E293B'
+              color: `var(--mui-palette-text-primary, ${textPrimary})`
             }}
           >
             {displayName}
@@ -98,7 +129,7 @@ export function PostCard({ post }: PostCardProps) {
               fontSize: '14px',
               fontWeight: 400,
               lineHeight: '22.4px',
-              color: '#475569',
+              color: `var(--mui-palette-text-secondary, ${textSecondary})`,
               mt: 0.5
             }}
           >
@@ -120,7 +151,7 @@ export function PostCard({ post }: PostCardProps) {
         sx={{
           px: '20px',
           py: '20px',
-          borderBottom: '1px solid #E2E8F0',
+          borderBottom: `1px solid var(--mui-palette-divider, ${cardBorder})`,
           '& .MuiCardHeader-avatar': {
             mr: '12px'
           }
@@ -175,13 +206,13 @@ export function PostCard({ post }: PostCardProps) {
               fontSize: '14px',
               fontWeight: 400,
               lineHeight: '22.4px',
-              color: '#1E293B',
+              color: `var(--mui-palette-text-primary, ${textPrimary})`,
               whiteSpace: 'pre-wrap'
             }}
           >
             {contentParts.map((part) =>
               part.isHashtag ? (
-                <span key={part.key} style={{ color: '#4F46E5' }}>
+                <span key={part.key} style={{ color: theme.palette.primary.main }}>
                   {part.text}
                 </span>
               ) : (
@@ -210,7 +241,7 @@ export function PostCard({ post }: PostCardProps) {
         sx={{ 
           px: '20px', 
           py: '20px',
-          borderTop: '1px solid #E2E8F0',
+          borderTop: `1px solid var(--mui-palette-divider, ${cardBorder})`,
           gap: 0,
           alignItems: 'center',
           display: 'flex',
@@ -230,81 +261,69 @@ export function PostCard({ post }: PostCardProps) {
               gap: '8px',
               cursor: 'pointer',
               '&:hover': {
-                '& .comment-icon': { color: '#1E293B' },
-                '& .comment-text': { color: '#1E293B' }
+                '& .comment-icon': { color: iconHoverColor },
+                '& .comment-text': { color: iconHoverColor }
               }
             }}
           >
             <IconButton 
               aria-label="comment" 
               sx={{ 
-                color: '#94A3B8',
+                color: iconColor,
                 padding: 0,
                 width: '20px',
                 height: '20px',
                 minWidth: 'auto',
                 pointerEvents: 'none',
-                '&:hover': { color: '#1E293B', backgroundColor: 'transparent' }
+                '&:hover': { color: iconHoverColor, backgroundColor: hoverBg }
               }}
               className="comment-icon"
             >
               <ChatBubbleOutlineTwoTone sx={{ fontSize: '18px' }} />
             </IconButton>
-            <Typography
-              className="comment-text"
-              sx={{
-                fontFamily: 'PlusJakartaSans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-                fontSize: '14px',
-                fontWeight: 500,
-                lineHeight: '20px',
-                letterSpacing: '-0.084px',
-                color: '#1E293B',
-                userSelect: 'none',
-                pointerEvents: 'none'
-              }}
-            >
-              {displayCount} {displayCount === 1 ? 'Comment' : 'Comments'}
-            </Typography>
+            {displayCount > 0 && (
+              <Typography
+                className="comment-text"
+                sx={{
+                  fontFamily: 'PlusJakartaSans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                  lineHeight: '20px',
+                  letterSpacing: '-0.084px',
+                  color: `var(--mui-palette-text-primary, ${textPrimary})`,
+                  userSelect: 'none',
+                  pointerEvents: 'none'
+                }}
+              >
+                {displayCount}
+              </Typography>
+            )}
           </Box>
           
           {/* Share Section */}
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {!post.disableSharing && (
             <IconButton 
               aria-label="share"
+              onClick={() => setShareDialogOpen(true)}
               sx={{ 
-                color: '#94A3B8',
+                color: iconColor,
                 padding: 0,
                 width: '20px',
                 height: '20px',
                 minWidth: 'auto',
-                '&:hover': { color: '#1E293B', backgroundColor: 'transparent' }
+                '&:hover': { color: iconHoverColor, backgroundColor: hoverBg }
               }}
             >
               <Share sx={{ fontSize: '18px' }} />
             </IconButton>
-            {/* Share count would be shown here if available - currently not tracked */}
-          </Box>
+          )}
+          
+          {/* Bookmark Section */}
+          <BookmarkButton post={post} />
         </Box>
-        
-        <Box sx={{ flexGrow: 1 }} />
-        
-        {/* Bookmark Section */}
-        <IconButton 
-          aria-label="bookmark"
-          sx={{ 
-            color: '#94A3B8',
-            padding: 0,
-            width: '20px',
-            height: '20px',
-            minWidth: 'auto',
-            '&:hover': { color: '#1E293B', backgroundColor: 'transparent' }
-          }}
-        >
-          <BookmarkBorder sx={{ fontSize: '18px' }} />
-        </IconButton>
       </CardActions>
       {isExpanded && (
-        <Box sx={{ px: '20px', pb: '20px', borderTop: '1px solid #E2E8F0' }}>
+        <Box sx={{ px: '20px', pb: '20px', borderTop: `1px solid var(--mui-palette-divider, ${cardBorder})` }}>
           <CommentList 
             postId={post.objectId} 
             currentUserId={user?.id}
@@ -334,6 +353,12 @@ export function PostCard({ post }: PostCardProps) {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <ShareDialog
+        open={shareDialogOpen}
+        onClose={() => setShareDialogOpen(false)}
+        post={post}
+      />
     </Card>
   );
 }

@@ -42,8 +42,14 @@ type PostRepository interface {
 	// Find retrieves posts matching the filter criteria with pagination
 	Find(ctx context.Context, filter PostFilter, limit, offset int) ([]*models.Post, error)
 
+	// FindWithCursor retrieves posts using cursor-based pagination
+	FindWithCursor(ctx context.Context, filter PostFilter, cursor *models.CursorData, sortField, sortDirection string, limit int) ([]*models.Post, bool, error)
+
 	// Count returns the number of posts matching the filter criteria
 	Count(ctx context.Context, filter PostFilter) (int64, error)
+
+	// Search retrieves posts using full-text search on body
+	Search(ctx context.Context, query string, limit int) ([]*models.Post, error)
 
 	// Update updates an existing post
 	Update(ctx context.Context, post *models.Post) error
@@ -74,6 +80,7 @@ type PostRepository interface {
 
 	// Delete deletes a post by ID (soft delete)
 	Delete(ctx context.Context, id uuid.UUID) error
+
+	// GetByIDs returns posts matching given IDs using ANY for bulk fetch.
+	GetByIDs(ctx context.Context, ids []uuid.UUID) ([]*models.Post, error)
 }
-
-

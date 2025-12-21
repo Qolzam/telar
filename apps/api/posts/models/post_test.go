@@ -429,7 +429,6 @@ func TestPostsListResponse_Validation(t *testing.T) {
 		TotalCount: 25,
 		Page:       2,
 		Limit:      10,
-		HasMore:    true,
 	}
 
 	// Marshal and unmarshal
@@ -445,7 +444,6 @@ func TestPostsListResponse_Validation(t *testing.T) {
 	assert.Equal(t, response.TotalCount, unmarshaledResponse.TotalCount)
 	assert.Equal(t, response.Page, unmarshaledResponse.Page)
 	assert.Equal(t, response.Limit, unmarshaledResponse.Limit)
-	assert.Equal(t, response.HasMore, unmarshaledResponse.HasMore)
 }
 
 // Test CreatePostResponse validation

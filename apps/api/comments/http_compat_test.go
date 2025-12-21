@@ -14,21 +14,21 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	uuid "github.com/gofrs/uuid"
+	"github.com/lib/pq"
+	authModels "github.com/qolzam/telar/apps/api/auth/models"
+	authRepository "github.com/qolzam/telar/apps/api/auth/repository"
 	"github.com/qolzam/telar/apps/api/comments"
 	"github.com/qolzam/telar/apps/api/comments/handlers"
+	commentModels "github.com/qolzam/telar/apps/api/comments/models"
 	commentRepository "github.com/qolzam/telar/apps/api/comments/repository"
 	"github.com/qolzam/telar/apps/api/comments/services"
-	commentModels "github.com/qolzam/telar/apps/api/comments/models"
-	postsRepository "github.com/qolzam/telar/apps/api/posts/repository"
-	authRepository "github.com/qolzam/telar/apps/api/auth/repository"
-	authModels "github.com/qolzam/telar/apps/api/auth/models"
-	postsModels "github.com/qolzam/telar/apps/api/posts/models"
-	"github.com/qolzam/telar/apps/api/internal/database/postgres"
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
+	"github.com/qolzam/telar/apps/api/internal/database/postgres"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/internal/testutil"
 	"github.com/qolzam/telar/apps/api/internal/types"
-	"github.com/lib/pq"
+	postsModels "github.com/qolzam/telar/apps/api/posts/models"
+	postsRepository "github.com/qolzam/telar/apps/api/posts/repository"
 	"github.com/stretchr/testify/require"
 )
 
@@ -51,12 +51,12 @@ func verifyPostgresConnection() error {
 func addHMACHeaders(req *http.Request, body []byte, secret string, uid string) {
 	// Generate timestamp for canonical signing
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	
+
 	// Extract request details for canonical signing
 	method := req.Method
 	path := req.URL.Path
 	query := req.URL.RawQuery
-	
+
 	// Generate canonical HMAC signature
 	sig := testutil.SignHMAC(method, path, query, body, uid, timestamp, secret)
 	req.Header.Set(types.HeaderHMACAuthenticate, sig)
@@ -160,7 +160,7 @@ func TestCommentsHTTPCompatibilityPostgreSQL(t *testing.T) {
 	// Create PostRepository FIRST (applies posts migration, required for comments foreign key)
 	postRepo, err := postsRepository.NewPostgresRepositoryForTest(ctx, iso)
 	require.NoError(t, err, "failed to create PostRepository")
-	
+
 	// PostRepository client needs search_path set (ApplyPostsMigration sets it, but we need to ensure it persists)
 	// The client returned by NewPostgresRepositoryForTest should already have search_path set via ApplyPostsMigration
 
@@ -173,20 +173,20 @@ func TestCommentsHTTPCompatibilityPostgreSQL(t *testing.T) {
 	pgConfig.Schema = iso.LegacyConfig.PGSchema
 	pgClient, err := postgres.NewClient(ctx, pgConfig, pgConfig.Database)
 	require.NoError(t, err, "failed to create postgres client for auth")
-	
+
 	// Set search_path to isolated schema (critical for foreign key constraints)
 	setSearchPathSQL := fmt.Sprintf(`SET search_path TO %s`, iso.LegacyConfig.PGSchema)
 	_, err = pgClient.DB().ExecContext(ctx, setSearchPathSQL)
 	require.NoError(t, err, "failed to set search_path for auth client")
-	
+
 	authRepo := authRepository.NewPostgresAuthRepository(pgClient)
 
 	app, secret := newTestApp(t, commentRepo, postRepo, iso.Config)
-	
+
 	// Create test user and post FIRST, then use that user's ID for tests
 	userUUID := uuid.Must(uuid.NewV4())
 	uid := userUUID.String()
-	
+
 	// Create HTTP helper
 	httpHelper := testutil.NewHTTPHelper(t, app)
 
@@ -232,7 +232,7 @@ func setupTestData(t *testing.T, ctx context.Context, authRepo authRepository.Au
 	userUUID := uuid.Must(uuid.FromString(uid))
 	hashedPassword := []byte("test_password_hash")
 	now := time.Now()
-	
+
 	// Generate unique username to avoid conflicts
 	uniqueID := uuid.Must(uuid.NewV4()).String()[:8]
 	username := fmt.Sprintf("testuser_%s@example.com", uniqueID)
@@ -295,8 +295,10 @@ func testCreateAndGetComment(t *testing.T, app *fiber.App, secret string, uid st
 
 	resp := httpHelper.NewRequest(http.MethodPost, "/comments/", createReq).
 		WithHMACAuth(secret, uid).Send()
-	
-	require.Equal(t, http.StatusCreated, resp.StatusCode, "Create comment should return 201 Created")
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Create comment failed: status=%d body=%s", resp.StatusCode, string(body))
+	}
 
 	var createResp struct {
 		ObjectId string `json:"objectId"`
@@ -313,7 +315,7 @@ func testCreateAndGetComment(t *testing.T, app *fiber.App, secret string, uid st
 	// Get the created comment to validate full details
 	resp = httpHelper.NewRequest(http.MethodGet, "/comments/"+createResp.ObjectId, nil).
 		WithHMACAuth(secret, uid).Send()
-	
+
 	require.Equal(t, http.StatusOK, resp.StatusCode, "Get comment should return 200 OK")
 
 	var commentResp commentResponse
@@ -379,7 +381,8 @@ func testUpdateComment(t *testing.T, app *fiber.App, secret string, uid string, 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("Expected status 200, got %d", resp.StatusCode)
+		errBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected status 200, got %d body=%s", resp.StatusCode, string(errBody))
 	}
 
 	var updateResp commentResponse
@@ -433,7 +436,8 @@ func testDeleteComment(t *testing.T, app *fiber.App, secret string, uid string, 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("Expected status 204, got %d", resp.StatusCode)
+		errBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected status 204, got %d body=%s", resp.StatusCode, string(errBody))
 	}
 
 	// Verify comment is deleted by trying to get it
@@ -476,7 +480,8 @@ func testGetCommentsByPost(t *testing.T, app *fiber.App, secret string, uid stri
 		resp.Body.Close()
 
 		if resp.StatusCode != http.StatusCreated {
-			t.Fatalf("Expected status 201, got %d", resp.StatusCode)
+			errBody, _ := io.ReadAll(resp.Body)
+			t.Fatalf("Expected status 201, got %d body=%s", resp.StatusCode, string(errBody))
 		}
 	}
 

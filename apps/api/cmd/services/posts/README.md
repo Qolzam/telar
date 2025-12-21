@@ -66,7 +66,7 @@ The service uses the same environment configuration as other Telar microservices
 make test-posts
 
 # Run e2e tests
-bash tools/dev/scripts/posts_e2e_test.sh
+bash tools/dev/test/e2e-posts.sh
 ```
 
 ### Building

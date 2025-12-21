@@ -61,6 +61,14 @@ func (m *MockProfileRepository) Count(ctx context.Context, filter repository.Pro
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *MockProfileRepository) Search(ctx context.Context, query string, limit int) ([]*models.Profile, error) {
+	args := m.Called(ctx, query, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.Profile), args.Error(1)
+}
+
 func (m *MockProfileRepository) Update(ctx context.Context, profile *models.Profile) error {
 	args := m.Called(ctx, profile)
 	return args.Error(0)
@@ -80,4 +88,3 @@ func (m *MockProfileRepository) Delete(ctx context.Context, userID uuid.UUID) er
 	args := m.Called(ctx, userID)
 	return args.Error(0)
 }
-

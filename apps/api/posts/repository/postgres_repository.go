@@ -10,10 +10,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gofrs/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"github.com/qolzam/telar/apps/api/internal/database/postgres"
 	"github.com/qolzam/telar/apps/api/posts/models"
 )
@@ -87,59 +89,59 @@ func (r *postgresRepository) Create(ctx context.Context, post *models.Post) erro
 
 	// Prepare the struct for insertion
 	insertData := struct {
-		ID              uuid.UUID       `db:"id"`
-		OwnerUserID     uuid.UUID       `db:"owner_user_id"`
-		PostTypeID      int             `db:"post_type_id"`
-		Body            string          `db:"body"`
-		Score           int64           `db:"score"`
-		ViewCount       int64           `db:"view_count"`
-		CommentCount    int64           `db:"comment_count"`
-		IsDeleted       bool            `db:"is_deleted"`
-		DeletedDate     int64           `db:"deleted_date"`
-		CreatedAt       time.Time       `db:"created_at"`
-		UpdatedAt       time.Time       `db:"updated_at"`
-		CreatedDate     int64           `db:"created_date"`
-		LastUpdated     int64           `db:"last_updated"`
-		Tags            interface{}     `db:"tags"`
-		URLKey          string          `db:"url_key"`
+		ID               uuid.UUID       `db:"id"`
+		OwnerUserID      uuid.UUID       `db:"owner_user_id"`
+		PostTypeID       int             `db:"post_type_id"`
+		Body             string          `db:"body"`
+		Score            int64           `db:"score"`
+		ViewCount        int64           `db:"view_count"`
+		CommentCount     int64           `db:"comment_count"`
+		IsDeleted        bool            `db:"is_deleted"`
+		DeletedDate      int64           `db:"deleted_date"`
+		CreatedAt        time.Time       `db:"created_at"`
+		UpdatedAt        time.Time       `db:"updated_at"`
+		CreatedDate      int64           `db:"created_date"`
+		LastUpdated      int64           `db:"last_updated"`
+		Tags             interface{}     `db:"tags"`
+		URLKey           string          `db:"url_key"`
 		OwnerDisplayName string          `db:"owner_display_name"`
-		OwnerAvatar     string          `db:"owner_avatar"`
-		Image           string          `db:"image"`
-		ImageFullPath   string          `db:"image_full_path"`
-		Video           string          `db:"video"`
-		Thumbnail       string          `db:"thumbnail"`
-		DisableComments bool            `db:"disable_comments"`
-		DisableSharing  bool            `db:"disable_sharing"`
-		Permission      string          `db:"permission"`
-		Version         string          `db:"version"`
-		Metadata        json.RawMessage `db:"metadata"`
+		OwnerAvatar      string          `db:"owner_avatar"`
+		Image            string          `db:"image"`
+		ImageFullPath    string          `db:"image_full_path"`
+		Video            string          `db:"video"`
+		Thumbnail        string          `db:"thumbnail"`
+		DisableComments  bool            `db:"disable_comments"`
+		DisableSharing   bool            `db:"disable_sharing"`
+		Permission       string          `db:"permission"`
+		Version          string          `db:"version"`
+		Metadata         json.RawMessage `db:"metadata"`
 	}{
-		ID:              post.ObjectId,
-		OwnerUserID:     post.OwnerUserId,
-		PostTypeID:      post.PostTypeId,
-		Body:            post.Body,
-		Score:           post.Score,
-		ViewCount:       post.ViewCount,
-		CommentCount:    post.CommentCounter,
-		IsDeleted:       post.Deleted,
-		DeletedDate:     post.DeletedDate,
-		CreatedAt:       post.CreatedAt,
-		UpdatedAt:       post.UpdatedAt,
-		CreatedDate:     post.CreatedDate,
-		LastUpdated:     post.LastUpdated,
-		Tags:            post.Tags,
-		URLKey:          post.URLKey,
+		ID:               post.ObjectId,
+		OwnerUserID:      post.OwnerUserId,
+		PostTypeID:       post.PostTypeId,
+		Body:             post.Body,
+		Score:            post.Score,
+		ViewCount:        post.ViewCount,
+		CommentCount:     post.CommentCounter,
+		IsDeleted:        post.Deleted,
+		DeletedDate:      post.DeletedDate,
+		CreatedAt:        post.CreatedAt,
+		UpdatedAt:        post.UpdatedAt,
+		CreatedDate:      post.CreatedDate,
+		LastUpdated:      post.LastUpdated,
+		Tags:             post.Tags,
+		URLKey:           post.URLKey,
 		OwnerDisplayName: post.OwnerDisplayName,
-		OwnerAvatar:     post.OwnerAvatar,
-		Image:           post.Image,
-		ImageFullPath:   post.ImageFullPath,
-		Video:           post.Video,
-		Thumbnail:       post.Thumbnail,
-		DisableComments: post.DisableComments,
-		DisableSharing:  post.DisableSharing,
-		Permission:      post.Permission,
-		Version:         post.Version,
-		Metadata:        metadata,
+		OwnerAvatar:      post.OwnerAvatar,
+		Image:            post.Image,
+		ImageFullPath:    post.ImageFullPath,
+		Video:            post.Video,
+		Thumbnail:        post.Thumbnail,
+		DisableComments:  post.DisableComments,
+		DisableSharing:   post.DisableSharing,
+		Permission:       post.Permission,
+		Version:          post.Version,
+		Metadata:         metadata,
 	}
 
 	executor := r.getExecutor(ctx)
@@ -255,55 +257,55 @@ func (r *postgresRepository) Update(ctx context.Context, post *models.Post) erro
 	`
 
 	updateData := struct {
-		ID              uuid.UUID       `db:"id"`
-		OwnerUserID     uuid.UUID       `db:"owner_user_id"`
-		PostTypeID      int             `db:"post_type_id"`
-		Body            string          `db:"body"`
-		Score           int64           `db:"score"`
-		ViewCount       int64           `db:"view_count"`
-		CommentCount    int64           `db:"comment_count"`
-		IsDeleted       bool            `db:"is_deleted"`
-		DeletedDate     int64           `db:"deleted_date"`
-		UpdatedAt       time.Time       `db:"updated_at"`
-		LastUpdated     int64           `db:"last_updated"`
-		Tags            interface{}     `db:"tags"`
-		URLKey          string          `db:"url_key"`
+		ID               uuid.UUID       `db:"id"`
+		OwnerUserID      uuid.UUID       `db:"owner_user_id"`
+		PostTypeID       int             `db:"post_type_id"`
+		Body             string          `db:"body"`
+		Score            int64           `db:"score"`
+		ViewCount        int64           `db:"view_count"`
+		CommentCount     int64           `db:"comment_count"`
+		IsDeleted        bool            `db:"is_deleted"`
+		DeletedDate      int64           `db:"deleted_date"`
+		UpdatedAt        time.Time       `db:"updated_at"`
+		LastUpdated      int64           `db:"last_updated"`
+		Tags             interface{}     `db:"tags"`
+		URLKey           string          `db:"url_key"`
 		OwnerDisplayName string          `db:"owner_display_name"`
-		OwnerAvatar     string          `db:"owner_avatar"`
-		Image           string          `db:"image"`
-		ImageFullPath   string          `db:"image_full_path"`
-		Video           string          `db:"video"`
-		Thumbnail       string          `db:"thumbnail"`
-		DisableComments bool            `db:"disable_comments"`
-		DisableSharing  bool            `db:"disable_sharing"`
-		Permission      string          `db:"permission"`
-		Version         string          `db:"version"`
-		Metadata        json.RawMessage `db:"metadata"`
+		OwnerAvatar      string          `db:"owner_avatar"`
+		Image            string          `db:"image"`
+		ImageFullPath    string          `db:"image_full_path"`
+		Video            string          `db:"video"`
+		Thumbnail        string          `db:"thumbnail"`
+		DisableComments  bool            `db:"disable_comments"`
+		DisableSharing   bool            `db:"disable_sharing"`
+		Permission       string          `db:"permission"`
+		Version          string          `db:"version"`
+		Metadata         json.RawMessage `db:"metadata"`
 	}{
-		ID:              post.ObjectId,
-		OwnerUserID:     post.OwnerUserId,
-		PostTypeID:      post.PostTypeId,
-		Body:            post.Body,
-		Score:           post.Score,
-		ViewCount:       post.ViewCount,
-		CommentCount:    post.CommentCounter,
-		IsDeleted:       post.Deleted,
-		DeletedDate:     post.DeletedDate,
-		UpdatedAt:       post.UpdatedAt,
-		LastUpdated:     post.LastUpdated,
-		Tags:            post.Tags,
-		URLKey:          post.URLKey,
+		ID:               post.ObjectId,
+		OwnerUserID:      post.OwnerUserId,
+		PostTypeID:       post.PostTypeId,
+		Body:             post.Body,
+		Score:            post.Score,
+		ViewCount:        post.ViewCount,
+		CommentCount:     post.CommentCounter,
+		IsDeleted:        post.Deleted,
+		DeletedDate:      post.DeletedDate,
+		UpdatedAt:        post.UpdatedAt,
+		LastUpdated:      post.LastUpdated,
+		Tags:             post.Tags,
+		URLKey:           post.URLKey,
 		OwnerDisplayName: post.OwnerDisplayName,
-		OwnerAvatar:     post.OwnerAvatar,
-		Image:           post.Image,
-		ImageFullPath:   post.ImageFullPath,
-		Video:           post.Video,
-		Thumbnail:       post.Thumbnail,
-		DisableComments: post.DisableComments,
-		DisableSharing:  post.DisableSharing,
-		Permission:      post.Permission,
-		Version:         post.Version,
-		Metadata:        metadata,
+		OwnerAvatar:      post.OwnerAvatar,
+		Image:            post.Image,
+		ImageFullPath:    post.ImageFullPath,
+		Video:            post.Video,
+		Thumbnail:        post.Thumbnail,
+		DisableComments:  post.DisableComments,
+		DisableSharing:   post.DisableSharing,
+		Permission:       post.Permission,
+		Version:          post.Version,
+		Metadata:         metadata,
 	}
 
 	result, err := sqlx.NamedExecContext(ctx, r.getExecutor(ctx), query, updateData)
@@ -368,7 +370,7 @@ func (r *postgresRepository) IncrementCommentCount(ctx context.Context, postID u
 // IncrementScore atomically increments the score for a post
 func (r *postgresRepository) IncrementScore(ctx context.Context, postID uuid.UUID, delta int) error {
 	executor := r.getExecutor(ctx)
-	
+
 	query := `
 		UPDATE posts 
 		SET score = score + $1,
@@ -376,21 +378,21 @@ func (r *postgresRepository) IncrementScore(ctx context.Context, postID uuid.UUI
 		    last_updated = EXTRACT(EPOCH FROM NOW())::BIGINT
 		WHERE id = $2 AND is_deleted = FALSE
 	`
-	
+
 	result, err := executor.ExecContext(ctx, query, delta, postID)
 	if err != nil {
 		return fmt.Errorf("failed to increment score: %w", err)
 	}
-	
+
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
-	
+
 	if rowsAffected == 0 {
 		return fmt.Errorf("post not found")
 	}
-	
+
 	return nil
 }
 
@@ -420,10 +422,55 @@ func (r *postgresRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+func (r *postgresRepository) schemaPrefix() string {
+	if r.schema == "" {
+		return ""
+	}
+	return r.schema + "."
+}
+
+// GetByIDs bulk fetches posts by IDs using ANY.
+func (r *postgresRepository) GetByIDs(ctx context.Context, ids []uuid.UUID) ([]*models.Post, error) {
+	if len(ids) == 0 {
+		return []*models.Post{}, nil
+	}
+
+	idStrings := make([]string, len(ids))
+	for i, id := range ids {
+		idStrings[i] = id.String()
+	}
+
+	query := `
+		SELECT 
+			id, owner_user_id, post_type_id, body, score, view_count,
+			comment_count, is_deleted, deleted_date, created_at, updated_at,
+			created_date, last_updated, tags, url_key, owner_display_name,
+			owner_avatar, image, image_full_path, video, thumbnail,
+			disable_comments, disable_sharing, permission, version, metadata
+		FROM %sposts
+		WHERE id = ANY($1::uuid[]) AND is_deleted = FALSE
+	`
+
+	sqlStr := fmt.Sprintf(query, r.schemaPrefix())
+	var posts []*models.Post
+	if err := sqlx.SelectContext(ctx, r.getExecutor(ctx), &posts, sqlStr, pq.Array(idStrings)); err != nil {
+		return nil, fmt.Errorf("get posts by ids: %w", err)
+	}
+
+	for _, post := range posts {
+		if post.Metadata != nil {
+			metadataJSON, _ := json.Marshal(post.Metadata)
+			r.populateMetadata(post, metadataJSON)
+		}
+	}
+
+	return posts, nil
+}
+
 // buildMetadata builds the metadata JSONB from dynamic fields (Votes, Album, AccessUserList)
 func (r *postgresRepository) buildMetadata(post *models.Post) json.RawMessage {
 	metadata := make(map[string]interface{})
-	
+
 	if post.Votes != nil && len(post.Votes) > 0 {
 		metadata["votes"] = post.Votes
 	}
@@ -539,6 +586,204 @@ func (r *postgresRepository) Find(ctx context.Context, filter PostFilter, limit,
 	return result, nil
 }
 
+// FindWithCursor retrieves posts using cursor-based pagination
+// Uses Limit + 1 strategy: fetch limit+1 items, if we get limit+1, hasMore=true
+func (r *postgresRepository) FindWithCursor(ctx context.Context, filter PostFilter, cursor *models.CursorData, sortField, sortDirection string, limit int) ([]*models.Post, bool, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if sortField == "" {
+		sortField = "createdDate"
+	}
+	if sortDirection == "" {
+		sortDirection = "desc"
+	}
+
+	// Fetch limit+1 to determine if there are more posts
+	fetchLimit := limit + 1
+
+	query, args := r.buildCursorQuery(filter, cursor, sortField, sortDirection, fetchLimit)
+
+	var posts []models.Post
+	err := sqlx.SelectContext(ctx, r.getExecutor(ctx), &posts, query, args...)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to find posts with cursor: %w", err)
+	}
+
+	// Determine if there are more posts
+	hasMore := len(posts) > limit
+	if hasMore {
+		// Remove the extra item
+		posts = posts[:limit]
+	}
+
+	// Populate metadata for each post
+	result := make([]*models.Post, len(posts))
+	for i := range posts {
+		post := &posts[i]
+		if post.Metadata != nil {
+			metadataJSON, _ := json.Marshal(post.Metadata)
+			r.populateMetadata(post, metadataJSON)
+		}
+		result[i] = post
+	}
+
+	return result, hasMore, nil
+}
+
+// buildCursorQuery constructs a SQL query with cursor-based pagination
+func (r *postgresRepository) buildCursorQuery(filter PostFilter, cursor *models.CursorData, sortField, sortDirection string, limit int) (string, []interface{}) {
+	query := `
+		SELECT id, owner_user_id, post_type_id, body, score, view_count,
+			comment_count, is_deleted, deleted_date, created_at, updated_at,
+			created_date, last_updated, tags, url_key, owner_display_name,
+			owner_avatar, image, image_full_path, video, thumbnail,
+			disable_comments, disable_sharing, permission, version, metadata
+		FROM posts
+		WHERE 1=1`
+
+	var args []interface{}
+	argIndex := 1
+
+	// Apply base filters
+	if filter.OwnerUserID != nil {
+		query += fmt.Sprintf(" AND owner_user_id = $%d", argIndex)
+		args = append(args, *filter.OwnerUserID)
+		argIndex++
+	}
+
+	if filter.PostTypeID != nil {
+		query += fmt.Sprintf(" AND post_type_id = $%d", argIndex)
+		args = append(args, *filter.PostTypeID)
+		argIndex++
+	}
+
+	if len(filter.Tags) > 0 {
+		query += fmt.Sprintf(" AND tags && $%d", argIndex)
+		args = append(args, pq.Array(filter.Tags))
+		argIndex++
+	}
+
+	if filter.Deleted != nil {
+		query += fmt.Sprintf(" AND is_deleted = $%d", argIndex)
+		args = append(args, *filter.Deleted)
+		argIndex++
+	} else {
+		query += " AND is_deleted = FALSE"
+	}
+
+	if filter.CreatedAfter != nil {
+		query += fmt.Sprintf(" AND created_date >= $%d", argIndex)
+		args = append(args, *filter.CreatedAfter)
+		argIndex++
+	}
+
+	if filter.URLKey != nil {
+		query += fmt.Sprintf(" AND url_key = $%d", argIndex)
+		args = append(args, *filter.URLKey)
+		argIndex++
+	}
+
+	if filter.SearchText != nil && *filter.SearchText != "" {
+		searchPattern := "%" + *filter.SearchText + "%"
+		query += fmt.Sprintf(" AND (body ILIKE $%d OR owner_display_name ILIKE $%d)", argIndex, argIndex)
+		args = append(args, searchPattern)
+		argIndex++
+	}
+
+	// Apply cursor condition
+	if cursor != nil {
+		cursorValue := cursor.Value
+		cursorIDStr := cursor.ID
+
+		// Parse cursor ID to UUID
+		cursorID, err := uuid.FromString(cursorIDStr)
+		if err != nil {
+			// If ID parsing fails, fall back to string comparison
+			cursorID = uuid.Nil
+		}
+
+		// Convert sortField to database column name
+		var dbColumn string
+		switch sortField {
+		case "createdDate":
+			dbColumn = "created_date"
+		case "lastUpdated":
+			dbColumn = "last_updated"
+		case "score":
+			dbColumn = "score"
+		case "viewCount":
+			dbColumn = "view_count"
+		case "commentCounter":
+			dbColumn = "comment_count"
+		case "objectId":
+			dbColumn = "id"
+		default:
+			dbColumn = "created_date"
+		}
+
+		// Build cursor WHERE clause
+		// For DESC with forward pagination: created_date < cursorValue OR (created_date = cursorValue AND id < cursorID)
+		if sortDirection == "desc" {
+			if cursorID != uuid.Nil {
+				query += fmt.Sprintf(" AND ((%s < $%d) OR (%s = $%d AND id < $%d))", dbColumn, argIndex, dbColumn, argIndex, argIndex+1)
+				args = append(args, cursorValue, cursorID)
+				argIndex += 2
+			} else {
+				// Fallback to string comparison if UUID parsing failed
+				query += fmt.Sprintf(" AND ((%s < $%d) OR (%s = $%d AND id::text < $%d))", dbColumn, argIndex, dbColumn, argIndex, argIndex+1)
+				args = append(args, cursorValue, cursorIDStr)
+				argIndex += 2
+			}
+		} else {
+			// ASC: created_date > cursorValue OR (created_date = cursorValue AND id > cursorID)
+			if cursorID != uuid.Nil {
+				query += fmt.Sprintf(" AND ((%s > $%d) OR (%s = $%d AND id > $%d))", dbColumn, argIndex, dbColumn, argIndex, argIndex+1)
+				args = append(args, cursorValue, cursorID)
+				argIndex += 2
+			} else {
+				// Fallback to string comparison if UUID parsing failed
+				query += fmt.Sprintf(" AND ((%s > $%d) OR (%s = $%d AND id::text > $%d))", dbColumn, argIndex, dbColumn, argIndex, argIndex+1)
+				args = append(args, cursorValue, cursorIDStr)
+				argIndex += 2
+			}
+		}
+	}
+
+	// Build ORDER BY clause
+	var orderBy string
+	switch sortField {
+	case "createdDate":
+		orderBy = "created_date"
+	case "lastUpdated":
+		orderBy = "last_updated"
+	case "score":
+		orderBy = "score"
+	case "viewCount":
+		orderBy = "view_count"
+	case "commentCounter":
+		orderBy = "comment_count"
+	case "objectId":
+		orderBy = "id"
+	default:
+		orderBy = "created_date"
+	}
+
+	if sortDirection == "desc" {
+		query += fmt.Sprintf(" ORDER BY %s DESC, id DESC", orderBy)
+	} else {
+		query += fmt.Sprintf(" ORDER BY %s ASC, id ASC", orderBy)
+	}
+
+	query += fmt.Sprintf(" LIMIT $%d", argIndex)
+	args = append(args, limit)
+
+	return query, args
+}
+
 // Count returns the number of posts matching the filter criteria
 func (r *postgresRepository) Count(ctx context.Context, filter PostFilter) (int64, error) {
 	query, args := r.buildCountQuery(filter)
@@ -550,6 +795,49 @@ func (r *postgresRepository) Count(ctx context.Context, filter PostFilter) (int6
 	}
 
 	return count, nil
+}
+
+// Search retrieves posts using full-text search on body
+func (r *postgresRepository) Search(ctx context.Context, query string, limit int) ([]*models.Post, error) {
+	searchTerm := strings.TrimSpace(query)
+	if searchTerm == "" {
+		return []*models.Post{}, nil
+	}
+	if limit <= 0 {
+		limit = 5
+	}
+
+	sqlQuery := `
+		SELECT 
+			id, owner_user_id, post_type_id, body, score, view_count,
+			comment_count, is_deleted, deleted_date, created_at, updated_at,
+			created_date, last_updated, tags, url_key, owner_display_name,
+			owner_avatar, image, image_full_path, video, thumbnail,
+			disable_comments, disable_sharing, permission, version, metadata
+		FROM posts
+		WHERE 
+			is_deleted = FALSE 
+			AND to_tsvector('english', body) @@ plainto_tsquery('english', $1)
+		ORDER BY created_date DESC
+		LIMIT $2
+	`
+
+	var posts []models.Post
+	if err := sqlx.SelectContext(ctx, r.getExecutor(ctx), &posts, sqlQuery, searchTerm, limit); err != nil {
+		return nil, fmt.Errorf("failed to search posts: %w", err)
+	}
+
+	results := make([]*models.Post, len(posts))
+	for i := range posts {
+		post := &posts[i]
+		if post.Metadata != nil {
+			metadataJSON, _ := json.Marshal(post.Metadata)
+			r.populateMetadata(post, metadataJSON)
+		}
+		results[i] = post
+	}
+
+	return results, nil
 }
 
 // UpdateOwnerProfile updates display name and avatar for all posts by an owner
@@ -654,7 +942,7 @@ func (r *postgresRepository) buildFindQuery(filter PostFilter, limit, offset int
 
 	if len(filter.Tags) > 0 {
 		query += fmt.Sprintf(" AND tags && $%d", argIndex)
-		args = append(args, filter.Tags)
+		args = append(args, pq.Array(filter.Tags))
 		argIndex++
 	}
 
@@ -713,7 +1001,7 @@ func (r *postgresRepository) buildCountQuery(filter PostFilter) (string, []inter
 
 	if len(filter.Tags) > 0 {
 		query += fmt.Sprintf(" AND tags && $%d", argIndex)
-		args = append(args, filter.Tags)
+		args = append(args, pq.Array(filter.Tags))
 		argIndex++
 	}
 
@@ -785,4 +1073,3 @@ func (r *postgresRepository) WithTransaction(ctx context.Context, fn func(contex
 
 	return nil
 }
-

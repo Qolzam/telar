@@ -9,18 +9,19 @@ import (
 	"time"
 
 	uuid "github.com/gofrs/uuid"
+	bookmarksRepository "github.com/qolzam/telar/apps/api/bookmarks/repository"
+	commentRepository "github.com/qolzam/telar/apps/api/comments/repository"
 	"github.com/qolzam/telar/apps/api/internal/cache"
-	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/internal/pkg/log"
+	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/internal/types"
 	"github.com/qolzam/telar/apps/api/internal/utils"
 	"github.com/qolzam/telar/apps/api/posts/common"
-	"github.com/qolzam/telar/apps/api/posts/repository"
-	sharedInterfaces "github.com/qolzam/telar/apps/api/shared/interfaces"
 	postsErrors "github.com/qolzam/telar/apps/api/posts/errors"
 	"github.com/qolzam/telar/apps/api/posts/models"
+	"github.com/qolzam/telar/apps/api/posts/repository"
+	sharedInterfaces "github.com/qolzam/telar/apps/api/shared/interfaces"
 	votesRepository "github.com/qolzam/telar/apps/api/votes/repository"
-	commentRepository "github.com/qolzam/telar/apps/api/comments/repository"
 )
 
 // postQueryBuilder has been removed as part of the architectural migration.
@@ -29,12 +30,13 @@ import (
 
 // postService implements the PostService interface
 type postService struct {
-	repo           repository.PostRepository // New domain-specific repository (primary)
-	voteRepo       votesRepository.VoteRepository // For enriching posts with voteType
+	repo           repository.PostRepository 
+	voteRepo       votesRepository.VoteRepository
+	bookmarkRepo   bookmarksRepository.Repository
 	cacheService   *cache.GenericCacheService
 	config         *platformconfig.Config
-	commentCounter sharedInterfaces.CommentCounter // For counting comments
-	commentRepo    commentRepository.CommentRepository // For cascade soft-delete of comments (optional, nil in tests)
+	commentCounter sharedInterfaces.CommentCounter
+	commentRepo    commentRepository.CommentRepository 
 }
 
 // Ensure postService implements sharedInterfaces.PostStatsUpdater interface
@@ -75,7 +77,7 @@ func (s *postService) incrementCommentCountInternal(ctx context.Context, postID 
 	return nil
 }
 
-// incrementCommentCountForService increments the comment count for a post 
+// incrementCommentCountForService increments the comment count for a post
 func (s *postService) incrementCommentCountForService(ctx context.Context, postID uuid.UUID, delta int) error {
 	err := s.incrementCommentCountInternal(ctx, postID, delta, false, uuid.Nil)
 	if err != nil {
@@ -84,9 +86,21 @@ func (s *postService) incrementCommentCountForService(ctx context.Context, postI
 	return err
 }
 
+// GetPostsByIDs retrieves posts in bulk; caller should reorder results as needed.
+func (s *postService) GetPostsByIDs(ctx context.Context, ids []uuid.UUID) ([]*models.Post, error) {
+	if len(ids) == 0 {
+		return []*models.Post{}, nil
+	}
+	posts, err := s.repo.GetByIDs(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get posts by ids: %w", err)
+	}
+	return posts, nil
+}
+
 // NewPostService creates a new instance of the post service
 // commentRepo is optional (can be nil for tests), but required for cascade soft-delete in production
-func NewPostService(repo repository.PostRepository, voteRepo votesRepository.VoteRepository, cfg *platformconfig.Config, commentCounter sharedInterfaces.CommentCounter, commentRepo commentRepository.CommentRepository) PostService {
+func NewPostService(repo repository.PostRepository, voteRepo votesRepository.VoteRepository, bookmarkRepo bookmarksRepository.Repository, cfg *platformconfig.Config, commentCounter sharedInterfaces.CommentCounter, commentRepo commentRepository.CommentRepository) PostService {
 	enableCache := true
 	if cfg != nil {
 		enableCache = cfg.Cache.Enabled
@@ -100,6 +114,7 @@ func NewPostService(repo repository.PostRepository, voteRepo votesRepository.Vot
 	return &postService{
 		repo:           repo,
 		voteRepo:       voteRepo,
+		bookmarkRepo:   bookmarkRepo,
 		cacheService:   cacheService,
 		config:         cfg,
 		commentCounter: commentCounter,
@@ -306,7 +321,6 @@ func (s *postService) CreatePost(ctx context.Context, req *models.CreatePostRequ
 	return post, nil
 }
 
-
 // GetPost retrieves a post by ID
 func (s *postService) GetPost(ctx context.Context, postID uuid.UUID) (*models.Post, error) {
 	post, err := s.repo.FindByID(ctx, postID)
@@ -377,7 +391,6 @@ func (s *postService) GetPostsByUser(ctx context.Context, userID uuid.UUID, filt
 		TotalCount: totalCount,
 		Page:       page,
 		Limit:      limit,
-		HasMore:    int64(page*limit) < totalCount,
 	}, nil
 }
 
@@ -450,8 +463,67 @@ func (s *postService) SearchPosts(ctx context.Context, query string, filter *mod
 		TotalCount: totalCount,
 		Page:       page,
 		Limit:      limit,
-		HasMore:    int64(page*limit) < totalCount,
 	}, nil
+}
+
+// SearchPostsLite returns a small set of posts for autocomplete
+func (s *postService) SearchPostsLite(ctx context.Context, query string, limit int) ([]models.PostResponse, error) {
+	trimmed := strings.TrimSpace(query)
+	if len(trimmed) < 3 {
+		return []models.PostResponse{}, nil
+	}
+	if limit <= 0 {
+		limit = 5
+	}
+	if limit > 20 {
+		limit = 20
+	}
+
+	posts, err := s.repo.Search(ctx, trimmed, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search posts: %w", err)
+	}
+	if len(posts) == 0 {
+		return []models.PostResponse{}, nil
+	}
+
+	// Preload comment counts in bulk to match feed data
+	commentCounts := map[uuid.UUID]int64{}
+	postIDs := make([]uuid.UUID, len(posts))
+	for i, post := range posts {
+		postIDs[i] = post.ObjectId
+	}
+	if s.commentRepo != nil {
+		if counts, err := s.commentRepo.CountByPostIDs(ctx, postIDs); err == nil {
+			commentCounts = counts
+		}
+	}
+
+	// Preload vote state in bulk when user is authenticated
+	voteMap := map[uuid.UUID]int{}
+	if s.voteRepo != nil {
+		if userCtx, ok := ctx.Value(types.UserCtxName).(types.UserContext); ok {
+			if votes, err := s.voteRepo.GetVotesForPosts(ctx, postIDs, userCtx.UserID); err == nil {
+				voteMap = votes
+			}
+		}
+	}
+
+	responses := make([]models.PostResponse, len(posts))
+	ctxWithoutUser := context.WithValue(ctx, types.UserCtxName, (*types.UserContext)(nil))
+
+	for i, post := range posts {
+		if count, ok := commentCounts[post.ObjectId]; ok {
+			post.CommentCounter = count
+		}
+		response := s.ConvertPostToResponse(ctxWithoutUser, post)
+		if v, ok := voteMap[post.ObjectId]; ok {
+			response.VoteType = v
+		}
+		responses[i] = response
+	}
+
+	return responses, nil
 }
 
 // UpdatePost updates an existing post
@@ -733,11 +805,11 @@ func (s *postService) getRootCommentCount(ctx context.Context, postID uuid.UUID)
 		log.Warn("Failed to count root comments for post %s: %v", postID.String(), err)
 		return 0, err
 	}
-	
+
 	if count > 0 {
 		log.Info("Lazy population: Found %d root comments for post %s", count, postID.String())
 	}
-	
+
 	return count, nil
 }
 
@@ -745,7 +817,7 @@ func (s *postService) getRootCommentCount(ctx context.Context, postID uuid.UUID)
 // If commentCounter is 0 or invalid, it checks actual comment count to populate it for existing posts
 func (s *postService) ConvertPostToResponse(ctx context.Context, post *models.Post) models.PostResponse {
 	commentCounter := post.CommentCounter
-	
+
 	// Lazy population: If commentCounter is 0 or missing, check actual count from comments
 	// This fixes existing posts that have comments but commentCounter wasn't initialized or is incorrect
 	// We only do this check if counter is 0 to avoid unnecessary queries for posts without comments
@@ -754,7 +826,7 @@ func (s *postService) ConvertPostToResponse(ctx context.Context, post *models.Po
 	if commentCounter == 0 || commentCounter < 0 {
 		countCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
-		
+
 		actualCount, err := s.getRootCommentCount(countCtx, post.ObjectId)
 		if err != nil {
 			// Log error but don't fail - return original count (0)
@@ -771,7 +843,7 @@ func (s *postService) ConvertPostToResponse(ctx context.Context, post *models.Po
 			go func() {
 				updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				
+
 				// Update post's commentCounter using UpdateFields to SET it directly
 				// We use UpdateFields instead of IncrementFields because we want to SET the value,
 				// not increment it (since the current value might be wrong)
@@ -784,7 +856,7 @@ func (s *postService) ConvertPostToResponse(ctx context.Context, post *models.Po
 			}()
 		}
 	}
-	
+
 	response := models.PostResponse{
 		ObjectId:         post.ObjectId.String(),
 		PostTypeId:       post.PostTypeId,
@@ -818,6 +890,7 @@ func (s *postService) ConvertPostToResponse(ctx context.Context, post *models.Po
 	// Note: User context must be set in context by middleware before calling service
 	if userCtx, ok := ctx.Value(types.UserCtxName).(types.UserContext); ok {
 		s.enrichSinglePostWithVoteType(ctx, &response, userCtx.UserID)
+		s.enrichSinglePostWithBookmark(ctx, &response, userCtx.UserID)
 	}
 
 	return response
@@ -880,17 +953,35 @@ func (s *postService) QueryPosts(ctx context.Context, filter *models.PostQueryFi
 		postResponses[i] = s.ConvertPostToResponse(ctx, post)
 	}
 
+	hasMore := int64(page*limit) < totalCount
 	result := &models.PostsListResponse{
 		Posts:      postResponses,
 		TotalCount: totalCount,
 		Page:       page,
 		Limit:      limit,
-		HasMore:    int64(page*limit) < totalCount,
+		HasNext:    hasMore, // Set hasNext based on Limit + 1 strategy
+	}
+
+	// Generate nextCursor from the last post if there are more posts
+	if hasMore && len(posts) > 0 {
+		lastPost := posts[len(posts)-1]
+		sortField := filter.SortField
+		if sortField == "" {
+			sortField = "createdDate"
+		}
+		sortDirection := filter.SortDirection
+		if sortDirection == "" {
+			sortDirection = "desc"
+		}
+		if cursor, err := models.CreateCursorFromPost(lastPost, sortField, sortDirection); err == nil {
+			result.NextCursor = cursor
+		}
 	}
 
 	// Enrich with vote types if user context is available and voteRepo is set
 	if userCtx, ok := ctx.Value(types.UserCtxName).(types.UserContext); ok {
 		s.enrichPostsWithVoteType(ctx, result.Posts, userCtx.UserID)
+		s.enrichPostsWithBookmarks(ctx, result.Posts, userCtx.UserID)
 	}
 
 	return result, nil
@@ -910,6 +1001,22 @@ func (s *postService) enrichSinglePostWithVoteType(ctx context.Context, response
 	voteMap, err := s.voteRepo.GetVotesForPosts(ctx, []uuid.UUID{postID}, userID)
 	if err == nil {
 		response.VoteType = voteMap[postID]
+	}
+}
+
+func (s *postService) enrichSinglePostWithBookmark(ctx context.Context, response *models.PostResponse, userID uuid.UUID) {
+	if s.bookmarkRepo == nil {
+		return
+	}
+
+	postID, err := uuid.FromString(response.ObjectId)
+	if err != nil {
+		return
+	}
+
+	bookmarkMap, err := s.bookmarkRepo.GetMapByUserAndPosts(ctx, userID, []uuid.UUID{postID})
+	if err == nil {
+		response.IsBookmarked = bookmarkMap[postID]
 	}
 }
 
@@ -950,11 +1057,142 @@ func (s *postService) enrichPostsWithVoteType(ctx context.Context, posts []model
 	}
 }
 
+func (s *postService) enrichPostsWithBookmarks(ctx context.Context, posts []models.PostResponse, userID uuid.UUID) {
+	if s.bookmarkRepo == nil || len(posts) == 0 {
+		return
+	}
+
+	postIDs := make([]uuid.UUID, 0, len(posts))
+	for i := range posts {
+		id, err := uuid.FromString(posts[i].ObjectId)
+		if err == nil {
+			postIDs = append(postIDs, id)
+		}
+	}
+
+	if len(postIDs) == 0 {
+		return
+	}
+
+	bookmarkMap, err := s.bookmarkRepo.GetMapByUserAndPosts(ctx, userID, postIDs)
+	if err != nil {
+		return
+	}
+
+	for i := range posts {
+		id, err := uuid.FromString(posts[i].ObjectId)
+		if err == nil {
+			posts[i].IsBookmarked = bookmarkMap[id]
+		}
+	}
+}
+
 // QueryPostsWithCursor retrieves posts with cursor-based pagination
-// Note: Currently falls back to basic QueryPosts. For true cursor pagination, additional repository methods would be needed.
+// Uses Limit + 1 strategy: fetch limit+1 items, if we get limit+1, hasNext=true
 func (s *postService) QueryPostsWithCursor(ctx context.Context, filter *models.PostQueryFilter) (*models.PostsListResponse, error) {
-	// For now, fall back to basic QueryPosts - cursor pagination needs additional repository support
-	return s.QueryPosts(ctx, filter)
+	if filter == nil {
+		filter = &models.PostQueryFilter{
+			Limit: 10,
+		}
+	}
+
+	// Build repository filter
+	repoFilter := repository.PostFilter{}
+	if filter.OwnerUserId != nil {
+		repoFilter.OwnerUserID = filter.OwnerUserId
+	}
+	if filter.PostTypeId != nil {
+		repoFilter.PostTypeID = filter.PostTypeId
+	}
+	if len(filter.Tags) > 0 {
+		repoFilter.Tags = filter.Tags
+	}
+	if filter.Deleted != nil {
+		repoFilter.Deleted = filter.Deleted
+	} else {
+		deleted := false
+		repoFilter.Deleted = &deleted
+	}
+	if filter.CreatedAfter != nil {
+		timestamp := filter.CreatedAfter.Unix()
+		repoFilter.CreatedAfter = &timestamp
+	}
+	if filter.Search != "" {
+		repoFilter.SearchText = &filter.Search
+	}
+
+	// Normalize limit
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	// Normalize sort parameters
+	sortField := filter.SortField
+	if sortField == "" {
+		sortField = "createdDate"
+	}
+	sortDirection := filter.SortDirection
+	if sortDirection == "" {
+		sortDirection = "desc"
+	}
+
+	// Decode cursor if provided
+	var cursorData *models.CursorData
+	if filter.Cursor != "" {
+		decoded, err := models.DecodeCursor(filter.Cursor)
+		if err != nil {
+			return nil, fmt.Errorf("invalid cursor: %w", err)
+		}
+		cursorData = decoded
+	} else if filter.AfterCursor != "" {
+		decoded, err := models.DecodeCursor(filter.AfterCursor)
+		if err != nil {
+			return nil, fmt.Errorf("invalid after cursor: %w", err)
+		}
+		cursorData = decoded
+	}
+
+	// Query posts with cursor pagination (uses Limit + 1 strategy)
+	posts, hasMore, err := s.repo.FindWithCursor(ctx, repoFilter, cursorData, sortField, sortDirection, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query posts with cursor: %w", err)
+	}
+
+	// Convert to response format
+	postResponses := make([]models.PostResponse, len(posts))
+	for i, post := range posts {
+		postResponses[i] = s.ConvertPostToResponse(ctx, post)
+	}
+
+	// Generate nextCursor from the last post if there are more posts
+	var nextCursor string
+	if hasMore && len(posts) > 0 {
+		lastPost := posts[len(posts)-1]
+		if cursor, err := models.CreateCursorFromPost(lastPost, sortField, sortDirection); err == nil {
+			nextCursor = cursor
+		}
+	}
+
+	result := &models.PostsListResponse{
+		Posts:      postResponses,
+		TotalCount: 0,
+		Page:       0,
+		Limit:      limit,
+		HasNext:    hasMore, // Set hasNext based on Limit + 1 strategy
+		NextCursor: nextCursor,
+	}
+
+	// Enrich with vote types if user context is available and voteRepo is set
+	if userCtx, ok := ctx.Value(types.UserCtxName).(types.UserContext); ok {
+		s.enrichPostsWithVoteType(ctx, result.Posts, userCtx.UserID)
+		s.enrichPostsWithBookmarks(ctx, result.Posts, userCtx.UserID)
+	}
+
+	return result, nil
 }
 
 // SearchPostsWithCursor retrieves posts matching search criteria with cursor-based pagination
@@ -1264,4 +1502,3 @@ func (s *postService) GetCursorInfo(ctx context.Context, postID uuid.UUID, sortB
 		SortOrder: direction,
 	}, nil
 }
-

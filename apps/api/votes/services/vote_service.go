@@ -13,6 +13,7 @@ import (
 
 	uuid "github.com/gofrs/uuid"
 	"github.com/qolzam/telar/apps/api/posts/repository"
+	voteErrors "github.com/qolzam/telar/apps/api/votes/errors"
 	"github.com/qolzam/telar/apps/api/votes/models"
 	voteRepository "github.com/qolzam/telar/apps/api/votes/repository"
 )
@@ -125,6 +126,9 @@ func (s *voteService) Vote(ctx context.Context, postID, userID uuid.UUID, voteTy
 		// 2. Atomic Score Update on Post
 		if delta != 0 {
 			if err := s.postRepo.IncrementScore(txCtx, postID, delta); err != nil {
+				if err.Error() == "post not found" || errors.Is(err, sql.ErrNoRows) {
+					return voteErrors.ErrPostNotFound
+				}
 				return fmt.Errorf("failed to increment post score: %w", err)
 			}
 		}

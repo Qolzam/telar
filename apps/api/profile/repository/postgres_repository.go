@@ -78,35 +78,35 @@ func (r *postgresProfileRepository) Create(ctx context.Context, profile *models.
 		)`
 
 	insertData := struct {
-		UserID        uuid.UUID     `db:"user_id"`
-		FullName      string        `db:"full_name"`
-		SocialName    string        `db:"social_name"`
-		Email         string        `db:"email"`
-		Avatar        string        `db:"avatar"`
-		Banner        string        `db:"banner"`
-		Tagline       string        `db:"tagline"`
-		CreatedAt     time.Time     `db:"created_at"`
-		UpdatedAt     time.Time     `db:"updated_at"`
-		CreatedDate   int64         `db:"created_date"`
-		LastUpdated   int64         `db:"last_updated"`
-		LastSeen      int64         `db:"last_seen"`
-		Birthday      int64         `db:"birthday"`
-		WebUrl        string        `db:"web_url"`
-		CompanyName   string        `db:"company_name"`
-		Country       string        `db:"country"`
-		Address       string        `db:"address"`
-		Phone         string        `db:"phone"`
-		VoteCount     int64         `db:"vote_count"`
-		ShareCount    int64         `db:"share_count"`
-		FollowCount   int64         `db:"follow_count"`
-		FollowerCount int64         `db:"follower_count"`
-		PostCount     int64         `db:"post_count"`
-		FacebookId    string        `db:"facebook_id"`
-		InstagramId   string        `db:"instagram_id"`
-		TwitterId     string        `db:"twitter_id"`
-		LinkedinId    string        `db:"linkedin_id"`
-		AccessUserList interface{}  `db:"access_user_list"`
-		Permission    string        `db:"permission"`
+		UserID         uuid.UUID   `db:"user_id"`
+		FullName       string      `db:"full_name"`
+		SocialName     string      `db:"social_name"`
+		Email          string      `db:"email"`
+		Avatar         string      `db:"avatar"`
+		Banner         string      `db:"banner"`
+		Tagline        string      `db:"tagline"`
+		CreatedAt      time.Time   `db:"created_at"`
+		UpdatedAt      time.Time   `db:"updated_at"`
+		CreatedDate    int64       `db:"created_date"`
+		LastUpdated    int64       `db:"last_updated"`
+		LastSeen       int64       `db:"last_seen"`
+		Birthday       int64       `db:"birthday"`
+		WebUrl         string      `db:"web_url"`
+		CompanyName    string      `db:"company_name"`
+		Country        string      `db:"country"`
+		Address        string      `db:"address"`
+		Phone          string      `db:"phone"`
+		VoteCount      int64       `db:"vote_count"`
+		ShareCount     int64       `db:"share_count"`
+		FollowCount    int64       `db:"follow_count"`
+		FollowerCount  int64       `db:"follower_count"`
+		PostCount      int64       `db:"post_count"`
+		FacebookId     string      `db:"facebook_id"`
+		InstagramId    string      `db:"instagram_id"`
+		TwitterId      string      `db:"twitter_id"`
+		LinkedinId     string      `db:"linkedin_id"`
+		AccessUserList interface{} `db:"access_user_list"`
+		Permission     string      `db:"permission"`
 	}{
 		UserID:        profile.ObjectId,
 		FullName:      profile.FullName,
@@ -282,6 +282,56 @@ func (r *postgresProfileRepository) Count(ctx context.Context, filter ProfileFil
 	return count, nil
 }
 
+// Search finds profiles by full name, social name, or tagline using full-text search
+func (r *postgresProfileRepository) Search(ctx context.Context, query string, limit int) ([]*models.Profile, error) {
+	searchTerm := strings.TrimSpace(query)
+	if searchTerm == "" {
+		return []*models.Profile{}, nil
+	}
+	if limit <= 0 {
+		limit = 5
+	}
+
+	sqlQuery := `
+		SELECT
+			user_id, full_name, social_name, email, avatar, banner, tagline,
+			created_at, updated_at, created_date, last_updated, last_seen,
+			birthday, web_url, company_name, country, address, phone,
+			vote_count, share_count, follow_count, follower_count, post_count,
+			facebook_id, instagram_id, twitter_id, linkedin_id,
+			access_user_list, permission
+		FROM profiles
+		WHERE
+			to_tsvector('english',
+				COALESCE(full_name, '') || ' ' ||
+				COALESCE(social_name, '') || ' ' ||
+				COALESCE(tagline, '')
+			) @@ plainto_tsquery('english', $1)
+		ORDER BY
+			ts_rank_cd(
+				to_tsvector('english',
+					COALESCE(full_name, '') || ' ' ||
+					COALESCE(social_name, '') || ' ' ||
+					COALESCE(tagline, '')
+				), plainto_tsquery('english', $1)
+			) DESC,
+			created_at DESC
+		LIMIT $2
+	`
+
+	var profiles []models.Profile
+	if err := sqlx.SelectContext(ctx, r.getExecutor(ctx), &profiles, sqlQuery, searchTerm, limit); err != nil {
+		return nil, fmt.Errorf("failed to search profiles: %w", err)
+	}
+
+	results := make([]*models.Profile, len(profiles))
+	for i := range profiles {
+		results[i] = &profiles[i]
+	}
+
+	return results, nil
+}
+
 // Update updates an existing profile
 func (r *postgresProfileRepository) Update(ctx context.Context, profile *models.Profile) error {
 	profile.UpdatedAt = time.Now()
@@ -319,61 +369,61 @@ func (r *postgresProfileRepository) Update(ctx context.Context, profile *models.
 	`
 
 	updateData := struct {
-		UserID        uuid.UUID     `db:"user_id"`
-		FullName      string        `db:"full_name"`
-		SocialName    string        `db:"social_name"`
-		Email         string        `db:"email"`
-		Avatar        string        `db:"avatar"`
-		Banner        string        `db:"banner"`
-		Tagline       string        `db:"tagline"`
-		UpdatedAt     time.Time     `db:"updated_at"`
-		LastUpdated   int64         `db:"last_updated"`
-		LastSeen      int64         `db:"last_seen"`
-		Birthday      int64         `db:"birthday"`
-		WebUrl        string        `db:"web_url"`
-		CompanyName   string        `db:"company_name"`
-		Country       string        `db:"country"`
-		Address       string        `db:"address"`
-		Phone         string        `db:"phone"`
-		VoteCount     int64         `db:"vote_count"`
-		ShareCount    int64         `db:"share_count"`
-		FollowCount   int64         `db:"follow_count"`
-		FollowerCount int64         `db:"follower_count"`
-		PostCount     int64         `db:"post_count"`
-		FacebookId    string        `db:"facebook_id"`
-		InstagramId   string        `db:"instagram_id"`
-		TwitterId     string        `db:"twitter_id"`
-		LinkedinId    string        `db:"linkedin_id"`
-		AccessUserList interface{}  `db:"access_user_list"`
-		Permission    string        `db:"permission"`
+		UserID         uuid.UUID   `db:"user_id"`
+		FullName       string      `db:"full_name"`
+		SocialName     string      `db:"social_name"`
+		Email          string      `db:"email"`
+		Avatar         string      `db:"avatar"`
+		Banner         string      `db:"banner"`
+		Tagline        string      `db:"tagline"`
+		UpdatedAt      time.Time   `db:"updated_at"`
+		LastUpdated    int64       `db:"last_updated"`
+		LastSeen       int64       `db:"last_seen"`
+		Birthday       int64       `db:"birthday"`
+		WebUrl         string      `db:"web_url"`
+		CompanyName    string      `db:"company_name"`
+		Country        string      `db:"country"`
+		Address        string      `db:"address"`
+		Phone          string      `db:"phone"`
+		VoteCount      int64       `db:"vote_count"`
+		ShareCount     int64       `db:"share_count"`
+		FollowCount    int64       `db:"follow_count"`
+		FollowerCount  int64       `db:"follower_count"`
+		PostCount      int64       `db:"post_count"`
+		FacebookId     string      `db:"facebook_id"`
+		InstagramId    string      `db:"instagram_id"`
+		TwitterId      string      `db:"twitter_id"`
+		LinkedinId     string      `db:"linkedin_id"`
+		AccessUserList interface{} `db:"access_user_list"`
+		Permission     string      `db:"permission"`
 	}{
-		UserID:        profile.ObjectId,
-		FullName:      profile.FullName,
-		SocialName:    profile.SocialName,
-		Email:         profile.Email,
-		Avatar:        profile.Avatar,
-		Banner:        profile.Banner,
-		Tagline:       profile.Tagline,
-		UpdatedAt:     profile.UpdatedAt,
-		LastUpdated:   profile.LastUpdated,
-		LastSeen:      profile.LastSeen,
-		Birthday:      profile.Birthday,
-		WebUrl:        profile.WebUrl,
-		CompanyName:   profile.CompanyName,
-		Country:       profile.Country,
-		Address:       profile.Address,
-		Phone:         profile.Phone,
-		VoteCount:     profile.VoteCount,
-		ShareCount:    profile.ShareCount,
-		FollowCount:   profile.FollowCount,
-		FollowerCount: profile.FollowerCount,
-		PostCount:     profile.PostCount,
-		FacebookId:    profile.FacebookId,
-		InstagramId:   profile.InstagramId,
-		TwitterId:     profile.TwitterId,
-		LinkedinId:    profile.LinkedInId,
+		UserID:         profile.ObjectId,
+		FullName:       profile.FullName,
+		SocialName:     profile.SocialName,
+		Email:          profile.Email,
+		Avatar:         profile.Avatar,
+		Banner:         profile.Banner,
+		Tagline:        profile.Tagline,
+		UpdatedAt:      profile.UpdatedAt,
+		LastUpdated:    profile.LastUpdated,
+		LastSeen:       profile.LastSeen,
+		Birthday:       profile.Birthday,
+		WebUrl:         profile.WebUrl,
+		CompanyName:    profile.CompanyName,
+		Country:        profile.Country,
+		Address:        profile.Address,
+		Phone:          profile.Phone,
+		VoteCount:      profile.VoteCount,
+		ShareCount:     profile.ShareCount,
+		FollowCount:    profile.FollowCount,
+		FollowerCount:  profile.FollowerCount,
+		PostCount:      profile.PostCount,
+		FacebookId:     profile.FacebookId,
+		InstagramId:    profile.InstagramId,
+		TwitterId:      profile.TwitterId,
+		LinkedinId:     profile.LinkedInId,
 		AccessUserList: profile.AccessUserList,
-		Permission:    profile.Permission,
+		Permission:     profile.Permission,
 	}
 
 	result, err := sqlx.NamedExecContext(ctx, r.getExecutor(ctx), query, updateData)
@@ -504,10 +554,13 @@ func (r *postgresProfileRepository) buildFindQuery(filter ProfileFilter, limit, 
 	}
 
 	if filter.SearchText != nil && *filter.SearchText != "" {
-		searchPattern := "%" + *filter.SearchText + "%"
-		// Use ILIKE for case-insensitive search on full_name
-		query += fmt.Sprintf(" AND (full_name ILIKE $%d OR social_name ILIKE $%d OR tagline ILIKE $%d)", argIndex, argIndex, argIndex)
-		args = append(args, searchPattern)
+		// Use full-text search for better performance and relevance
+		query += fmt.Sprintf(` AND to_tsvector('english',
+			COALESCE(full_name, '') || ' ' ||
+			COALESCE(social_name, '') || ' ' ||
+			COALESCE(tagline, '')
+		) @@ plainto_tsquery('english', $%d)`, argIndex)
+		args = append(args, *filter.SearchText)
 		argIndex++
 	}
 
@@ -544,12 +597,14 @@ func (r *postgresProfileRepository) buildCountQuery(filter ProfileFilter) (strin
 	}
 
 	if filter.SearchText != nil && *filter.SearchText != "" {
-		searchPattern := "%" + *filter.SearchText + "%"
-		query += fmt.Sprintf(" AND (full_name ILIKE $%d OR social_name ILIKE $%d OR tagline ILIKE $%d)", argIndex, argIndex, argIndex)
-		args = append(args, searchPattern)
+		query += fmt.Sprintf(` AND to_tsvector('english',
+			COALESCE(full_name, '') || ' ' ||
+			COALESCE(social_name, '') || ' ' ||
+			COALESCE(tagline, '')
+		) @@ plainto_tsquery('english', $%d)`, argIndex)
+		args = append(args, *filter.SearchText)
 		argIndex++
 	}
 
 	return query, args
 }
-

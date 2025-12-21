@@ -34,6 +34,10 @@ export interface IPostsApi {
    */
   getById(postId: string): Promise<Post>;
   /**
+   * Get a post by its URL key (for shareable links)
+   */
+  getByUrlKey(urlKey: string): Promise<Post>;
+  /**
    * Update an existing post
    */
   updatePost(data: UpdatePostRequest): Promise<void>;
@@ -41,6 +45,16 @@ export interface IPostsApi {
    * Delete a post (soft delete)
    */
   deletePost(postId: string): Promise<void>;
+
+  /**
+   * Search posts for autocomplete
+   */
+  searchPosts(query: string): Promise<Post[]>;
+
+  /**
+   * Generate a shareable URL key for a post
+   */
+  generateUrlKey(postId: string): Promise<{ urlKey: string }>;
 }
 
 /**
@@ -55,6 +69,7 @@ export const postsApi = (client: ApiClient): IPostsApi => ({
     const queryParams = new URLSearchParams();
     if (params?.limit) queryParams.append('limit', params.limit.toString());
     if (params?.cursor) queryParams.append('cursor', params.cursor);
+    if (params?.owner) queryParams.append('owner', params.owner);
     
     const url = `/posts/queries/cursor${queryParams.toString() ? `?${queryParams}` : ''}`;
     return client.get<PostsResponse>(url);
@@ -64,12 +79,28 @@ export const postsApi = (client: ApiClient): IPostsApi => ({
     return client.get<Post>(`/posts/${postId}`);
   },
 
+  getByUrlKey: async (urlKey: string): Promise<Post> => {
+    return client.get<Post>(`/posts/urlkey/${urlKey}`);
+  },
+
   updatePost: async (data: UpdatePostRequest): Promise<void> => {
     await client.put<void>('/posts', data);
   },
 
   deletePost: async (postId: string): Promise<void> => {
     await client.delete<void>(`/posts/${postId}`);
+  },
+
+  searchPosts: async (query: string): Promise<Post[]> => {
+    const params = new URLSearchParams();
+    params.append('q', query);
+    params.append('limit', '5');
+    const endpoint = `/posts/search?${params.toString()}`;
+    return client.get<Post[]>(endpoint);
+  },
+
+  generateUrlKey: async (postId: string): Promise<{ urlKey: string }> => {
+    return client.put<{ urlKey: string }>(`/posts/urlkey/${postId}`);
   },
 });
 

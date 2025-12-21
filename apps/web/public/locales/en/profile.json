@@ -8,7 +8,8 @@
   },
   "about": {
     "title": "About",
-    "worksAt": "Works at"
+    "worksAt": "Works at",
+    "defaultTagline": "Sharing thoughts and connecting with the community"
   },
   "social": {
     "title": "Social"

@@ -3,7 +3,7 @@ import type { TokenClaim, JWKS } from '@telar/sdk';
 import { COOKIE_CONFIG } from './cookies';
 
 const getAuthApiUrl = () => {
-  const url = process.env.INTERNAL_API_URL || 'http://localhost:8080';
+  const url = process.env.INTERNAL_API_URL || 'http://localhost:9099';
   return url.replace('localhost', '127.0.0.1');
 };
 

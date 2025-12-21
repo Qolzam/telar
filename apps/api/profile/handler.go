@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofrs/uuid"
@@ -86,6 +87,34 @@ func (h *ProfileHandler) QueryUserProfile(c *fiber.Ctx) error {
 	return c.JSON(profiles)
 }
 
+func (h *ProfileHandler) SearchProfiles(c *fiber.Ctx) error {
+	query := c.Query("q")
+	if strings.TrimSpace(query) == "" {
+		return c.JSON([]*models.Profile{})
+	}
+
+	limit := 5
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			if parsed > 20 {
+				limit = 20
+			} else {
+				limit = parsed
+			}
+		}
+	}
+
+	results, err := h.profileService.SearchProfiles(c.Context(), query, limit)
+	if err != nil {
+		return errors.HandleServiceError(c, err)
+	}
+	if results == nil {
+		results = []*models.Profile{}
+	}
+
+	return c.JSON(results)
+}
+
 func (h *ProfileHandler) ReadProfile(c *fiber.Ctx) error {
 	idStr := c.Params("userId")
 	id, err := uuid.FromString(idStr)
@@ -129,12 +158,12 @@ func (h *ProfileHandler) GetProfileByIds(c *fiber.Ctx) error {
 			ids = append(ids, id)
 		}
 	}
-	
+
 	// If no valid UUIDs were parsed, return empty array
 	if len(ids) == 0 {
 		return c.JSON([]*models.Profile{})
 	}
-	
+
 	// GetProfilesByIds is now part of ProfileService interface
 	docs, err := h.profileService.GetProfilesByIds(c.Context(), ids)
 	if err != nil {
@@ -275,4 +304,3 @@ func (h *ProfileHandler) IncreaseFollowerCount(c *fiber.Ctx) error {
 	}
 	return c.SendStatus(http.StatusOK)
 }
-

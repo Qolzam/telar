@@ -9,8 +9,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/qolzam/telar/apps/api/internal/database/postgres"
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
+	"github.com/qolzam/telar/apps/api/internal/database/postgres"
 	"github.com/qolzam/telar/apps/api/internal/testutil"
 )
 
@@ -68,6 +68,8 @@ func ApplyCommentsMigration(ctx context.Context, iso *testutil.IsolatedTest) err
 			post_id UUID NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
 			owner_user_id UUID NOT NULL REFERENCES user_auths(id) ON DELETE CASCADE,
 			parent_comment_id UUID REFERENCES comments(id) ON DELETE CASCADE,
+			reply_to_user_id UUID REFERENCES user_auths(id) ON DELETE SET NULL,
+			reply_to_display_name VARCHAR(255),
 			text TEXT NOT NULL,
 			score BIGINT DEFAULT 0,
 			owner_display_name VARCHAR(255),
@@ -87,6 +89,7 @@ func ApplyCommentsMigration(ctx context.Context, iso *testutil.IsolatedTest) err
 		CREATE INDEX IF NOT EXISTS idx_comments_created_date ON comments(created_date DESC);
 		CREATE INDEX IF NOT EXISTS idx_comments_deleted ON comments(is_deleted) WHERE is_deleted = FALSE;
 		CREATE INDEX IF NOT EXISTS idx_comments_post_active ON comments(post_id, created_date DESC) WHERE is_deleted = FALSE;
+		CREATE INDEX IF NOT EXISTS idx_comments_reply_to_user ON comments(reply_to_user_id) WHERE reply_to_user_id IS NOT NULL;
 	`
 
 	_, err = client.DB().ExecContext(ctx, migrationSQL)
@@ -117,4 +120,3 @@ func NewPostgresCommentRepositoryForTest(ctx context.Context, iso *testutil.Isol
 
 	return NewPostgresCommentRepositoryWithSchema(client, iso.LegacyConfig.PGSchema), nil
 }
-

@@ -15,7 +15,7 @@ info:
 servers:
   - url: https://social.faas.telar.dev/storage
     description: Production server
-  - url: http://localhost:8080/storage
+  - url: http://localhost:9099/storage
     description: Development server
 
 security:

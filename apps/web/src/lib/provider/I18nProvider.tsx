@@ -26,7 +26,7 @@ export function I18nProvider({ children }: I18nProviderProps) {
       const locale = getCookieValue('i18next') || fallbackLng;
 
       // Initialize i18n with the locale
-      await initI18nClient(locale, ['common', 'auth', 'settings', 'validation', 'dashboard', 'profile']);
+      await initI18nClient(locale, ['common', 'auth', 'settings', 'validation', 'dashboard', 'profile', 'posts']);
       setIsReady(true);
     };
 

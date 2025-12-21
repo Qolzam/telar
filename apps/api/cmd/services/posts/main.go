@@ -5,15 +5,16 @@ import (
 	"log"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/qolzam/telar/apps/api/internal/database/postgres"
+	bookmarksRepository "github.com/qolzam/telar/apps/api/bookmarks/repository"
+	commentRepository "github.com/qolzam/telar/apps/api/comments/repository"
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
+	"github.com/qolzam/telar/apps/api/internal/database/postgres"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/posts"
 	"github.com/qolzam/telar/apps/api/posts/handlers"
 	postsRepository "github.com/qolzam/telar/apps/api/posts/repository"
 	postsServices "github.com/qolzam/telar/apps/api/posts/services"
 	votesRepository "github.com/qolzam/telar/apps/api/votes/repository"
-	commentRepository "github.com/qolzam/telar/apps/api/comments/repository"
 )
 
 func main() {
@@ -47,9 +48,10 @@ func main() {
 	postRepo := postsRepository.NewPostgresRepository(pgClient)
 	voteRepo := votesRepository.NewPostgresVoteRepository(pgClient)
 	commentRepo := commentRepository.NewPostgresCommentRepository(pgClient)
+	bookmarkRepo := bookmarksRepository.NewPostgresRepository(pgClient)
 
 	// Create post service with repository
-	postsService := postsServices.NewPostService(postRepo, voteRepo, cfg, nil, commentRepo)
+	postsService := postsServices.NewPostService(postRepo, voteRepo, bookmarkRepo, cfg, nil, commentRepo)
 
 	postsHandler := handlers.NewPostHandler(postsService, cfg.JWT, cfg.HMAC)
 
@@ -62,6 +64,3 @@ func main() {
 	log.Printf("Starting Posts Service on port 8082")
 	log.Fatal(app.Listen(":8082"))
 }
-
-
-

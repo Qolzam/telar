@@ -11,6 +11,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import FavoriteIcon from '@mui/icons-material/Favorite';
 import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
@@ -18,10 +19,11 @@ import MessageIcon from '@mui/icons-material/Message';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import { formatDistanceToNow } from 'date-fns';
 import type { Comment as CommentModel } from '@telar/sdk';
-import { useToggleLikeCommentMutation, useUpdateCommentMutation, useCommentRepliesQuery } from '../../client';
+import { useToggleLikeCommentMutation, useUpdateCommentMutation } from '../../client';
 import { useState } from 'react';
 import { CreateCommentForm } from '../CreateCommentForm';
 import { ConfirmDeleteDialog } from '../ConfirmDeleteDialog';
+import { ReplyList } from '../ReplyList';
 import { useSession } from '@/features/auth/client';
 
 interface CommentProps {
@@ -29,10 +31,15 @@ interface CommentProps {
   currentUserId?: string;
   onEdit?: (comment: CommentModel) => void;
   onDelete?: (comment: CommentModel) => void;
-  replies?: CommentModel[];
 }
 
-export function Comment({ comment, currentUserId, onEdit, onDelete, replies = [] }: CommentProps) {
+
+export function Comment({ comment, currentUserId, onEdit, onDelete }: CommentProps) {
+  const theme = useTheme();
+  const textPrimary = `var(--mui-palette-text-primary, ${theme.palette.text.primary})`;
+  const textSecondary = `var(--mui-palette-text-secondary, ${theme.palette.text.secondary})`;
+  const primaryMain = `var(--mui-palette-primary-main, ${theme.palette.primary.main})`;
+  const errorMain = `var(--mui-palette-error-main, ${theme.palette.error.main})`;
   const createdAt = new Date(comment.createdDate);
   const canModify = currentUserId && currentUserId === comment.ownerUserId;
   const { user } = useSession();
@@ -53,12 +60,12 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
   const menuOpen = Boolean(menuEl);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [repliesExpanded, setRepliesExpanded] = useState(false);
-  const { data: replyPages, fetchNextPage, hasNextPage, refetch, isFetching } =
-    useCommentRepliesQuery(comment.objectId, 10);
-  // Extract replies from CommentsListResponse pages
-  const lazyReplies = (replyPages?.pages ?? []).flatMap((page) => page.comments || []);
+  const [activeReplyId, setActiveReplyId] = useState<string | null>(null);
+  
+  const handleReplyClick = (targetId: string | null) => {
+    setActiveReplyId((prev) => (prev === targetId ? null : targetId));
+  };
 
-  // Use isLiked from API response (enriched by backend)
   const isLiked = comment.isLiked || false;
 
   const handleSave = async () => {
@@ -67,6 +74,7 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
   };
 
   const handleLikeToggle = async () => {
+
     try {
       // The mutation handles optimistic updates automatically
       await toggleLikeMutation.mutateAsync(comment.objectId);
@@ -86,7 +94,7 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
         {displayName?.[0]?.toUpperCase()}
       </Avatar>
 
-      <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+      <Box sx={{ flexGrow: 1, minWidth: 0, ml: comment.parentCommentId ? '20px' : 0 }}>
         <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: '8px' }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Typography 
@@ -97,7 +105,7 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
                 fontWeight: 700,
                 lineHeight: '20px',
                 letterSpacing: '-0.084px',
-                color: '#1E293B',
+                color: textPrimary,
               }}
             >
               {displayName}
@@ -110,7 +118,7 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
                 fontWeight: 500,
                 lineHeight: '16px',
                 letterSpacing: '-0.06px',
-                color: '#475569',
+                color: textSecondary,
               }}
             >
             {formatDistanceToNow(createdAt, { addSuffix: true })}
@@ -121,7 +129,10 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
               <IconButton
                 size="small"
                 aria-label="More options"
-                onClick={(e) => setMenuEl(e.currentTarget)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuEl(e.currentTarget);
+                }}
                 sx={{ color: 'grey.400', '&:hover': { color: 'grey.600' } }}
               >
                 <MoreVertIcon fontSize="small" />
@@ -134,7 +145,8 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
                 transformOrigin={{ vertical: 'top', horizontal: 'right' }}
               >
                 <MenuItem
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     setMenuEl(null);
                     setIsEditing(true);
                     setDraft(comment.text);
@@ -143,7 +155,8 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
                   Edit
                 </MenuItem>
                 <MenuItem
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     setMenuEl(null);
                     setConfirmOpen(true);
                   }}
@@ -155,6 +168,40 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
           )}
         </Box>
 
+        {/* Two-Tier Architecture: Show "Replying to @User" indicator before comment text */}
+        {comment.replyToUserId && comment.replyToDisplayName && (
+          <Box sx={{ mb: 0.5 }}>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{
+                fontFamily: 'PlusJakartaSans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                fontSize: '12px',
+                fontWeight: 400,
+                lineHeight: '16px',
+                letterSpacing: '-0.06px',
+              }}
+            >
+              Replying to{' '}
+              <Typography
+                component="span"
+                variant="caption"
+                sx={{
+                  fontFamily: 'PlusJakartaSans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  color: 'primary.main',
+                  cursor: 'pointer',
+                  '&:hover': {
+                    textDecoration: 'underline',
+                  },
+                }}
+              >
+                @{comment.replyToDisplayName}
+              </Typography>
+            </Typography>
+          </Box>
+        )}
         {!isEditing ? (
           <Typography 
             sx={{ 
@@ -165,7 +212,7 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
               fontSize: '14px',
               fontWeight: 400,
               lineHeight: '22.4px',
-              color: '#475569',
+              color: textSecondary,
             }}
           >
             {comment.text}
@@ -212,6 +259,7 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
               alignItems: 'center',
               gap: '6px',
               color: isLiked ? '#EF4444' : '#475569',
+              color: isLiked ? errorMain : textSecondary,
               textTransform: 'none',
               minWidth: 'auto',
               padding: '0',
@@ -222,14 +270,14 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
               letterSpacing: '-0.084px',
               '&:hover': {
                 backgroundColor: 'transparent',
-                color: isLiked ? '#DC2626' : '#1E293B',
+                color: isLiked ? errorMain : textPrimary,
               },
             }}
           >
             {isLiked ? (
-              <FavoriteIcon sx={{ fontSize: 18, color: '#EF4444' }} />
+              <FavoriteIcon sx={{ fontSize: 18, color: errorMain }} />
             ) : (
-              <FavoriteBorderIcon sx={{ fontSize: 18, color: '#475569' }} />
+              <FavoriteBorderIcon sx={{ fontSize: 18, color: textSecondary }} />
             )}
             {comment.score > 0 && (
               <Typography 
@@ -240,7 +288,7 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
                   fontWeight: 600,
                   lineHeight: '20px',
                   letterSpacing: '-0.084px',
-                  color: '#1E293B',
+                  color: textPrimary,
                 }}
               >
                 {comment.score}
@@ -254,7 +302,7 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              color: '#1E293B',
+              color: textPrimary,
               textTransform: 'none',
               minWidth: 'auto',
               padding: '0',
@@ -265,32 +313,25 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
               letterSpacing: '-0.084px',
               '&:hover': {
                 backgroundColor: 'transparent',
-                color: '#1E293B',
+                color: textPrimary,
               },
             }}
           >
-            <MessageIcon sx={{ fontSize: 18, color: '#475569' }} />
+            <MessageIcon sx={{ fontSize: 18, color: textSecondary }} />
             <Typography component="span" sx={{ fontSize: '13px', fontWeight: 600 }}>
               Reply
             </Typography>
           </Button>
         </Box>
-        {!!(replies.length || comment.replyCount || lazyReplies.length) && (
-            <Button
-              onClick={async () => {
-                setRepliesExpanded((v) => !v);
-                if (!repliesExpanded) {
-                  // First expand: if no replies passed down, load first page
-                  if (!replies.length && lazyReplies.length === 0) {
-                    await refetch();
-                  }
-                }
-              }}
+        {/* Two-Tier Architecture: Only show replies for root comments (parentCommentId is null) */}
+        {!comment.parentCommentId && (comment.replyCount || 0) > 0 && (
+          <Button
+            onClick={() => setRepliesExpanded((v) => !v)}
             sx={{
               display: 'flex',
               alignItems: 'center',
               gap: '4px',
-              color: '#4F46E5',
+              color: primaryMain,
               textTransform: 'none',
               px: 0,
               mt: '12px',
@@ -301,54 +342,45 @@ export function Comment({ comment, currentUserId, onEdit, onDelete, replies = []
               letterSpacing: '-0.084px',
               '&:hover': {
                 backgroundColor: 'transparent',
-                color: '#4338CA',
+                color: primaryMain,
               },
             }}
-            aria-label={repliesExpanded ? 'Hide replies' : `See ${replies.length || comment.replyCount || 0} Replies`}
-            >
+            aria-label={repliesExpanded ? 'Hide replies' : `See ${comment.replyCount || 0} Replies`}
+          >
             <KeyboardArrowDownIcon
               sx={{
                 fontSize: 16,
-                color: '#4F46E5',
+                color: primaryMain,
                 transition: 'transform 0.2s',
                 transform: repliesExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
               }}
             />
-            {repliesExpanded ? 'Hide Replies' : `See ${replies.length || comment.replyCount || 0} Replies`}
-            </Button>
+            {repliesExpanded ? 'Hide Replies' : `See ${comment.replyCount || 0} Replies`}
+          </Button>
         )}
-        {repliesExpanded && (replies.length > 0 || lazyReplies.length > 0) && (
-          <Box sx={{ mt: '16px', pl: '56px' }}>
-            {(replies.length > 0 ? replies : lazyReplies).map((r) => (
-              <Box key={r.objectId} sx={{ mb: '24px' }}>
-                <Comment
-                  comment={r}
-                  currentUserId={currentUserId}
-                  onDelete={onDelete}
-                  // Do not pass further replies to keep single-level nesting
-                  replies={[]}
-                />
-              </Box>
-            ))}
-            {hasNextPage && (
-              <Button
-                size="small"
-                variant="text"
-                onClick={() => fetchNextPage()}
-                disabled={isFetching}
-                sx={{ color: (t) => t.palette.primary.main, textTransform: 'none', px: 0, mt: 0.5 }}
-              >
-                {isFetching ? 'Loading…' : 'Load more replies'}
-              </Button>
-            )}
-          </Box>
+        {repliesExpanded && !comment.parentCommentId && (
+          <ReplyList
+            rootId={comment.objectId}
+            postId={comment.postId}
+            currentUserId={currentUserId}
+            onDelete={onDelete}
+            activeReplyId={activeReplyId}
+            onReplyClick={handleReplyClick}
+          />
         )}
         {replyOpen && (
           <Box sx={{ mt: '12px' }}>
             <CreateCommentForm
               postId={comment.postId}
               parentCommentId={comment.objectId}
-              onSuccess={() => setReplyOpen(false)}
+              replyToDisplayName={comment.ownerDisplayName}
+              onSuccess={() => {
+                setReplyOpen(false);
+
+                if (!repliesExpanded) {
+                  setRepliesExpanded(true);
+                }
+              }}
             />
           </Box>
         )}

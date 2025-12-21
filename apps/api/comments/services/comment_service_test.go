@@ -17,8 +17,8 @@ import (
 
 	commentsErrors "github.com/qolzam/telar/apps/api/comments/errors"
 	"github.com/qolzam/telar/apps/api/comments/models"
-	"github.com/qolzam/telar/apps/api/comments/services/mocks"
 	commentRepository "github.com/qolzam/telar/apps/api/comments/repository"
+	"github.com/qolzam/telar/apps/api/comments/services/mocks"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
 	"github.com/qolzam/telar/apps/api/internal/types"
 )
@@ -39,8 +39,8 @@ func createTestUserContext() *types.UserContext {
 func createTestCreateCommentRequest() *models.CreateCommentRequest {
 	postID := uuid.Must(uuid.NewV4())
 	return &models.CreateCommentRequest{
-		PostId:  postID,
-		Text:    "This is a test comment",
+		PostId:          postID,
+		Text:            "This is a test comment",
 		ParentCommentId: nil, // Root comment
 	}
 }
@@ -57,8 +57,8 @@ func createTestComment() models.Comment {
 		OwnerDisplayName: "Test User",
 		OwnerAvatar:      "https://example.com/avatar.jpg",
 		Text:             "Test comment text",
-		Score:             0,
-		Deleted:           false,
+		Score:            0,
+		Deleted:          false,
 		DeletedDate:      0,
 		ParentCommentId:  nil,
 		CreatedDate:      now,
@@ -138,6 +138,14 @@ func TestCreateComment_Reply_NoCountIncrement(t *testing.T) {
 	req := createTestCreateCommentRequest()
 	parentID := uuid.Must(uuid.NewV4())
 	req.ParentCommentId = &parentID // Reply comment
+
+	mockCommentRepo.On("FindByID", ctx, parentID).Return(&models.Comment{
+		ObjectId:         parentID,
+		PostId:           req.PostId,
+		OwnerUserId:      user.UserID,
+		OwnerDisplayName: user.DisplayName,
+		Deleted:          false,
+	}, nil)
 
 	// Setup expectations for Create (no transaction for replies)
 	mockCommentRepo.On("Create", ctx, mock.AnythingOfType("*models.Comment")).Return(nil).Run(func(args mock.Arguments) {
@@ -283,10 +291,13 @@ func TestUpdateComment_ValidRequest_Success(t *testing.T) {
 	})
 
 	// Execute
-	err := service.UpdateComment(ctx, commentID, req, user)
+	updatedComment, err := service.UpdateComment(ctx, commentID, req, user)
 
 	// Assert
 	assert.NoError(t, err)
+	assert.NotNil(t, updatedComment)
+	assert.Equal(t, "Updated comment text", updatedComment.Text)
+	assert.Greater(t, updatedComment.LastUpdated, int64(0))
 	mockCommentRepo.AssertExpectations(t)
 }
 
@@ -309,10 +320,11 @@ func TestUpdateComment_UnauthorizedUser_ReturnsError(t *testing.T) {
 	mockCommentRepo.On("FindByID", ctx, commentID).Return(&testComment, nil)
 
 	// Execute
-	err := service.UpdateComment(ctx, commentID, req, user)
+	updatedComment, err := service.UpdateComment(ctx, commentID, req, user)
 
 	// Assert
 	assert.Error(t, err)
+	assert.Nil(t, updatedComment)
 	assert.Equal(t, commentsErrors.ErrCommentOwnershipRequired, err)
 
 	mockCommentRepo.AssertExpectations(t)
@@ -381,6 +393,7 @@ func TestDeleteComment_ValidOwnership_Success(t *testing.T) {
 
 	// Setup expectations for Delete (called within transaction)
 	mockCommentRepo.On("Delete", mock.Anything, commentID).Return(nil)
+	mockCommentRepo.On("DeleteRepliesByParentID", mock.Anything, commentID).Return(nil)
 
 	// Setup expectations for IncrementCommentCount (called within transaction)
 	mockPostRepo.On("IncrementCommentCount", mock.Anything, postID, -1).Return(nil)

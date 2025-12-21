@@ -221,7 +221,7 @@ func TestValidateAndSanitizeURL_ValidURLs(t *testing.T) {
 		{"https://example.com", "https://example.com"},
 		{"  https://example.com/path  ", "https://example.com/path"},
 		{"https://cdn.example.com/image.jpg", "https://cdn.example.com/image.jpg"},
-		{"https://api.example.com:8080/v1/endpoint", "https://api.example.com:8080/v1/endpoint"},
+		{"https://api.example.com:9099/v1/endpoint", "https://api.example.com:9099/v1/endpoint"},
 	}
 
 	for _, test := range validURLs {

@@ -447,6 +447,23 @@ func applyMigrations(t *testing.T, ctx context.Context, db interface{}, schema s
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_user_auths_username ON user_auths(username);
 	`
 
+	// Apply profiles migration (required for FindReplies LEFT JOIN)
+	profilesSQL := `
+		CREATE TABLE IF NOT EXISTS profiles (
+			user_id UUID PRIMARY KEY REFERENCES user_auths(id) ON DELETE CASCADE,
+			full_name VARCHAR(255),
+			social_name VARCHAR(255),
+			email VARCHAR(255),
+			avatar VARCHAR(512),
+			banner VARCHAR(512),
+			tagline VARCHAR(500),
+			created_date BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			last_updated BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+	`
+
 	// Apply posts migration
 	postsSQL := `
 		CREATE TABLE IF NOT EXISTS posts (
@@ -479,13 +496,15 @@ func applyMigrations(t *testing.T, ctx context.Context, db interface{}, schema s
 		);
 	`
 
-	// Apply comments migration
+	// Apply comments migration (005_create_comments_table.sql + 008_add_reply_to_user.sql)
 	commentsSQL := `
 		CREATE TABLE IF NOT EXISTS comments (
 			id UUID PRIMARY KEY,
 			post_id UUID NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
 			owner_user_id UUID NOT NULL REFERENCES user_auths(id) ON DELETE CASCADE,
 			parent_comment_id UUID REFERENCES comments(id) ON DELETE CASCADE,
+			reply_to_user_id UUID REFERENCES user_auths(id) ON DELETE SET NULL,
+			reply_to_display_name VARCHAR(255),
 			text TEXT NOT NULL,
 			score BIGINT DEFAULT 0,
 			owner_display_name VARCHAR(255),
@@ -498,7 +517,13 @@ func applyMigrations(t *testing.T, ctx context.Context, db interface{}, schema s
 			last_updated BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
 		);
 		CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_id);
+		CREATE INDEX IF NOT EXISTS idx_comments_parent ON comments(parent_comment_id) WHERE parent_comment_id IS NOT NULL;
 		CREATE INDEX IF NOT EXISTS idx_comments_owner ON comments(owner_user_id);
+		CREATE INDEX IF NOT EXISTS idx_comments_created_at ON comments(created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_comments_created_date ON comments(created_date DESC);
+		CREATE INDEX IF NOT EXISTS idx_comments_deleted ON comments(is_deleted) WHERE is_deleted = FALSE;
+		CREATE INDEX IF NOT EXISTS idx_comments_post_active ON comments(post_id, created_date DESC) WHERE is_deleted = FALSE;
+		CREATE INDEX IF NOT EXISTS idx_comments_reply_to_user ON comments(reply_to_user_id) WHERE reply_to_user_id IS NOT NULL;
 	`
 
 	// Apply comment_votes migration
@@ -520,6 +545,8 @@ func applyMigrations(t *testing.T, ctx context.Context, db interface{}, schema s
 	if execer, ok := db.(execContext); ok {
 		_, err := execer.ExecContext(ctx, authSQL)
 		require.NoError(t, err, "Failed to apply auth migration")
+		_, err = execer.ExecContext(ctx, profilesSQL)
+		require.NoError(t, err, "Failed to apply profiles migration")
 		_, err = execer.ExecContext(ctx, postsSQL)
 		require.NoError(t, err, "Failed to apply posts migration")
 		_, err = execer.ExecContext(ctx, commentsSQL)

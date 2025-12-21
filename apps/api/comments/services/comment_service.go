@@ -14,6 +14,7 @@ import (
     "github.com/qolzam/telar/apps/api/comments/models"
     commentRepository "github.com/qolzam/telar/apps/api/comments/repository"
     "github.com/qolzam/telar/apps/api/internal/cache"
+    "github.com/qolzam/telar/apps/api/internal/pkg/log"
     platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
     "github.com/qolzam/telar/apps/api/internal/types"
     "github.com/qolzam/telar/apps/api/internal/utils"
@@ -101,7 +102,9 @@ func (s *commentService) invalidateUserComments(ctx context.Context, userID uuid
         return
     }
     pattern := "cursor:comments:*:owner:" + userID.String() + "*"
-    s.cacheService.InvalidatePattern(ctx, pattern)
+    if err := s.cacheService.InvalidatePattern(ctx, pattern); err != nil {
+        log.Warn("Cache invalidation failed for user comments: %v", err)
+    }
 }
 
 func (s *commentService) invalidatePostComments(ctx context.Context, postID uuid.UUID) {
@@ -109,14 +112,18 @@ func (s *commentService) invalidatePostComments(ctx context.Context, postID uuid
         return
     }
     pattern := "cursor:comments:" + postID.String() + "*"
-    s.cacheService.InvalidatePattern(ctx, pattern)
+    if err := s.cacheService.InvalidatePattern(ctx, pattern); err != nil {
+        log.Warn("Cache invalidation failed for post comments: %v", err)
+    }
 }
 
 func (s *commentService) invalidateAllComments(ctx context.Context) {
     if s.cacheService == nil {
         return
     }
-    s.cacheService.InvalidatePattern(ctx, "cursor:comments:*")
+    if err := s.cacheService.InvalidatePattern(ctx, "cursor:comments:*"); err != nil {
+        log.Warn("Cache invalidation failed for all comments: %v", err)
+    }
 }
 
 // CreateComment creates a new comment entity.
@@ -136,6 +143,47 @@ func (s *commentService) CreateComment(ctx context.Context, req *models.CreateCo
     }
 
     now := utils.UTCNowUnix()
+    
+    // Two-Tier Architecture: Flatten nested replies to always point to root
+    var rootParentID *uuid.UUID
+    var replyToUserID *uuid.UUID
+    var replyToDisplayName *string
+    
+    if req.ParentCommentId != nil && *req.ParentCommentId != uuid.Nil {
+        // Fetch the target comment the user clicked "Reply" on
+        targetComment, err := s.commentRepo.FindByID(ctx, *req.ParentCommentId)
+        if err != nil {
+            if err.Error() == "comment not found" {
+                return nil, commentsErrors.ErrCommentNotFound
+            }
+            return nil, fmt.Errorf("failed to find parent comment: %w", err)
+        }
+        
+        if targetComment.Deleted {
+            return nil, commentsErrors.ErrCommentNotFound
+        }
+        
+        // Verify the target comment belongs to the same post
+        if targetComment.PostId != req.PostId {
+            return nil, fmt.Errorf("parent comment does not belong to the specified post")
+        }
+        
+        if targetComment.ParentCommentId == nil {
+            // Case A: Replying to a Root Comment
+            // The Root becomes the parent. Track who we're replying to.
+            rootParentID = &targetComment.ObjectId
+            replyToUserID = &targetComment.OwnerUserId
+            replyToDisplayName = &targetComment.OwnerDisplayName
+        } else {
+            // Case B: Replying to a Reply (Nested)
+            // FLATTEN IT: The parent's parent is the Root.
+            rootParentID = targetComment.ParentCommentId
+            // We explicitly track who we are replying to for the UI.
+            replyToUserID = &targetComment.OwnerUserId
+            replyToDisplayName = &targetComment.OwnerDisplayName
+        }
+    }
+    
     comment := &models.Comment{
         ObjectId:         commentID,
         Score:            0,
@@ -143,7 +191,9 @@ func (s *commentService) CreateComment(ctx context.Context, req *models.CreateCo
         OwnerDisplayName: user.DisplayName,
         OwnerAvatar:      user.Avatar,
         PostId:           req.PostId,
-        ParentCommentId:  req.ParentCommentId,
+        ParentCommentId:  rootParentID,  // ALWAYS points to Root (or nil)
+        ReplyToUserId:    replyToUserID, // Points to specific user being addressed
+        ReplyToDisplayName: replyToDisplayName, // Display name of user being replied to
         Text:             req.Text,
         Deleted:          false,
         DeletedDate:      0,
@@ -152,7 +202,7 @@ func (s *commentService) CreateComment(ctx context.Context, req *models.CreateCo
     }
 
     // Determine if this is a root comment (affects comment_count update)
-    isRootComment := req.ParentCommentId == nil || *req.ParentCommentId == uuid.Nil
+    isRootComment := rootParentID == nil
 
     // Use transaction for atomic comment creation + count increment
     if isRootComment {
@@ -313,7 +363,6 @@ func (s *commentService) QueryComments(ctx context.Context, filter *models.Comme
         Count:    int(totalCount),
         Page:     filter.Page,
         Limit:    filter.Limit,
-        HasMore:  int64(filter.Page*filter.Limit) < totalCount,
     }
 
     s.cacheComments(ctx, cacheKey, result)
@@ -398,29 +447,30 @@ func (s *commentService) QueryRepliesWithCursor(ctx context.Context, parentID uu
 }
 
 // UpdateComment updates a comment's text for the owning user.
-func (s *commentService) UpdateComment(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) error {
+// Returns the updated comment to avoid Read-After-Write anti-pattern.
+func (s *commentService) UpdateComment(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) (*models.Comment, error) {
     if req == nil {
-        return fmt.Errorf("update comment request is required")
+        return nil, fmt.Errorf("update comment request is required")
     }
     if user == nil {
-        return fmt.Errorf("user context is required")
+        return nil, fmt.Errorf("user context is required")
     }
 
     // Fetch comment and verify ownership
     comment, err := s.commentRepo.FindByID(ctx, commentID)
     if err != nil {
         if err.Error() == "comment not found" {
-            return commentsErrors.ErrCommentNotFound
+            return nil, commentsErrors.ErrCommentNotFound
         }
-        return fmt.Errorf("failed to find comment: %w", err)
+        return nil, fmt.Errorf("failed to find comment: %w", err)
     }
 
     if comment.Deleted {
-        return commentsErrors.ErrCommentNotFound
+        return nil, commentsErrors.ErrCommentNotFound
     }
 
     if comment.OwnerUserId != user.UserID {
-        return commentsErrors.ErrCommentOwnershipRequired
+        return nil, commentsErrors.ErrCommentOwnershipRequired
     }
 
     // Update comment
@@ -428,13 +478,14 @@ func (s *commentService) UpdateComment(ctx context.Context, commentID uuid.UUID,
     comment.LastUpdated = utils.UTCNowUnix()
 
     if err := s.commentRepo.Update(ctx, comment); err != nil {
-        return fmt.Errorf("failed to update comment: %w", err)
+        return nil, fmt.Errorf("failed to update comment: %w", err)
     }
 
     s.invalidateUserComments(ctx, user.UserID)
     s.invalidatePostComments(ctx, comment.PostId)
     s.invalidateAllComments(ctx)
-    return nil
+    
+    return comment, nil
 }
 
 // UpdateCommentProfile updates profile information for all comments created by a user.
@@ -501,6 +552,10 @@ func (s *commentService) DeleteComment(ctx context.Context, commentID uuid.UUID,
             // Soft delete comment within transaction
             if err := s.commentRepo.Delete(txCtx, commentID); err != nil {
                 return fmt.Errorf("failed to delete comment: %w", err)
+            }
+
+            if err := s.commentRepo.DeleteRepliesByParentID(txCtx, commentID); err != nil {
+                return fmt.Errorf("failed to cascade delete replies: %w", err)
             }
 
             // Decrement post comment_count within same transaction
@@ -591,6 +646,12 @@ func (s *commentService) DeleteByOwner(ctx context.Context, owner uuid.UUID, obj
             if err := s.commentRepo.Delete(txCtx, objectID); err != nil {
                 return fmt.Errorf("failed to delete comment: %w", err)
             }
+
+            // Cascade: Soft delete all replies to this root comment
+            if err := s.commentRepo.DeleteRepliesByParentID(txCtx, objectID); err != nil {
+                return fmt.Errorf("failed to cascade delete replies: %w", err)
+            }
+
             if err := s.postRepo.IncrementCommentCount(txCtx, comment.PostId, -1); err != nil {
                 return fmt.Errorf("failed to decrement comment count: %w", err)
             }
@@ -625,6 +686,21 @@ func (s *commentService) convertToCommentResponse(comment *models.Comment, isLik
         OwnerDisplayName: comment.OwnerDisplayName,
         OwnerAvatar:      comment.OwnerAvatar,
         PostId:           comment.PostId.String(),
+        ParentCommentId: func() *string {
+            if comment.ParentCommentId == nil {
+                return nil
+            }
+            s := comment.ParentCommentId.String()
+            return &s
+        }(),
+        ReplyToUserId: func() *string {
+            if comment.ReplyToUserId == nil {
+                return nil
+            }
+            s := comment.ReplyToUserId.String()
+            return &s
+        }(),
+        ReplyToDisplayName: comment.ReplyToDisplayName,
         Text:             comment.Text,
         Deleted:          comment.Deleted,
         DeletedDate:      comment.DeletedDate,

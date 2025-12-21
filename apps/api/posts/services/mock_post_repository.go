@@ -9,9 +9,9 @@ import (
 	"context"
 
 	uuid "github.com/gofrs/uuid"
-	"github.com/stretchr/testify/mock"
 	"github.com/qolzam/telar/apps/api/posts/models"
 	"github.com/qolzam/telar/apps/api/posts/repository"
+	"github.com/stretchr/testify/mock"
 )
 
 // MockPostRepository is a mock implementation of PostRepository for testing
@@ -61,10 +61,28 @@ func (m *MockPostRepository) Find(ctx context.Context, filter repository.PostFil
 	return args.Get(0).([]*models.Post), args.Error(1)
 }
 
+// FindWithCursor mocks the FindWithCursor method
+func (m *MockPostRepository) FindWithCursor(ctx context.Context, filter repository.PostFilter, cursor *models.CursorData, sortField, sortDirection string, limit int) ([]*models.Post, bool, error) {
+	args := m.Called(ctx, filter, cursor, sortField, sortDirection, limit)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(bool), args.Error(2)
+	}
+	return args.Get(0).([]*models.Post), args.Get(1).(bool), args.Error(2)
+}
+
 // Count mocks the Count method
 func (m *MockPostRepository) Count(ctx context.Context, filter repository.PostFilter) (int64, error) {
 	args := m.Called(ctx, filter)
 	return args.Get(0).(int64), args.Error(1)
+}
+
+// Search mocks the Search method
+func (m *MockPostRepository) Search(ctx context.Context, query string, limit int) ([]*models.Post, error) {
+	args := m.Called(ctx, query, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.Post), args.Error(1)
 }
 
 // Update mocks the Update method
@@ -128,3 +146,10 @@ func (m *MockPostRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	return args.Error(0)
 }
 
+func (m *MockPostRepository) GetByIDs(ctx context.Context, ids []uuid.UUID) ([]*models.Post, error) {
+	args := m.Called(ctx, ids)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.Post), args.Error(1)
+}

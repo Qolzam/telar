@@ -27,51 +27,29 @@ export function CommentList({ postId, currentUserId, onCommentCountChange }: Com
   const [snackbarOpen, setSnackbarOpen] = React.useState(false);
   const [snackbarMsg, setSnackbarMsg] = React.useState('');
 
-  // Extract comments from CommentsListResponse pages
   const comments = (data?.pages ?? []).flatMap((page) => page.comments || []);
   
-  // Calculate total comment count (root comments + all replies using replyCount from API)
-  // This matches the calculation in PostCard to ensure consistency
   const totalCommentCount = React.useMemo(() => {
     if (comments.length === 0) return 0;
     
-    // Count root comments
-    const rootComments = comments.filter((c: any) => !c.parentCommentId);
+    const rootComments = comments.filter((c: Comment) => !c.parentCommentId);
     
-    // Calculate total replies using replyCount from API (more accurate than counting loaded replies)
     let totalReplies = 0;
-    rootComments.forEach((comment: any) => {
+    rootComments.forEach((comment: Comment) => {
       totalReplies += comment.replyCount || 0;
     });
     
-    // Total = root comments + all replies (from replyCount field)
     return rootComments.length + totalReplies;
   }, [comments]);
 
-  // Notify parent of comment count changes (only when comments are actually loaded)
-  // This should match the count calculation in PostCard
   React.useEffect(() => {
     if (onCommentCountChange && !isLoading && comments.length > 0) {
       onCommentCountChange(totalCommentCount);
     }
   }, [totalCommentCount, isLoading, onCommentCountChange, comments.length]);
 
-  // Build replies map (one-level nesting supported)
-  const repliesByParent = React.useMemo(() => {
-    const map = new Map<string, Comment[]>();
-    for (const c of comments) {
-      const parentId = (c as any).parentCommentId as string | undefined;
-      if (parentId) {
-        const arr = map.get(parentId) ?? [];
-        arr.push(c);
-        map.set(parentId, arr);
-      }
-    }
-    return map;
-  }, [comments]);
-
   const rootComments = React.useMemo(
-    () => comments.filter((c: any) => !c.parentCommentId),
+    () => comments.filter((c: Comment) => !c.parentCommentId),
     [comments],
   );
 
@@ -93,27 +71,26 @@ export function CommentList({ postId, currentUserId, onCommentCountChange }: Com
       )}
 
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0, mt: '20px' }}>
-      {rootComments.map((comment) => (
+        {rootComments.map((comment) => (
           <Box key={comment.objectId} sx={{ mb: '24px' }}>
-        <CommentItem
-          comment={comment}
-          currentUserId={currentUserId}
-          replies={repliesByParent.get(comment.objectId) ?? []}
-          onDelete={() =>
-            deleteMutation.mutate(comment.objectId, {
-              onSuccess: () => {
-                setSnackbarMsg('Comment deleted');
-                setSnackbarOpen(true);
-              },
-              onError: () => {
-                setSnackbarMsg('Failed to delete comment');
-                setSnackbarOpen(true);
-              },
-            })
-          }
-        />
+            <CommentItem
+              comment={comment}
+              currentUserId={currentUserId}
+              onDelete={(commentToDelete: Comment) =>
+                deleteMutation.mutate(commentToDelete.objectId, {
+                  onSuccess: () => {
+                    setSnackbarMsg('Comment deleted');
+                    setSnackbarOpen(true);
+                  },
+                  onError: () => {
+                    setSnackbarMsg('Failed to delete comment');
+                    setSnackbarOpen(true);
+                  },
+                })
+              }
+            />
           </Box>
-      ))}
+        ))}
       </Box>
 
       {hasNextPage && (

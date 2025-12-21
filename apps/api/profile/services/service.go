@@ -14,11 +14,11 @@ import (
 	uuid "github.com/gofrs/uuid"
 	"github.com/lib/pq"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
+	"github.com/qolzam/telar/apps/api/internal/types"
 	"github.com/qolzam/telar/apps/api/internal/utils"
 	profileErrors "github.com/qolzam/telar/apps/api/profile/errors"
 	"github.com/qolzam/telar/apps/api/profile/models"
 	"github.com/qolzam/telar/apps/api/profile/repository"
-	"github.com/qolzam/telar/apps/api/internal/types"
 )
 
 // profileService implements the ProfileService interface
@@ -78,7 +78,7 @@ func (s *profileService) CreateProfile(ctx context.Context, req *models.CreatePr
 		PostCount:     getInt64Value(req.PostCount, 0),
 		FacebookId:    getStringValue(req.FacebookId),
 		InstagramId:   getStringValue(req.InstagramId),
-		TwitterId:    getStringValue(req.TwitterId),
+		TwitterId:     getStringValue(req.TwitterId),
 		LinkedInId:    getStringValue(req.LinkedInId),
 		Permission:    getStringValue(req.Permission, "Public"),
 		CreatedAt:     now,
@@ -172,6 +172,24 @@ func (s *profileService) GetProfilesBySearch(ctx context.Context, query string, 
 		Profiles: profileList,
 		Total:    total,
 	}, nil
+}
+
+// SearchProfiles returns a limited list of profiles for autocomplete
+func (s *profileService) SearchProfiles(ctx context.Context, query string, limit int) ([]*models.Profile, error) {
+	trimmed := strings.TrimSpace(query)
+	if len(trimmed) < 3 {
+		return []*models.Profile{}, nil
+	}
+	if limit <= 0 {
+		limit = 5
+	}
+
+	profiles, err := s.repo.Search(ctx, trimmed, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search profiles: %w", err)
+	}
+
+	return profiles, nil
 }
 
 // QueryProfiles queries profiles with filter
@@ -399,7 +417,7 @@ func (s *profileService) UpdateProfileFields(ctx context.Context, userID uuid.UU
 		return fmt.Errorf("failed to update profile: %w", err)
 	}
 
-		return nil
+	return nil
 }
 
 // DeleteProfile deletes a profile (hard delete)
@@ -432,8 +450,8 @@ func (s *profileService) ValidateProfileOwnership(ctx context.Context, userID uu
 		return profileErrors.ErrProfileOwnershipRequired
 	}
 
-		return nil
-	}
+	return nil
+}
 
 // SetField sets a single field on a profile
 func (s *profileService) SetField(ctx context.Context, userID uuid.UUID, field string, value interface{}) error {

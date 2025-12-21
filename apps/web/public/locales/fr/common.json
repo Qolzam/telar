@@ -13,7 +13,8 @@
     "notifications": "Notifications",
     "logout": "Log Out",
     "openMenu": "Open navigation menu",
-    "accountMenu": "Account menu"
+    "accountMenu": "Account menu",
+    "bookmarks": "Saved"
   },
   "actions": {
     "toggleTheme": "Toggle theme"

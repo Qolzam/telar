@@ -53,7 +53,7 @@ function logTiming(phase: string, startTime: number, endTime?: number): number {
 
 const BASE_URL = 'http://127.0.0.1:3000';
 const MAILHOG_URL = 'http://127.0.0.1:8025';
-const API_URL = 'http://127.0.0.1:8080';
+const API_URL = 'http://127.0.0.1:9099';
 
 // Test user data
 const TIMESTAMP = Date.now();
@@ -114,12 +114,12 @@ async function areServersRunning(): Promise<boolean> {
 }
 
 /**
- * Start servers using the start-servers-bg.sh script
+ * Start servers using the start.sh script
  */
 async function startServers(): Promise<void> {
-  console.log('Starting servers with start-servers-bg.sh...');
+  console.log('Starting servers with start.sh...');
   try {
-    execSync('cd /home/office/projects/telar/web-team/telar-new-arch && ./tools/dev/scripts/start-servers-bg.sh', {
+    execSync('cd /home/office/projects/telar/web-team/telar-new-arch && bash tools/dev/app/start.sh', {
       stdio: 'pipe',
       timeout: 30000,
     });
@@ -254,7 +254,7 @@ test.describe('Full E2E Flow Test', () => {
     if (!apiReady) {
       // Don't restart automatically - this spawns processes that prevent test completion
       // User should start servers manually with: make dev
-      throw new Error(`API server not ready. Please run 'make dev' manually and ensure http://127.0.0.1:8080 is accessible.`);
+      throw new Error(`API server not ready. Please run 'make dev' manually and ensure http://127.0.0.1:9099 is accessible.`);
     }
     
     const beforeAllEnd = getTimestamp();

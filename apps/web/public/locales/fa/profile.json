@@ -5,6 +5,10 @@
     "followers": "Followers",
     "following": "Following"
   },
-  "about": "About",
-  "editProfile": "Edit Profile"
+  "about": {
+    "title": "درباره",
+    "worksAt": "کار می‌کند در",
+    "defaultTagline": "به اشتراک گذاری افکار و ارتباط با جامعه"
+  },
+  "editProfile": "ویرایش پروفایل"
 }

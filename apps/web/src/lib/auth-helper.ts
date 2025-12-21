@@ -6,11 +6,11 @@ import { NextRequest } from 'next/server';
  * @returns Headers object with Authorization header if session token exists
  */
 export function getAuthHeaders(request: NextRequest): Record<string, string> {
-  // Extract JWT token from session cookie
+  // Extract JWT token from access_token cookie
   const cookies = request.headers.get('cookie') || '';
   const sessionCookie = cookies
     .split(';')
-    .find(cookie => cookie.trim().startsWith('session='))
+    .find(cookie => cookie.trim().startsWith('access_token='))
     ?.split('=')[1];
 
   // Prepare headers

@@ -110,6 +110,25 @@ func TestPostgresCommentRepository_Integration(t *testing.T) {
 	_, err = client.DB().ExecContext(ctx, authMigrationSQL)
 	require.NoError(t, err, "Failed to apply auth migration")
 
+	// 6.5. Apply Profiles Schema Migration (required for FindReplies LEFT JOIN)
+	profilesMigrationSQL := `
+		CREATE TABLE IF NOT EXISTS profiles (
+			user_id UUID PRIMARY KEY REFERENCES user_auths(id) ON DELETE CASCADE,
+			full_name VARCHAR(255),
+			social_name VARCHAR(255),
+			email VARCHAR(255),
+			avatar VARCHAR(512),
+			banner VARCHAR(512),
+			tagline VARCHAR(500),
+			created_date BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			last_updated BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+	`
+	_, err = client.DB().ExecContext(ctx, profilesMigrationSQL)
+	require.NoError(t, err, "Failed to apply profiles migration")
+
 	// 7. Apply Comments Schema Migration
 	commentsMigrationSQL := `
 		CREATE TABLE IF NOT EXISTS comments (
@@ -117,6 +136,7 @@ func TestPostgresCommentRepository_Integration(t *testing.T) {
 			post_id UUID NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
 			owner_user_id UUID NOT NULL REFERENCES user_auths(id) ON DELETE CASCADE,
 			parent_comment_id UUID REFERENCES comments(id) ON DELETE CASCADE,
+			reply_to_user_id UUID REFERENCES user_auths(id) ON DELETE SET NULL,
 			text TEXT NOT NULL,
 			score BIGINT DEFAULT 0,
 			owner_display_name VARCHAR(255),
@@ -132,6 +152,7 @@ func TestPostgresCommentRepository_Integration(t *testing.T) {
 		CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_id);
 		CREATE INDEX IF NOT EXISTS idx_comments_parent ON comments(parent_comment_id) WHERE parent_comment_id IS NOT NULL;
 		CREATE INDEX IF NOT EXISTS idx_comments_owner ON comments(owner_user_id);
+		CREATE INDEX IF NOT EXISTS idx_comments_reply_to_user ON comments(reply_to_user_id) WHERE reply_to_user_id IS NOT NULL;
 		CREATE INDEX IF NOT EXISTS idx_comments_created_at ON comments(created_at DESC);
 		CREATE INDEX IF NOT EXISTS idx_comments_created_date ON comments(created_date DESC);
 		CREATE INDEX IF NOT EXISTS idx_comments_deleted ON comments(is_deleted) WHERE is_deleted = FALSE;
@@ -337,11 +358,13 @@ func TestPostgresCommentRepository_Integration(t *testing.T) {
 
 		// Create a reply
 		replyID := uuid.Must(uuid.NewV4())
+		replyToUserID := rootComment.OwnerUserId
 		reply := &models.Comment{
 			ObjectId:         replyID,
 			PostId:           postID1,
 			OwnerUserId:      userID2,
 			ParentCommentId:  &rootCommentID,
+			ReplyToUserId:    &replyToUserID, // Two-Tier Architecture: point to root comment owner
 			Text:             "This is a reply",
 			Score:            0,
 			OwnerDisplayName: "User 2",
@@ -362,15 +385,31 @@ func TestPostgresCommentRepository_Integration(t *testing.T) {
 		require.Equal(t, replyID, found.ObjectId)
 		require.NotNil(t, found.ParentCommentId, "Reply should have parent_comment_id")
 		require.Equal(t, rootCommentID, *found.ParentCommentId)
+		// CRITICAL: Verify reply_to_user_id is populated (Two-Tier Architecture)
+		require.NotNil(t, found.ReplyToUserId, "Reply should have reply_to_user_id populated")
+		require.Equal(t, rootComment.OwnerUserId, *found.ReplyToUserId, "reply_to_user_id should point to the root comment owner")
 	})
 
 	// 16. Test FindReplies
 	t.Run("FindReplies", func(t *testing.T) {
+		// Ensure post exists (may have been deleted in previous tests)
+		testPostID := uuid.Must(uuid.NewV4())
+		testPost := &postsModels.Post{
+			ObjectId:    testPostID,
+			OwnerUserId: userID1,
+			PostTypeId:  1,
+			Body:        "Post for FindReplies test",
+			CreatedDate: nowUnix,
+			LastUpdated: nowUnix,
+		}
+		err := postRepo.Create(ctx, testPost)
+		require.NoError(t, err, "Failed to create test post")
+
 		// Create a root comment
 		rootCommentID := uuid.Must(uuid.NewV4())
 		rootComment := &models.Comment{
 			ObjectId:         rootCommentID,
-			PostId:           postID1,
+			PostId:           testPostID,
 			OwnerUserId:      userID1,
 			ParentCommentId:  nil,
 			Text:             "Root for replies test",
@@ -382,16 +421,18 @@ func TestPostgresCommentRepository_Integration(t *testing.T) {
 			CreatedDate:      nowUnix,
 			LastUpdated:      nowUnix,
 		}
-		err := commentRepo.Create(ctx, rootComment)
+		err = commentRepo.Create(ctx, rootComment)
 		require.NoError(t, err)
 
 		// Create multiple replies
 		reply1ID := uuid.Must(uuid.NewV4())
+		replyToUserID := rootComment.OwnerUserId
 		reply1 := &models.Comment{
 			ObjectId:         reply1ID,
-			PostId:           postID1,
+			PostId:           testPostID,
 			OwnerUserId:      userID2,
 			ParentCommentId:  &rootCommentID,
+			ReplyToUserId:    &replyToUserID, // Two-Tier Architecture: point to root comment owner
 			Text:             "Reply 1",
 			Score:            0,
 			OwnerDisplayName: "User 2",
@@ -407,9 +448,10 @@ func TestPostgresCommentRepository_Integration(t *testing.T) {
 		reply2ID := uuid.Must(uuid.NewV4())
 		reply2 := &models.Comment{
 			ObjectId:         reply2ID,
-			PostId:           postID1,
+			PostId:           testPostID,
 			OwnerUserId:      userID1,
 			ParentCommentId:  &rootCommentID,
+			ReplyToUserId:    &replyToUserID, // Two-Tier Architecture: point to root comment owner
 			Text:             "Reply 2",
 			Score:            0,
 			OwnerDisplayName: "User 1",

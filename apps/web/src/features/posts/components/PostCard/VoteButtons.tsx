@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { Box, IconButton, Typography } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import { ArrowUpward, ArrowDownward } from '@mui/icons-material';
 import type { Post } from '@telar/sdk';
 import { useVoteMutation } from '@/features/votes/client';
@@ -27,6 +28,11 @@ interface VoteButtonsProps {
  * - Clicking Down when state is None -> New Down Vote (voteType: 2)
  */
 export function VoteButtons({ post }: VoteButtonsProps) {
+  const theme = useTheme();
+  const primary = `var(--mui-palette-primary-main, ${theme.palette.primary.main})`;
+  const error = `var(--mui-palette-error-main, ${theme.palette.error.main})`;
+  const textPrimary = `var(--mui-palette-text-primary, ${theme.palette.text.primary})`;
+  const textSecondary = `var(--mui-palette-text-secondary, ${theme.palette.text.secondary})`;
   const voteMutation = useVoteMutation();
   const currentType = post.voteType ?? 0;
   const currentScore = post.score ?? 0;
@@ -51,14 +57,14 @@ export function VoteButtons({ post }: VoteButtonsProps) {
         disabled={voteMutation.isPending}
         size="small"
         sx={{
-          color: currentType === 1 ? '#4F46E5' : '#94A3B8',
+          color: currentType === 1 ? primary : textSecondary,
           padding: '4px',
           '&:hover': {
-            color: currentType === 1 ? '#4338CA' : '#1E293B',
+            color: currentType === 1 ? primary : textPrimary,
             backgroundColor: 'transparent',
           },
           '&:disabled': {
-            color: currentType === 1 ? '#4F46E5' : '#94A3B8',
+            color: currentType === 1 ? primary : textSecondary,
             opacity: 0.6,
           },
         }}
@@ -75,7 +81,7 @@ export function VoteButtons({ post }: VoteButtonsProps) {
           fontWeight: 500,
           lineHeight: '20px',
           letterSpacing: '-0.084px',
-          color: currentScore > 0 ? '#4F46E5' : currentScore < 0 ? '#EF4444' : '#1E293B',
+          color: currentScore > 0 ? primary : currentScore < 0 ? error : textPrimary,
           minWidth: '24px',
           textAlign: 'center',
         }}
@@ -89,14 +95,14 @@ export function VoteButtons({ post }: VoteButtonsProps) {
         disabled={voteMutation.isPending}
         size="small"
         sx={{
-          color: currentType === 2 ? '#EF4444' : '#94A3B8',
+          color: currentType === 2 ? error : textSecondary,
           padding: '4px',
           '&:hover': {
-            color: currentType === 2 ? '#DC2626' : '#1E293B',
+            color: currentType === 2 ? error : textPrimary,
             backgroundColor: 'transparent',
           },
           '&:disabled': {
-            color: currentType === 2 ? '#EF4444' : '#94A3B8',
+            color: currentType === 2 ? error : textSecondary,
             opacity: 0.6,
           },
         }}

@@ -47,6 +47,11 @@ export interface IProfileApi {
    * Query profiles with filters
    */
   queryProfiles(filter?: ProfileQueryFilter): Promise<ProfilesResponse>;
+
+  /**
+   * Search profiles for autocomplete
+   */
+  searchProfiles(query: string): Promise<UserProfileModel[]>;
 }
 
 /**
@@ -83,6 +88,14 @@ export const profileApi = (client: ApiClient): IProfileApi => ({
     const endpoint = queryString ? `${ENDPOINTS.PROFILE.QUERY}?${queryString}` : ENDPOINTS.PROFILE.QUERY;
     
     return client.get<ProfilesResponse>(endpoint);
+  },
+
+  searchProfiles: async (query: string): Promise<UserProfileModel[]> => {
+    const params = new URLSearchParams();
+    params.append('q', query);
+    params.append('limit', '5');
+    const endpoint = `${ENDPOINTS.PROFILE.SEARCH}?${params.toString()}`;
+    return client.get<UserProfileModel[]>(endpoint);
   },
 });
 

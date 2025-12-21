@@ -42,6 +42,9 @@ type ProfileRepository interface {
 	// Count returns the number of profiles matching the filter criteria
 	Count(ctx context.Context, filter ProfileFilter) (int64, error)
 
+	// Search finds profiles by full name or social name using trigram index
+	Search(ctx context.Context, query string, limit int) ([]*models.Profile, error)
+
 	// Update updates an existing profile
 	Update(ctx context.Context, profile *models.Profile) error
 
@@ -55,4 +58,3 @@ type ProfileRepository interface {
 	// Delete deletes a profile by user ID (soft delete)
 	Delete(ctx context.Context, userID uuid.UUID) error
 }
-

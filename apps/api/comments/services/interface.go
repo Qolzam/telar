@@ -27,7 +27,7 @@ type CommentService interface {
 	QueryRepliesWithCursor(ctx context.Context, parentID uuid.UUID, cursor string, limit int) (*models.CommentsListResponse, error)
 
 	// Update operations
-	UpdateComment(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) error
+	UpdateComment(ctx context.Context, commentID uuid.UUID, req *models.UpdateCommentRequest, user *types.UserContext) (*models.Comment, error)
 	UpdateCommentProfile(ctx context.Context, userID uuid.UUID, displayName, avatar string) error
 	IncrementScore(ctx context.Context, commentID uuid.UUID, delta int, user *types.UserContext) error
 	ToggleLike(ctx context.Context, commentID uuid.UUID, userID uuid.UUID) (*models.Comment, int64, bool, error) // Returns (comment, newScore, isLiked, error) - comment returned to avoid re-fetch

@@ -303,6 +303,7 @@ export interface Post {
   viewCount: number;
   votes: Record<string, string>;
   voteType: 0 | 1 | 2; // 0=None, 1=Up, 2=Down (New field from Backend)
+  isBookmarked: boolean;
   tags: string[];
   postTypeId: PostType;
   permission: UserPermissionType;
@@ -315,6 +316,14 @@ export interface Post {
   version?: string;
   createdDate: number;
   lastUpdated?: number;
+}
+
+/**
+ * Combined search results for profiles and posts
+ */
+export interface SearchResults {
+  profiles: UserProfileModel[];
+  posts: Post[];
 }
 
 // ============================================================================
@@ -341,6 +350,7 @@ export interface ApiErrorResponse {
   code?: string;
   error?: string;
   message?: string;
+  details?: string | unknown;
   statusCode?: number;
 }
 
@@ -356,8 +366,10 @@ export interface Comment {
   ownerAvatar: string;
   postId: string;
   parentCommentId?: string;
+  replyToUserId?: string; // User being replied to (for "Replying to @User" display)
+  replyToDisplayName?: string; // Display name of user being replied to
   replyCount?: number;
-  isLiked: boolean; // New field - indicates if current user has liked this comment
+  isLiked: boolean;
   text: string;
   deleted: boolean;
   deletedDate?: number;
@@ -394,7 +406,6 @@ export interface CommentsListResponse {
   count?: number;
   page?: number;
   limit?: number;
-  hasMore?: boolean;
 }
 
 // ============================================================================
@@ -446,6 +457,7 @@ export interface CreatePostRequest {
   postTypeId: number;
   body: string;
   permission?: string;
+  imageFullPath?: string;
 }
 
 /**
@@ -482,6 +494,10 @@ export interface UpdatePostRequest {
 export interface CursorQueryParams {
   limit?: number;
   cursor?: string;
+  /**
+   * Filter posts by owner user ID (UUID string)
+   */
+  owner?: string;
 }
 
 /**

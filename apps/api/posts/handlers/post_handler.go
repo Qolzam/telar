@@ -149,6 +149,40 @@ func (h *PostHandler) GetPostByURLKey(c *fiber.Ctx) error {
 	return c.JSON(response)
 }
 
+// SearchPosts handles lightweight post search for autocomplete
+func (h *PostHandler) SearchPosts(c *fiber.Ctx) error {
+	query := c.Query("q")
+	if strings.TrimSpace(query) == "" {
+		return c.JSON([]models.PostResponse{})
+	}
+
+	limit := 5
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			if parsed > 20 {
+				limit = 20
+			} else {
+				limit = parsed
+			}
+		}
+	}
+
+	reqCtx := c.UserContext()
+	if reqCtx == nil {
+		reqCtx = context.Background()
+	}
+	if user, ok := c.Locals(types.UserCtxName).(types.UserContext); ok {
+		reqCtx = context.WithValue(reqCtx, types.UserCtxName, user)
+	}
+
+	results, err := h.postService.SearchPostsLite(reqCtx, query, limit)
+	if err != nil {
+		return errors.HandleServiceError(c, err)
+	}
+
+	return c.JSON(results)
+}
+
 // QueryPosts handles post querying with filters (now using cursor-based pagination)
 func (h *PostHandler) QueryPosts(c *fiber.Ctx) error {
 	// Parse query parameters for cursor-based pagination
@@ -324,6 +358,7 @@ func (h *PostHandler) QueryPostsWithCursor(c *fiber.Ctx) error {
 	if user, ok := c.Locals(types.UserCtxName).(types.UserContext); ok {
 		reqCtx = context.WithValue(reqCtx, types.UserCtxName, user)
 	}
+
 	result, err := h.postService.QueryPostsWithCursor(reqCtx, filter)
 	if err != nil {
 		return errors.HandleServiceError(c, err)

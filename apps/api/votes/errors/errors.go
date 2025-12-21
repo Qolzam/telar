@@ -16,6 +16,7 @@ import (
 // Vote service specific errors
 var (
 	ErrVoteNotFound          = errors.New("vote not found")
+	ErrPostNotFound          = errors.New("post not found")
 	ErrInvalidVoteData       = errors.New("invalid vote data")
 	ErrInvalidVoteType       = errors.New("invalid vote type")
 	ErrInvalidUserContext    = errors.New("invalid user context")
@@ -29,6 +30,7 @@ var (
 // Error codes
 const (
 	CodeVoteNotFound     = "VOTE_NOT_FOUND"
+	CodePostNotFound     = "POST_NOT_FOUND"
 	CodeInvalidVoteData  = "INVALID_VOTE_DATA"
 	CodeInvalidVoteType  = "INVALID_VOTE_TYPE"
 	CodeInvalidRequest   = "INVALID_REQUEST"
@@ -52,6 +54,12 @@ func HandleServiceError(c *fiber.Ctx, err error) error {
 	}
 
 	switch {
+	case errors.Is(err, ErrPostNotFound):
+		return c.Status(http.StatusNotFound).JSON(ErrorResponse{
+			Code:    CodePostNotFound,
+			Message: "Post not found",
+			Details: err.Error(),
+		})
 	case errors.Is(err, ErrVoteNotFound):
 		return c.Status(http.StatusNotFound).JSON(ErrorResponse{
 			Code:    CodeVoteNotFound,

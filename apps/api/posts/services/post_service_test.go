@@ -979,7 +979,6 @@ func TestQueryPosts_WithFilter_ReturnsResults(t *testing.T) {
 	assert.Equal(t, int64(2), result.TotalCount)
 	assert.Equal(t, 1, result.Page)
 	assert.Equal(t, 10, result.Limit)
-	assert.False(t, result.HasMore)
 
 	mockRepo.AssertExpectations(t)
 }

@@ -21,13 +21,18 @@ export const postsKeys = {
  * @returns React Query infinite query result
  */
 export function useInfinitePostsQuery(params?: CursorQueryParams) {
+  const queryParams: CursorQueryParams = {
+    limit: params?.limit ?? 10,
+    cursor: params?.cursor,
+    owner: params?.owner,
+  };
+
   return useInfiniteQuery({
-    queryKey: postsKeys.infiniteList(params),
+    queryKey: postsKeys.infiniteList(queryParams),
     queryFn: async ({ pageParam }) => {
       const response = await sdk.posts.getPostsWithCursor({
-        ...params,
+        ...queryParams,
         cursor: pageParam as string | undefined,
-        limit: params?.limit || 10,
       });
       
       return response;
@@ -135,7 +140,7 @@ export function useUpdatePostMutation() {
               ...page,
               posts: page.posts.map((p) =>
                 p.objectId === variables.objectId
-                  ? { ...p, ...variables, body: variables.body ?? p.body }
+                  ? { ...p, body: variables.body ?? p.body }
                   : p
               ),
             })),
@@ -146,7 +151,7 @@ export function useUpdatePostMutation() {
       // Optimistically update the single post query
       queryClient.setQueryData<Post>(postsKeys.detail(variables.objectId), (old) => {
         if (!old) return old;
-        return { ...old, ...variables, body: variables.body ?? old.body };
+        return { ...old, body: variables.body ?? old.body };
       });
 
       return { previousPost };
