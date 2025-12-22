@@ -71,12 +71,12 @@ export default function RoadmapPage() {
         subtitle="Guardian · Muse · Spark"
         description="Core AI pillars that keep the platform safe, expressive, and always-on."
         bullets={[
-          { label: 'Guardian — AI Co-Moderator (Live)', status: 'live' },
-          { label: 'Muse — AI Bio (Live)', status: 'live' },
-          { label: 'Spark — Community Ignition (In Progress)', status: 'in-progress' },
+          { label: 'Guardian — In Integration', status: 'in-progress' },
+          { label: 'Muse — In Integration', status: 'in-progress' },
+          { label: 'Spark — In Integration', status: 'in-progress' },
         ]}
         badgeLabel="AI Preview"
-        ctaLabel="View Expertise Engine Preview"
+        ctaLabel="See the Vision"
         ctaHref="/connections"
       />
 
