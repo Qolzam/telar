@@ -14,6 +14,7 @@
         test-transactions \
         lint lint-fix \
         run-api run-web run-both run-profile run-profile-standalone run-posts run-comments dev stop-servers restart-servers pre-flight-check logs-api logs-web \
+        ai-engine-start ai-engine-stop ai-engine-reset ai-engine-status \
         test-e2e-auth test-e2e-posts test-e2e-profile test-e2e-comments test-e2e-web \
         verify-release
 
@@ -324,6 +325,12 @@ help:
 	@echo "  run-api-background - Start API server in background (for E2E tests)."
 	@echo "  stop-api-background - Stop background API server gracefully."
 	@echo ""
+	@echo "AI Engine Management:"
+	@echo "  ai-engine-start   - Start AI Engine services in background (Docker Compose)."
+	@echo "  ai-engine-stop    - Stop AI Engine services."
+	@echo "  ai-engine-reset   - Reset AI Engine (clear all data and restart)."
+	@echo "  ai-engine-status  - Show AI Engine service status and URLs."
+	@echo ""
 	@echo "E2E Testing:"
 	@echo "  test-e2e SERVICE=<name> - Run E2E tests for a service (auth, posts, comments, profile)."
 	@echo "  test-e2e-auth     - Run Auth E2E tests (legacy, delegates to test-e2e)."
@@ -453,3 +460,21 @@ logs-api:
 logs-web:
 	@echo "📋 Tailing Web server logs (Ctrl+C to exit)..."
 	@tail -f /tmp/telar-logs/web.log 2>/dev/null || echo "No Web logs found. Is the server running?"
+
+# --- AI Engine Management ---
+
+ai-engine-start:
+	@echo "Starting AI Engine services..."
+	@bash tools/dev/app/start-ai-engine.sh
+
+ai-engine-stop:
+	@echo "Stopping AI Engine services..."
+	@bash apps/ai-engine/run_dev.sh stop
+
+ai-engine-reset:
+	@echo "Resetting AI Engine (clearing all data and restarting)..."
+	@bash apps/ai-engine/run_dev.sh reset
+
+ai-engine-status:
+	@echo "Checking AI Engine service status..."
+	@bash apps/ai-engine/run_dev.sh status

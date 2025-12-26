@@ -1592,8 +1592,7 @@ func (s *postService) triggerContentAnalysis(ctx context.Context, post *models.P
 	// After all retries exhausted
 	if err != nil {
 		log.Error("[MODERATION] AI Engine analysis failed after %d attempts: post_id=%s, error=%v, ai_engine_status=permanent_failure", maxRetries, postID, err)
-		// Graceful degradation: Post remains in 'published' status when AI Engine is unavailable
-		// Future enhancement: Consider adding 'analysis_failed' status for posts requiring manual review
+		// TODO: In a future v2, mark post as 'analysis_failed' for manual review
 		return
 	}
 

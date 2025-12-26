@@ -7,8 +7,8 @@
 set -e  # Exit on any error
 
 # Default port configuration
-AI_ENGINE_PORT=${AI_ENGINE_PORT:-8000}
-WEAVIATE_PORT=${WEAVIATE_PORT:-8080}
+AI_ENGINE_PORT=${AI_ENGINE_PORT:-9066}
+WEAVIATE_PORT=${WEAVIATE_PORT:-9077}
 
 # Colors for output
 RED='\033[0;31m'
@@ -82,8 +82,8 @@ start_docker_services() {
     print_status "Starting Docker Compose services..."
     cd "$docker_compose_dir"
     
-    # Stop any existing services first
-    docker compose down -v >/dev/null 2>&1 || true
+    # Stop any existing services first (preserve volumes to keep Ollama models)
+    docker compose down >/dev/null 2>&1 || true
     
     # Start services
     docker compose up -d --build
@@ -200,11 +200,11 @@ stop_services() {
     local project_root=$(find_project_root)
     local docker_compose_dir="$project_root/apps/ai-engine/deployments/docker-compose"
     
-    # Stop Docker services
+    # Stop Docker services (preserve volumes to keep Ollama models)
     if [[ -f "$docker_compose_dir/docker-compose.yml" ]]; then
         cd "$docker_compose_dir"
-        docker compose down -v
-        print_success "Docker services stopped"
+        docker compose down
+        print_success "Docker services stopped (volumes preserved - models will persist)"
     fi
     
     
@@ -250,19 +250,19 @@ show_usage() {
     echo ""
     echo "Commands:"
     echo "  start    Start all development services (default)"
-    echo "  stop     Stop all development services"
-    echo "  restart  Restart all development services"
-    echo "  reset    Clear all data and restart fresh (⚠️  destructive)"
+    echo "  stop     Stop all development services (preserves volumes - models persist)"
+    echo "  restart  Restart all development services (preserves volumes)"
+    echo "  reset    Clear all data and restart fresh (⚠️  destructive - removes models)"
     echo "  status   Show service status"
     echo "  help     Show this help message"
     echo ""
     echo "Environment Variables:"
-    echo "  AI_ENGINE_PORT  Port for AI Engine service (default: 8000)"
-    echo "  WEAVIATE_PORT   Port for Weaviate service (default: 8080)"
+    echo "  AI_ENGINE_PORT  Port for AI Engine service (default: 9066)"
+    echo "  WEAVIATE_PORT   Port for Weaviate service (default: 9077)"
     echo ""
     echo "Examples:"
     echo "  $0                    # Start all services with default ports"
-    echo "  AI_ENGINE_PORT=9000 $0 start  # Start with custom AI Engine port"
+    echo "  AI_ENGINE_PORT=9066 $0 start  # Start with custom AI Engine port"
     echo "  $0 stop               # Stop all services"
     echo "  $0 restart            # Restart all services"
     echo "  $0 reset              # Clear all Weaviate data and restart"

@@ -43,12 +43,12 @@ func main() {
 	defer cancel()
 
 	log.Println("=== Initializing Fully Configurable LLM Architecture ===")
-	
+
 	var embeddingClient llm.EmbeddingClient
 
 	embeddingProvider := cfg.LLM.EmbeddingProvider
 	if embeddingProvider == "" {
-		embeddingProvider = "ollama" 
+		embeddingProvider = "ollama"
 	}
 
 	log.Printf("Initializing embedding client with provider: %s", embeddingProvider)
@@ -89,67 +89,111 @@ func main() {
 		log.Fatalf("Invalid EMBEDDING_PROVIDER specified: %s (supported: ollama, openai, groq, openrouter)", embeddingProvider)
 	}
 
-	var completionClient llms.Model
+	// Create separate completion clients for generation and classification
 	completionProvider := cfg.LLM.CompletionProvider
 	if completionProvider == "" {
 		// fall back to legacy provider field for backward compatibility
 		completionProvider = cfg.LLM.Provider
 	}
 
-	log.Printf("Initializing completion client with provider: %s", completionProvider)
+	log.Printf("Initializing completion clients with provider: %s (multi-model strategy)", completionProvider)
+
+	var generationClient llms.Model
+	var classificationClient llms.Model
+
 	switch completionProvider {
 	case "openai":
 		apiKey := cfg.LLM.OpenAIAPIKey
 		baseURL := cfg.LLM.OpenAIBaseURL
-		model := cfg.LLM.OpenAIModel
-		
-		llmClient, err := openai.New(
+		genModel := cfg.LLM.OpenAIGenerationModel
+		classModel := cfg.LLM.OpenAIClassificationModel
+
+		genLLM, err := openai.New(
 			openai.WithToken(apiKey),
 			openai.WithBaseURL(baseURL),
-			openai.WithModel(model),
+			openai.WithModel(genModel),
 		)
 		if err != nil {
-			log.Fatalf("Failed to create OpenAI client: %v", err)
+			log.Fatalf("Failed to create OpenAI generation client: %v", err)
 		}
-		completionClient = llmClient
-		log.Printf("✓ Completion provider: OpenAI (base: %s, model: %s)", baseURL, model)
+		generationClient = genLLM
+
+		classLLM, err := openai.New(
+			openai.WithToken(apiKey),
+			openai.WithBaseURL(baseURL),
+			openai.WithModel(classModel),
+		)
+		if err != nil {
+			log.Fatalf("Failed to create OpenAI classification client: %v", err)
+		}
+		classificationClient = classLLM
+
+		log.Printf("✓ Completion provider: OpenAI")
+		log.Printf("  Generation model: %s", genModel)
+		log.Printf("  Classification model: %s", classModel)
 	case "openrouter":
 		apiKey := cfg.LLM.OpenAIAPIKey
 		baseURL := "https://openrouter.ai/api/v1"
-		model := cfg.LLM.OpenAIModel
-		
+		genModel := cfg.LLM.OpenAIGenerationModel
+		classModel := cfg.LLM.OpenAIClassificationModel
+
 		if cfg.LLM.OpenAIBaseURL != "https://api.openai.com/v1" {
 			baseURL = cfg.LLM.OpenAIBaseURL
 		}
-		
-		llmClient, err := openai.New(
+
+		genLLM, err := openai.New(
 			openai.WithToken(apiKey),
 			openai.WithBaseURL(baseURL),
-			openai.WithModel(model),
+			openai.WithModel(genModel),
 		)
 		if err != nil {
-			log.Fatalf("Failed to create OpenRouter client: %v", err)
+			log.Fatalf("Failed to create OpenRouter generation client: %v", err)
 		}
-		completionClient = llmClient
-		log.Printf("✓ Completion provider: OpenRouter (base: %s, model: %s)", baseURL, model)
+		generationClient = genLLM
+
+		classLLM, err := openai.New(
+			openai.WithToken(apiKey),
+			openai.WithBaseURL(baseURL),
+			openai.WithModel(classModel),
+		)
+		if err != nil {
+			log.Fatalf("Failed to create OpenRouter classification client: %v", err)
+		}
+		classificationClient = classLLM
+
+		log.Printf("✓ Completion provider: OpenRouter")
+		log.Printf("  Generation model: %s", genModel)
+		log.Printf("  Classification model: %s", classModel)
 	case "groq":
 		groqClient, err := llm.NewGroqClient(llm.GroqConfig{
-			APIKey:          cfg.LLM.GroqAPIKey,
-			CompletionModel: cfg.LLM.GroqModel,
+			APIKey:              cfg.LLM.GroqAPIKey,
+			CompletionModel:     cfg.LLM.GroqModel, // Legacy support
+			GenerationModel:     cfg.LLM.GroqGenerationModel,
+			ClassificationModel: cfg.LLM.GroqClassificationModel,
 		})
 		if err != nil {
 			log.Fatalf("Failed to create Groq completion client: %v", err)
 		}
-		completionClient = llm.NewGroqLangChainAdapter(groqClient)
-		log.Printf("✓ Completion provider: Groq (model: %s)", cfg.LLM.GroqModel)
+		generationClient = llm.NewGroqLangChainAdapter(groqClient, llm.ModelTypeGeneration)
+		classificationClient = llm.NewGroqLangChainAdapter(groqClient, llm.ModelTypeClassification)
+
+		log.Printf("✓ Completion provider: Groq")
+		log.Printf("  Generation model: %s", cfg.LLM.GroqGenerationModel)
+		log.Printf("  Classification model: %s", cfg.LLM.GroqClassificationModel)
 	case "ollama":
 		ollamaClient := llm.NewOllamaClient(llm.OllamaConfig{
-			BaseURL:         cfg.LLM.OllamaBaseURL,
-			EmbeddingModel:  cfg.LLM.EmbeddingModel,
-			CompletionModel: cfg.LLM.CompletionModel,
+			BaseURL:             cfg.LLM.OllamaBaseURL,
+			EmbeddingModel:      cfg.LLM.EmbeddingModel,
+			CompletionModel:     cfg.LLM.CompletionModel, // Legacy support
+			GenerationModel:     cfg.LLM.OllamaGenerationModel,
+			ClassificationModel: cfg.LLM.OllamaClassificationModel,
 		})
-		completionClient = llm.NewOllamaLangChainAdapter(ollamaClient)
-		log.Printf("✓ Completion provider: Ollama (base: %s, model: %s)", cfg.LLM.OllamaBaseURL, cfg.LLM.CompletionModel)
+		generationClient = llm.NewOllamaLangChainAdapter(ollamaClient, llm.ModelTypeGeneration)
+		classificationClient = llm.NewOllamaLangChainAdapter(ollamaClient, llm.ModelTypeClassification)
+
+		log.Printf("✓ Completion provider: Ollama")
+		log.Printf("  Generation model: %s", cfg.LLM.OllamaGenerationModel)
+		log.Printf("  Classification model: %s", cfg.LLM.OllamaClassificationModel)
 	default:
 		log.Fatalf("Invalid COMPLETION_PROVIDER specified: %s (supported: openai, openrouter, ollama, groq)", completionProvider)
 	}
@@ -168,18 +212,29 @@ func main() {
 	}
 
 	log.Printf("Initializing knowledge service...")
-	knowledgeService := knowledge.NewService(embeddingClient, completionClient, weaviateClient, knowledge.Config{
+	knowledgeService := knowledge.NewService(embeddingClient, generationClient, weaviateClient, knowledge.Config{
 		EmbeddingModel: cfg.LLM.EmbeddingModel,
 	})
-	log.Println("✓ Knowledge service initialized")
+	log.Println("✓ Knowledge service initialized (using generation model)")
 
 	log.Printf("Initializing generator service...")
-	generatorService := generator.NewService(completionClient, cfg.LLM.MaxConcurrent)
-	log.Printf("✓ Generator service initialized (max concurrent: %d)", cfg.LLM.MaxConcurrent)
+	generatorService := generator.NewService(generationClient, cfg.LLM.MaxConcurrent)
+	log.Printf("✓ Generator service initialized (using generation model, max concurrent: %d)", cfg.LLM.MaxConcurrent)
 
 	log.Printf("Initializing analyzer service...")
-	analyzerService := analyzer.NewService(completionClient)
-	log.Printf("✓ Analyzer service initialized")
+	// Configure moderation thresholds from config
+	moderationThresholds := analyzer.ModerationThresholds{
+		Toxicity:       cfg.LLM.ModerationToxicityThreshold,
+		Spam:           cfg.LLM.ModerationSpamThreshold,
+		Sexual:         cfg.LLM.ModerationSexualThreshold,
+		Violence:       cfg.LLM.ModerationViolenceThreshold,
+		Misinformation: cfg.LLM.ModerationMisinformationThreshold,
+	}
+	analyzerService := analyzer.NewService(classificationClient, moderationThresholds)
+	log.Printf("✓ Analyzer service initialized (using classification model)")
+	log.Printf("  Moderation thresholds: Toxicity=%.2f, Spam=%.2f, Sexual=%.2f, Violence=%.2f, Misinformation=%.2f",
+		moderationThresholds.Toxicity, moderationThresholds.Spam, moderationThresholds.Sexual,
+		moderationThresholds.Violence, moderationThresholds.Misinformation)
 
 	log.Println("Performing health checks...")
 	if err := knowledgeService.HealthCheck(ctx); err != nil {
@@ -196,7 +251,7 @@ func main() {
 		log.Printf("Starting %s %s on %s", serviceName, serviceVersion, addr)
 		log.Printf("Architecture: Fully Configurable (Embedding: %s, Completion: %s)", embeddingProvider, completionProvider)
 		log.Printf("Weaviate URL: %s", cfg.Weaviate.URL)
-		
+
 		if err := app.Listen(addr); err != nil {
 			log.Fatalf("Failed to start server: %v", err)
 		}

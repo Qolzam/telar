@@ -9,20 +9,22 @@ import (
 	"time"
 )
 
-
 type GroqClient struct {
-	apiKey          string
-	httpClient      *http.Client
-	completionModel string
+	apiKey              string
+	httpClient          *http.Client
+	generationModel     string
+	classificationModel string
 }
 
 var _ CompletionClient = (*GroqClient)(nil)
 
 // GroqConfig contains Groq client configuration
 type GroqConfig struct {
-	APIKey          string
-	CompletionModel string
-	Timeout         time.Duration
+	APIKey              string
+	CompletionModel     string // Legacy: defaults generation model
+	GenerationModel     string
+	ClassificationModel string
+	Timeout             time.Duration
 }
 
 // NewGroqClient creates a new client for interacting with the Groq API.
@@ -30,17 +32,25 @@ func NewGroqClient(config GroqConfig) (*GroqClient, error) {
 	if config.APIKey == "" {
 		return nil, fmt.Errorf("Groq API key is required")
 	}
-	if config.CompletionModel == "" {
-		config.CompletionModel = "llama3-8b-8192"
+	// Backward compatibility: if CompletionModel is set but GenerationModel is not, use CompletionModel
+	if config.GenerationModel == "" && config.CompletionModel != "" {
+		config.GenerationModel = config.CompletionModel
+	}
+	if config.GenerationModel == "" {
+		config.GenerationModel = "llama3-8b-8192"
+	}
+	if config.ClassificationModel == "" {
+		config.ClassificationModel = config.GenerationModel // Default to same as generation if not specified
 	}
 	if config.Timeout == 0 {
 		config.Timeout = 30 * time.Second
 	}
-	
+
 	return &GroqClient{
-		apiKey:          config.APIKey,
-		httpClient:      &http.Client{Timeout: config.Timeout},
-		completionModel: config.CompletionModel,
+		apiKey:              config.APIKey,
+		httpClient:          &http.Client{Timeout: config.Timeout},
+		generationModel:     config.GenerationModel,
+		classificationModel: config.ClassificationModel,
 	}, nil
 }
 
@@ -63,13 +73,22 @@ type groqCompletionResponse struct {
 	Usage *Usage `json:"usage,omitempty"`
 }
 
-
 // GenerateCompletion sends a prompt to the Groq API and gets a completion.
-func (c *GroqClient) GenerateCompletion(ctx context.Context, prompt string) (string, error) {
+func (c *GroqClient) GenerateCompletion(ctx context.Context, modelType ModelType, prompt string) (string, error) {
 	apiURL := "https://api.groq.com/openai/v1/chat/completions"
 
+	var modelToUse string
+	switch modelType {
+	case ModelTypeGeneration:
+		modelToUse = c.generationModel
+	case ModelTypeClassification:
+		modelToUse = c.classificationModel
+	default:
+		return "", fmt.Errorf("unknown model type: %s", modelType)
+	}
+
 	reqBody := groqCompletionRequest{
-		Model: c.completionModel,
+		Model: modelToUse,
 		Messages: []message{
 			{Role: "user", Content: prompt},
 		},
@@ -112,14 +131,12 @@ func (c *GroqClient) GenerateCompletion(ctx context.Context, prompt string) (str
 	return groqResp.Choices[0].Message.Content, nil
 }
 
-
 // Health checks Groq service availability
 func (c *GroqClient) Health(ctx context.Context) error {
-	// Test with a simple completion request
-	_, err := c.GenerateCompletion(ctx, "test")
+	// Test with a simple completion request using generation model
+	_, err := c.GenerateCompletion(ctx, ModelTypeGeneration, "test")
 	if err != nil {
 		return fmt.Errorf("groq service health check failed: %w", err)
 	}
 	return nil
 }
-

@@ -1,4 +1,25 @@
 services:
+  # Ollama LLM Service
+  ollama:
+    image: ollama/ollama:latest
+    container_name: telar-ollama
+    restart: unless-stopped
+    ports:
+      # Using port 11435 externally to avoid conflict with host Ollama on 11434
+      # Internal container communication still uses 11434
+      - "11435:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - telar-network
+    healthcheck:
+      # Use curl which is available in Ollama container, or simple TCP check
+      test: ["CMD-SHELL", "curl -f http://localhost:11434/api/tags || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
   # Weaviate Vector Database
   weaviate:
     image: semitechnologies/weaviate:1.27.0
@@ -11,7 +32,7 @@ services:
       DEFAULT_VECTORIZER_MODULE: 'none'
       CLUSTER_HOSTNAME: 'node1'
     ports:
-      - "${WEAVIATE_PORT:-8080}:8080"
+      - "${WEAVIATE_PORT:-9077}:8080"
     volumes:
       - weaviate_data:/var/lib/weaviate
     healthcheck:
@@ -32,7 +53,7 @@ services:
     restart: unless-stopped
     environment:
       # Server Configuration
-      PORT: ${AI_ENGINE_PORT:-8000}
+      PORT: ${AI_ENGINE_PORT:-9066}
       HOST: "0.0.0.0"
       SERVER_HOST: ${SERVER_HOST:-localhost}
       SERVER_ENV: ${SERVER_ENV:-development}
@@ -41,19 +62,25 @@ services:
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}        # Supported: ollama, openai
       COMPLETION_PROVIDER: ${COMPLETION_PROVIDER:-ollama}      # Supported: ollama, groq, openai, openrouter 
       
-      # Ollama Configuration 
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      # Ollama Configuration
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
-      COMPLETION_MODEL: ${COMPLETION_MODEL:-llama3:8b}
+      COMPLETION_MODEL: ${COMPLETION_MODEL:-llama3:8b}  # Legacy: defaults to generation model
+      OLLAMA_GENERATION_MODEL: ${OLLAMA_GENERATION_MODEL:-llama3:8b}
+      OLLAMA_CLASSIFICATION_MODEL: ${OLLAMA_CLASSIFICATION_MODEL:-qwen2.5:1.5b}
       
       # Groq Configuration (Completions only - does not support embeddings)
       GROQ_API_KEY: ${GROQ_API_KEY:-}
-      GROQ_MODEL: ${GROQ_MODEL:-llama-3.1-8b-instant}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.1-8b-instant}  # Legacy: defaults to generation model
+      GROQ_GENERATION_MODEL: ${GROQ_GENERATION_MODEL:-llama-3.1-8b-instant}
+      GROQ_CLASSIFICATION_MODEL: ${GROQ_CLASSIFICATION_MODEL:-llama-3.1-8b-instant}
       
       # OpenAI Configuration (Optional for embeddings and/or completions)
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-3.5-turbo}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-3.5-turbo}  # Legacy: defaults to generation model
+      OPENAI_GENERATION_MODEL: ${OPENAI_GENERATION_MODEL:-gpt-4o}
+      OPENAI_CLASSIFICATION_MODEL: ${OPENAI_CLASSIFICATION_MODEL:-gpt-3.5-turbo}
       
       # OpenRouter Configuration (Uses OpenAI compatibility - completions only)
       # Note: OpenRouter does not support embeddings
@@ -67,9 +94,18 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       CORS_ENABLED: ${CORS_ENABLED:-true}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      
+      # Moderation Thresholds
+      MODERATION_TOXICITY_THRESHOLD: ${MODERATION_TOXICITY_THRESHOLD:-0.50}
+      MODERATION_SPAM_THRESHOLD: ${MODERATION_SPAM_THRESHOLD:-0.45}
+      MODERATION_SEXUAL_THRESHOLD: ${MODERATION_SEXUAL_THRESHOLD:-0.75}
+      MODERATION_VIOLENCE_THRESHOLD: ${MODERATION_VIOLENCE_THRESHOLD:-0.75}
+      MODERATION_MISINFORMATION_THRESHOLD: ${MODERATION_MISINFORMATION_THRESHOLD:-0.70}
     ports:
-      - "${AI_ENGINE_PORT:-8000}:${AI_ENGINE_PORT:-8000}"
+      - "${AI_ENGINE_PORT:-9066}:${AI_ENGINE_PORT:-9066}"
     depends_on:
+      ollama:
+        condition: service_started
       weaviate:
         condition: service_healthy
     networks:
@@ -79,6 +115,8 @@ services:
 
 volumes:
   weaviate_data:
+    driver: local
+  ollama_data:
     driver: local
   ai_engine_logs:
     driver: local

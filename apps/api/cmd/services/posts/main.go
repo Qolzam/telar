@@ -15,6 +15,7 @@ import (
 	postsRepository "github.com/qolzam/telar/apps/api/posts/repository"
 	postsServices "github.com/qolzam/telar/apps/api/posts/services"
 	votesRepository "github.com/qolzam/telar/apps/api/votes/repository"
+	"github.com/qolzam/telar/packages/clients/aiengine"
 )
 
 func main() {
@@ -50,8 +51,11 @@ func main() {
 	commentRepo := commentRepository.NewPostgresCommentRepository(pgClient)
 	bookmarkRepo := bookmarksRepository.NewPostgresRepository(pgClient)
 
+	// Create AI Engine client for moderation
+	aiEngineClient := aiengine.NewClient()
+
 	// Create post service with repository
-	postsService := postsServices.NewPostService(postRepo, voteRepo, bookmarkRepo, cfg, nil, commentRepo)
+	postsService := postsServices.NewPostService(postRepo, voteRepo, bookmarkRepo, cfg, nil, commentRepo, aiEngineClient)
 
 	postsHandler := handlers.NewPostHandler(postsService, cfg.JWT, cfg.HMAC)
 

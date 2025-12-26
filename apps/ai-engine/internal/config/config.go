@@ -9,9 +9,10 @@ import (
 
 // Config holds application configuration loaded from environment variables
 type Config struct {
-	Server   ServerConfig   `json:"server"`
-	LLM      LLMConfig      `json:"llm"`
-	Weaviate WeaviateConfig `json:"weaviate"`
+	Server         ServerConfig   `json:"server"`
+	LLM            LLMConfig      `json:"llm"`
+	Weaviate       WeaviateConfig `json:"weaviate"`
+	InternalAPIKey string         `json:"internal_api_key,omitempty"`
 }
 
 // ServerConfig contains HTTP server settings
@@ -24,18 +25,30 @@ type ServerConfig struct {
 
 // LLMConfig contains language model provider settings
 type LLMConfig struct {
-	Provider           string `json:"provider"`
-	EmbeddingProvider  string `json:"embedding_provider"`
-	CompletionProvider string `json:"completion_provider"`
-	OpenAIAPIKey       string `json:"openai_api_key,omitempty"`
-	OpenAIBaseURL      string `json:"openai_base_url,omitempty"`
-	OpenAIModel        string `json:"openai_model,omitempty"`
-	GroqAPIKey         string `json:"groq_api_key,omitempty"`
-	GroqModel          string `json:"groq_model,omitempty"`
-	OllamaBaseURL      string `json:"ollama_base_url,omitempty"`
-	EmbeddingModel     string `json:"embedding_model,omitempty"`
-	CompletionModel    string `json:"completion_model,omitempty"`
-	MaxConcurrent      int    `json:"max_concurrent,omitempty"`
+	Provider                  string `json:"provider"`
+	EmbeddingProvider         string `json:"embedding_provider"`
+	CompletionProvider        string `json:"completion_provider"`
+	OpenAIAPIKey              string `json:"openai_api_key,omitempty"`
+	OpenAIBaseURL             string `json:"openai_base_url,omitempty"`
+	OpenAIModel               string `json:"openai_model,omitempty"`
+	OpenAIGenerationModel     string `json:"openai_generation_model,omitempty"`
+	OpenAIClassificationModel string `json:"openai_classification_model,omitempty"`
+	GroqAPIKey                string `json:"groq_api_key,omitempty"`
+	GroqModel                 string `json:"groq_model,omitempty"`
+	GroqGenerationModel       string `json:"groq_generation_model,omitempty"`
+	GroqClassificationModel   string `json:"groq_classification_model,omitempty"`
+	OllamaBaseURL             string `json:"ollama_base_url,omitempty"`
+	EmbeddingModel            string `json:"embedding_model,omitempty"`
+	CompletionModel           string `json:"completion_model,omitempty"` // Legacy: defaults generation model
+	OllamaGenerationModel     string `json:"ollama_generation_model,omitempty"`
+	OllamaClassificationModel string `json:"ollama_classification_model,omitempty"`
+	MaxConcurrent             int    `json:"max_concurrent,omitempty"`
+	// Moderation thresholds
+	ModerationToxicityThreshold       float64 `json:"moderation_toxicity_threshold,omitempty"`
+	ModerationSpamThreshold           float64 `json:"moderation_spam_threshold,omitempty"`
+	ModerationSexualThreshold         float64 `json:"moderation_sexual_threshold,omitempty"`
+	ModerationViolenceThreshold       float64 `json:"moderation_violence_threshold,omitempty"`
+	ModerationMisinformationThreshold float64 `json:"moderation_misinformation_threshold,omitempty"`
 }
 
 // WeaviateConfig contains vector database settings
@@ -46,7 +59,7 @@ type WeaviateConfig struct {
 
 // Load reads configuration from environment variables with sensible defaults
 func Load() (*Config, error) {
-	viper.SetDefault("PORT", "8000")
+	viper.SetDefault("PORT", "9066")
 	viper.SetDefault("HOST", "0.0.0.0")
 	viper.SetDefault("READ_TIMEOUT", "30s")
 	viper.SetDefault("WRITE_TIMEOUT", "30s")
@@ -55,12 +68,19 @@ func Load() (*Config, error) {
 	viper.SetDefault("COMPLETION_PROVIDER", "ollama")
 	viper.SetDefault("OLLAMA_BASE_URL", "http://localhost:11434")
 	viper.SetDefault("EMBEDDING_MODEL", "nomic-embed-text")
-	viper.SetDefault("COMPLETION_MODEL", "llama3:8b")
-	viper.SetDefault("GROQ_MODEL", "llama3-8b-8192")
+	viper.SetDefault("COMPLETION_MODEL", "llama3:8b") // Legacy: defaults generation model
+	viper.SetDefault("OLLAMA_GENERATION_MODEL", "")
+	viper.SetDefault("OLLAMA_CLASSIFICATION_MODEL", "qwen2.5:1.5b")
+	viper.SetDefault("GROQ_MODEL", "llama3-8b-8192") // Legacy: defaults generation model
+	viper.SetDefault("GROQ_GENERATION_MODEL", "")
+	viper.SetDefault("GROQ_CLASSIFICATION_MODEL", "")
 	viper.SetDefault("OPENAI_BASE_URL", "https://api.openai.com/v1")
-	viper.SetDefault("OPENAI_MODEL", "gpt-3.5-turbo")
+	viper.SetDefault("OPENAI_MODEL", "gpt-3.5-turbo") // Legacy: defaults generation model
+	viper.SetDefault("OPENAI_GENERATION_MODEL", "")
+	viper.SetDefault("OPENAI_CLASSIFICATION_MODEL", "")
 	viper.SetDefault("MAX_CONCURRENT", "2")
-	viper.SetDefault("WEAVIATE_URL", "http://localhost:8080")
+	viper.SetDefault("WEAVIATE_URL", "http://localhost:9077")
+	viper.SetDefault("INTERNAL_API_KEY", "")
 
 	viper.AutomaticEnv()
 
@@ -72,29 +92,61 @@ func Load() (*Config, error) {
 			WriteTimeout: viper.GetDuration("WRITE_TIMEOUT"),
 		},
 		LLM: LLMConfig{
-			Provider:           viper.GetString("LLM_PROVIDER"),
-			EmbeddingProvider:  viper.GetString("EMBEDDING_PROVIDER"),
-			CompletionProvider: viper.GetString("COMPLETION_PROVIDER"),
-			OpenAIAPIKey:       viper.GetString("OPENAI_API_KEY"),
-			OpenAIBaseURL:      viper.GetString("OPENAI_BASE_URL"),
-			OpenAIModel:        viper.GetString("OPENAI_MODEL"),
-			GroqAPIKey:         viper.GetString("GROQ_API_KEY"),
-			GroqModel:          viper.GetString("GROQ_MODEL"),
-			OllamaBaseURL:      viper.GetString("OLLAMA_BASE_URL"),
-			EmbeddingModel:     viper.GetString("EMBEDDING_MODEL"),
-			CompletionModel:    viper.GetString("COMPLETION_MODEL"),
-			MaxConcurrent:      viper.GetInt("MAX_CONCURRENT"),
+			Provider:                          viper.GetString("LLM_PROVIDER"),
+			EmbeddingProvider:                 viper.GetString("EMBEDDING_PROVIDER"),
+			CompletionProvider:                viper.GetString("COMPLETION_PROVIDER"),
+			OpenAIAPIKey:                      viper.GetString("OPENAI_API_KEY"),
+			OpenAIBaseURL:                     viper.GetString("OPENAI_BASE_URL"),
+			OpenAIModel:                       viper.GetString("OPENAI_MODEL"),
+			OpenAIGenerationModel:             viper.GetString("OPENAI_GENERATION_MODEL"),
+			OpenAIClassificationModel:         viper.GetString("OPENAI_CLASSIFICATION_MODEL"),
+			GroqAPIKey:                        viper.GetString("GROQ_API_KEY"),
+			GroqModel:                         viper.GetString("GROQ_MODEL"),
+			GroqGenerationModel:               viper.GetString("GROQ_GENERATION_MODEL"),
+			GroqClassificationModel:           viper.GetString("GROQ_CLASSIFICATION_MODEL"),
+			OllamaBaseURL:                     viper.GetString("OLLAMA_BASE_URL"),
+			EmbeddingModel:                    viper.GetString("EMBEDDING_MODEL"),
+			CompletionModel:                   viper.GetString("COMPLETION_MODEL"),
+			OllamaGenerationModel:             viper.GetString("OLLAMA_GENERATION_MODEL"),
+			OllamaClassificationModel:         viper.GetString("OLLAMA_CLASSIFICATION_MODEL"),
+			MaxConcurrent:                     viper.GetInt("MAX_CONCURRENT"),
+			ModerationToxicityThreshold:       viper.GetFloat64("MODERATION_TOXICITY_THRESHOLD"),
+			ModerationSpamThreshold:           viper.GetFloat64("MODERATION_SPAM_THRESHOLD"),
+			ModerationSexualThreshold:         viper.GetFloat64("MODERATION_SEXUAL_THRESHOLD"),
+			ModerationViolenceThreshold:       viper.GetFloat64("MODERATION_VIOLENCE_THRESHOLD"),
+			ModerationMisinformationThreshold: viper.GetFloat64("MODERATION_MISINFORMATION_THRESHOLD"),
 		},
 		Weaviate: WeaviateConfig{
 			URL:    viper.GetString("WEAVIATE_URL"),
 			APIKey: viper.GetString("WEAVIATE_API_KEY"),
 		},
+		InternalAPIKey: viper.GetString("INTERNAL_API_KEY"),
 	}
-	
+
+	// Apply backward compatibility: if specific model types are not set, use the legacy COMPLETION_MODEL
+	if config.LLM.OllamaGenerationModel == "" {
+		config.LLM.OllamaGenerationModel = config.LLM.CompletionModel
+	}
+	if config.LLM.OllamaClassificationModel == "" {
+		config.LLM.OllamaClassificationModel = config.LLM.CompletionModel // Default to same as generation if not specified
+	}
+	if config.LLM.GroqGenerationModel == "" {
+		config.LLM.GroqGenerationModel = config.LLM.GroqModel
+	}
+	if config.LLM.GroqClassificationModel == "" {
+		config.LLM.GroqClassificationModel = config.LLM.GroqModel
+	}
+	if config.LLM.OpenAIGenerationModel == "" {
+		config.LLM.OpenAIGenerationModel = config.LLM.OpenAIModel
+	}
+	if config.LLM.OpenAIClassificationModel == "" {
+		config.LLM.OpenAIClassificationModel = config.LLM.OpenAIModel
+	}
+
 	if err := config.validate(); err != nil {
 		return nil, fmt.Errorf("configuration validation failed: %w", err)
 	}
-	
+
 	return config, nil
 }
 
@@ -105,7 +157,7 @@ func (c *Config) validate() error {
 	if embeddingProvider == "" {
 		embeddingProvider = "ollama" // Default fallback
 	}
-	
+
 	switch embeddingProvider {
 	case "openai":
 		if c.LLM.OpenAIAPIKey == "" {
@@ -126,14 +178,14 @@ func (c *Config) validate() error {
 	default:
 		return fmt.Errorf("unsupported embedding provider: %s (supported: ollama, openai, groq, openrouter)", embeddingProvider)
 	}
-	
+
 	// Validate completion provider
 	completionProvider := c.LLM.CompletionProvider
 	if completionProvider == "" {
 		// fall back to legacy provider field for backward compatibility
 		completionProvider = c.LLM.Provider
 	}
-	
+
 	switch completionProvider {
 	case "openai":
 		if c.LLM.OpenAIAPIKey == "" {
@@ -151,10 +203,10 @@ func (c *Config) validate() error {
 	default:
 		return fmt.Errorf("unsupported completion provider: %s (supported: ollama, groq, openai, openrouter)", completionProvider)
 	}
-	
+
 	if c.Weaviate.URL == "" {
 		return fmt.Errorf("WEAVIATE_URL is required")
 	}
-	
+
 	return nil
 }

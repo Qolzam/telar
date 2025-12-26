@@ -64,13 +64,15 @@ func (r *postgresRepository) Create(ctx context.Context, post *models.Post) erro
 		comment_count, is_deleted, deleted_date, created_at, updated_at,
 		created_date, last_updated, tags, url_key, owner_display_name,
 		owner_avatar, image, image_full_path, video, thumbnail,
-		disable_comments, disable_sharing, permission, version, metadata
+		disable_comments, disable_sharing, permission, version, metadata,
+		status, moderation_details
 	) VALUES (
 		:id, :owner_user_id, :post_type_id, :body, :score, :view_count,
 		:comment_count, :is_deleted, :deleted_date, :created_at, :updated_at,
 		:created_date, :last_updated, :tags, :url_key, :owner_display_name,
 		:owner_avatar, :image, :image_full_path, :video, :thumbnail,
-		:disable_comments, :disable_sharing, :permission, :version, :metadata
+		:disable_comments, :disable_sharing, :permission, :version, :metadata,
+		:status, :moderation_details
 	)`
 
 	// Set timestamps if not set
@@ -87,61 +89,79 @@ func (r *postgresRepository) Create(ctx context.Context, post *models.Post) erro
 		post.LastUpdated = time.Now().Unix()
 	}
 
+	// Set default status if not set
+	if post.Status == "" {
+		post.Status = "published"
+	}
+
+	// Convert ModerationDetails JSONB to json.RawMessage
+	moderationDetailsJSON := json.RawMessage("{}")
+	if post.ModerationDetails != nil {
+		modDetailsBytes, err := json.Marshal(post.ModerationDetails)
+		if err == nil {
+			moderationDetailsJSON = json.RawMessage(modDetailsBytes)
+		}
+	}
+
 	// Prepare the struct for insertion
 	insertData := struct {
-		ID               uuid.UUID       `db:"id"`
-		OwnerUserID      uuid.UUID       `db:"owner_user_id"`
-		PostTypeID       int             `db:"post_type_id"`
-		Body             string          `db:"body"`
-		Score            int64           `db:"score"`
-		ViewCount        int64           `db:"view_count"`
-		CommentCount     int64           `db:"comment_count"`
-		IsDeleted        bool            `db:"is_deleted"`
-		DeletedDate      int64           `db:"deleted_date"`
-		CreatedAt        time.Time       `db:"created_at"`
-		UpdatedAt        time.Time       `db:"updated_at"`
-		CreatedDate      int64           `db:"created_date"`
-		LastUpdated      int64           `db:"last_updated"`
-		Tags             interface{}     `db:"tags"`
-		URLKey           string          `db:"url_key"`
-		OwnerDisplayName string          `db:"owner_display_name"`
-		OwnerAvatar      string          `db:"owner_avatar"`
-		Image            string          `db:"image"`
-		ImageFullPath    string          `db:"image_full_path"`
-		Video            string          `db:"video"`
-		Thumbnail        string          `db:"thumbnail"`
-		DisableComments  bool            `db:"disable_comments"`
-		DisableSharing   bool            `db:"disable_sharing"`
-		Permission       string          `db:"permission"`
-		Version          string          `db:"version"`
-		Metadata         json.RawMessage `db:"metadata"`
+		ID                uuid.UUID       `db:"id"`
+		OwnerUserID       uuid.UUID       `db:"owner_user_id"`
+		PostTypeID        int             `db:"post_type_id"`
+		Body              string          `db:"body"`
+		Score             int64           `db:"score"`
+		ViewCount         int64           `db:"view_count"`
+		CommentCount      int64           `db:"comment_count"`
+		IsDeleted         bool            `db:"is_deleted"`
+		DeletedDate       int64           `db:"deleted_date"`
+		CreatedAt         time.Time       `db:"created_at"`
+		UpdatedAt         time.Time       `db:"updated_at"`
+		CreatedDate       int64           `db:"created_date"`
+		LastUpdated       int64           `db:"last_updated"`
+		Tags              interface{}     `db:"tags"`
+		URLKey            string          `db:"url_key"`
+		OwnerDisplayName  string          `db:"owner_display_name"`
+		OwnerAvatar       string          `db:"owner_avatar"`
+		Image             string          `db:"image"`
+		ImageFullPath     string          `db:"image_full_path"`
+		Video             string          `db:"video"`
+		Thumbnail         string          `db:"thumbnail"`
+		DisableComments   bool            `db:"disable_comments"`
+		DisableSharing    bool            `db:"disable_sharing"`
+		Permission        string          `db:"permission"`
+		Version           string          `db:"version"`
+		Metadata          json.RawMessage `db:"metadata"`
+		Status            string          `db:"status"`
+		ModerationDetails json.RawMessage `db:"moderation_details"`
 	}{
-		ID:               post.ObjectId,
-		OwnerUserID:      post.OwnerUserId,
-		PostTypeID:       post.PostTypeId,
-		Body:             post.Body,
-		Score:            post.Score,
-		ViewCount:        post.ViewCount,
-		CommentCount:     post.CommentCounter,
-		IsDeleted:        post.Deleted,
-		DeletedDate:      post.DeletedDate,
-		CreatedAt:        post.CreatedAt,
-		UpdatedAt:        post.UpdatedAt,
-		CreatedDate:      post.CreatedDate,
-		LastUpdated:      post.LastUpdated,
-		Tags:             post.Tags,
-		URLKey:           post.URLKey,
-		OwnerDisplayName: post.OwnerDisplayName,
-		OwnerAvatar:      post.OwnerAvatar,
-		Image:            post.Image,
-		ImageFullPath:    post.ImageFullPath,
-		Video:            post.Video,
-		Thumbnail:        post.Thumbnail,
-		DisableComments:  post.DisableComments,
-		DisableSharing:   post.DisableSharing,
-		Permission:       post.Permission,
-		Version:          post.Version,
-		Metadata:         metadata,
+		ID:                post.ObjectId,
+		OwnerUserID:       post.OwnerUserId,
+		PostTypeID:        post.PostTypeId,
+		Body:              post.Body,
+		Score:             post.Score,
+		ViewCount:         post.ViewCount,
+		CommentCount:      post.CommentCounter,
+		IsDeleted:         post.Deleted,
+		DeletedDate:       post.DeletedDate,
+		CreatedAt:         post.CreatedAt,
+		UpdatedAt:         post.UpdatedAt,
+		CreatedDate:       post.CreatedDate,
+		LastUpdated:       post.LastUpdated,
+		Tags:              post.Tags,
+		URLKey:            post.URLKey,
+		OwnerDisplayName:  post.OwnerDisplayName,
+		OwnerAvatar:       post.OwnerAvatar,
+		Image:             post.Image,
+		ImageFullPath:     post.ImageFullPath,
+		Video:             post.Video,
+		Thumbnail:         post.Thumbnail,
+		DisableComments:   post.DisableComments,
+		DisableSharing:    post.DisableSharing,
+		Permission:        post.Permission,
+		Version:           post.Version,
+		Metadata:          metadata,
+		Status:            post.Status,
+		ModerationDetails: moderationDetailsJSON,
 	}
 
 	executor := r.getExecutor(ctx)
@@ -160,7 +180,8 @@ func (r *postgresRepository) FindByID(ctx context.Context, id uuid.UUID) (*model
 			comment_count, is_deleted, deleted_date, created_at, updated_at,
 			created_date, last_updated, tags, url_key, owner_display_name,
 			owner_avatar, image, image_full_path, video, thumbnail,
-			disable_comments, disable_sharing, permission, version, metadata
+			disable_comments, disable_sharing, permission, version, metadata,
+			status, moderation_details
 		FROM posts
 		WHERE id = $1 AND is_deleted = FALSE
 	`
@@ -192,7 +213,8 @@ func (r *postgresRepository) FindByUser(ctx context.Context, userID uuid.UUID, l
 			comment_count, is_deleted, deleted_date, created_at, updated_at,
 			created_date, last_updated, tags, url_key, owner_display_name,
 			owner_avatar, image, image_full_path, video, thumbnail,
-			disable_comments, disable_sharing, permission, version, metadata
+			disable_comments, disable_sharing, permission, version, metadata,
+			status, moderation_details
 		FROM posts
 		WHERE owner_user_id = $1 AND is_deleted = FALSE
 		ORDER BY created_at DESC, id DESC
@@ -252,60 +274,75 @@ func (r *postgresRepository) Update(ctx context.Context, post *models.Post) erro
 			disable_sharing = :disable_sharing,
 			permission = :permission,
 			version = :version,
-			metadata = :metadata
+			metadata = :metadata,
+			status = :status,
+			moderation_details = :moderation_details
 		WHERE id = :id
 	`
 
+	// Convert ModerationDetails JSONB to json.RawMessage
+	moderationDetailsJSON := json.RawMessage("{}")
+	if post.ModerationDetails != nil {
+		modDetailsBytes, err := json.Marshal(post.ModerationDetails)
+		if err == nil {
+			moderationDetailsJSON = json.RawMessage(modDetailsBytes)
+		}
+	}
+
 	updateData := struct {
-		ID               uuid.UUID       `db:"id"`
-		OwnerUserID      uuid.UUID       `db:"owner_user_id"`
-		PostTypeID       int             `db:"post_type_id"`
-		Body             string          `db:"body"`
-		Score            int64           `db:"score"`
-		ViewCount        int64           `db:"view_count"`
-		CommentCount     int64           `db:"comment_count"`
-		IsDeleted        bool            `db:"is_deleted"`
-		DeletedDate      int64           `db:"deleted_date"`
-		UpdatedAt        time.Time       `db:"updated_at"`
-		LastUpdated      int64           `db:"last_updated"`
-		Tags             interface{}     `db:"tags"`
-		URLKey           string          `db:"url_key"`
-		OwnerDisplayName string          `db:"owner_display_name"`
-		OwnerAvatar      string          `db:"owner_avatar"`
-		Image            string          `db:"image"`
-		ImageFullPath    string          `db:"image_full_path"`
-		Video            string          `db:"video"`
-		Thumbnail        string          `db:"thumbnail"`
-		DisableComments  bool            `db:"disable_comments"`
-		DisableSharing   bool            `db:"disable_sharing"`
-		Permission       string          `db:"permission"`
-		Version          string          `db:"version"`
-		Metadata         json.RawMessage `db:"metadata"`
+		ID                uuid.UUID       `db:"id"`
+		OwnerUserID       uuid.UUID       `db:"owner_user_id"`
+		PostTypeID        int             `db:"post_type_id"`
+		Body              string          `db:"body"`
+		Score             int64           `db:"score"`
+		ViewCount         int64           `db:"view_count"`
+		CommentCount      int64           `db:"comment_count"`
+		IsDeleted         bool            `db:"is_deleted"`
+		DeletedDate       int64           `db:"deleted_date"`
+		UpdatedAt         time.Time       `db:"updated_at"`
+		LastUpdated       int64           `db:"last_updated"`
+		Tags              interface{}     `db:"tags"`
+		URLKey            string          `db:"url_key"`
+		OwnerDisplayName  string          `db:"owner_display_name"`
+		OwnerAvatar       string          `db:"owner_avatar"`
+		Image             string          `db:"image"`
+		ImageFullPath     string          `db:"image_full_path"`
+		Video             string          `db:"video"`
+		Thumbnail         string          `db:"thumbnail"`
+		DisableComments   bool            `db:"disable_comments"`
+		DisableSharing    bool            `db:"disable_sharing"`
+		Permission        string          `db:"permission"`
+		Version           string          `db:"version"`
+		Metadata          json.RawMessage `db:"metadata"`
+		Status            string          `db:"status"`
+		ModerationDetails json.RawMessage `db:"moderation_details"`
 	}{
-		ID:               post.ObjectId,
-		OwnerUserID:      post.OwnerUserId,
-		PostTypeID:       post.PostTypeId,
-		Body:             post.Body,
-		Score:            post.Score,
-		ViewCount:        post.ViewCount,
-		CommentCount:     post.CommentCounter,
-		IsDeleted:        post.Deleted,
-		DeletedDate:      post.DeletedDate,
-		UpdatedAt:        post.UpdatedAt,
-		LastUpdated:      post.LastUpdated,
-		Tags:             post.Tags,
-		URLKey:           post.URLKey,
-		OwnerDisplayName: post.OwnerDisplayName,
-		OwnerAvatar:      post.OwnerAvatar,
-		Image:            post.Image,
-		ImageFullPath:    post.ImageFullPath,
-		Video:            post.Video,
-		Thumbnail:        post.Thumbnail,
-		DisableComments:  post.DisableComments,
-		DisableSharing:   post.DisableSharing,
-		Permission:       post.Permission,
-		Version:          post.Version,
-		Metadata:         metadata,
+		ID:                post.ObjectId,
+		OwnerUserID:       post.OwnerUserId,
+		PostTypeID:        post.PostTypeId,
+		Body:              post.Body,
+		Score:             post.Score,
+		ViewCount:         post.ViewCount,
+		CommentCount:      post.CommentCounter,
+		IsDeleted:         post.Deleted,
+		DeletedDate:       post.DeletedDate,
+		UpdatedAt:         post.UpdatedAt,
+		LastUpdated:       post.LastUpdated,
+		Tags:              post.Tags,
+		URLKey:            post.URLKey,
+		OwnerDisplayName:  post.OwnerDisplayName,
+		OwnerAvatar:       post.OwnerAvatar,
+		Image:             post.Image,
+		ImageFullPath:     post.ImageFullPath,
+		Video:             post.Video,
+		Thumbnail:         post.Thumbnail,
+		DisableComments:   post.DisableComments,
+		DisableSharing:    post.DisableSharing,
+		Permission:        post.Permission,
+		Version:           post.Version,
+		Metadata:          metadata,
+		Status:            post.Status,
+		ModerationDetails: moderationDetailsJSON,
 	}
 
 	result, err := sqlx.NamedExecContext(ctx, r.getExecutor(ctx), query, updateData)
@@ -446,7 +483,8 @@ func (r *postgresRepository) GetByIDs(ctx context.Context, ids []uuid.UUID) ([]*
 			comment_count, is_deleted, deleted_date, created_at, updated_at,
 			created_date, last_updated, tags, url_key, owner_display_name,
 			owner_avatar, image, image_full_path, video, thumbnail,
-			disable_comments, disable_sharing, permission, version, metadata
+			disable_comments, disable_sharing, permission, version, metadata,
+			status, moderation_details
 		FROM %sposts
 		WHERE id = ANY($1::uuid[]) AND is_deleted = FALSE
 	`
@@ -465,6 +503,59 @@ func (r *postgresRepository) GetByIDs(ctx context.Context, ids []uuid.UUID) ([]*
 	}
 
 	return posts, nil
+}
+
+// FindByStatus retrieves posts by moderation status with pagination
+func (r *postgresRepository) FindByStatus(ctx context.Context, status string, limit, offset int) ([]*models.Post, error) {
+	query := `
+		SELECT 
+			id, owner_user_id, post_type_id, body, score, view_count,
+			comment_count, is_deleted, deleted_date, created_at, updated_at,
+			created_date, last_updated, tags, url_key, owner_display_name,
+			owner_avatar, image, image_full_path, video, thumbnail,
+			disable_comments, disable_sharing, permission, version, metadata,
+			status, moderation_details
+		FROM posts
+		WHERE status = $1 AND is_deleted = FALSE
+		ORDER BY created_at DESC, id DESC
+		LIMIT $2 OFFSET $3
+	`
+
+	var posts []models.Post
+	err := sqlx.SelectContext(ctx, r.getExecutor(ctx), &posts, query, status, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find posts by status: %w", err)
+	}
+
+	// Populate metadata for each post
+	result := make([]*models.Post, len(posts))
+	for i := range posts {
+		post := &posts[i]
+		if post.Metadata != nil {
+			metadataJSON, _ := json.Marshal(post.Metadata)
+			r.populateMetadata(post, metadataJSON)
+		}
+		result[i] = post
+	}
+
+	return result, nil
+}
+
+// CountByStatus returns the number of posts with a specific status
+func (r *postgresRepository) CountByStatus(ctx context.Context, status string) (int64, error) {
+	query := `
+		SELECT COUNT(*) 
+		FROM posts
+		WHERE status = $1 AND is_deleted = FALSE
+	`
+
+	var count int64
+	err := sqlx.GetContext(ctx, r.getExecutor(ctx), &count, query, status)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count posts by status: %w", err)
+	}
+
+	return count, nil
 }
 
 // buildMetadata builds the metadata JSONB from dynamic fields (Votes, Album, AccessUserList)
@@ -541,7 +632,8 @@ func (r *postgresRepository) FindByURLKey(ctx context.Context, urlKey string) (*
 			comment_count, is_deleted, deleted_date, created_at, updated_at,
 			created_date, last_updated, tags, url_key, owner_display_name,
 			owner_avatar, image, image_full_path, video, thumbnail,
-			disable_comments, disable_sharing, permission, version, metadata
+			disable_comments, disable_sharing, permission, version, metadata,
+			status, moderation_details
 		FROM posts
 		WHERE url_key = $1 AND is_deleted = FALSE
 		LIMIT 1`
@@ -641,7 +733,8 @@ func (r *postgresRepository) buildCursorQuery(filter PostFilter, cursor *models.
 			comment_count, is_deleted, deleted_date, created_at, updated_at,
 			created_date, last_updated, tags, url_key, owner_display_name,
 			owner_avatar, image, image_full_path, video, thumbnail,
-			disable_comments, disable_sharing, permission, version, metadata
+			disable_comments, disable_sharing, permission, version, metadata,
+			status, moderation_details
 		FROM posts
 		WHERE 1=1`
 
@@ -813,7 +906,8 @@ func (r *postgresRepository) Search(ctx context.Context, query string, limit int
 			comment_count, is_deleted, deleted_date, created_at, updated_at,
 			created_date, last_updated, tags, url_key, owner_display_name,
 			owner_avatar, image, image_full_path, video, thumbnail,
-			disable_comments, disable_sharing, permission, version, metadata
+			disable_comments, disable_sharing, permission, version, metadata,
+			status, moderation_details
 		FROM posts
 		WHERE 
 			is_deleted = FALSE 
@@ -921,7 +1015,8 @@ func (r *postgresRepository) buildFindQuery(filter PostFilter, limit, offset int
 			comment_count, is_deleted, deleted_date, created_at, updated_at,
 			created_date, last_updated, tags, url_key, owner_display_name,
 			owner_avatar, image, image_full_path, video, thumbnail,
-			disable_comments, disable_sharing, permission, version, metadata
+			disable_comments, disable_sharing, permission, version, metadata,
+			status, moderation_details
 		FROM posts
 		WHERE 1=1`
 

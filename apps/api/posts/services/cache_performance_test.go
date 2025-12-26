@@ -68,7 +68,7 @@ func TestPostsServiceCacheIntegration(t *testing.T) {
 	voteRepo := votesRepository.NewPostgresVoteRepository(client)
 
 	// Create posts service with cache (commentRepo is nil for this test)
-	postService := NewPostService(postRepo, voteRepo, nil, iso.Config, nil, nil)
+	postService := NewPostService(postRepo, voteRepo, nil, iso.Config, nil, nil, nil)
 
 	// Test user context
 	userID := uuid.Must(uuid.NewV4())

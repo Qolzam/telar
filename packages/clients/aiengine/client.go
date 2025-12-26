@@ -77,11 +77,11 @@ type httpClient struct {
 // NewClient creates a new AI Engine client instance
 // Reads the AI Engine URL from AI_ENGINE_URL environment variable
 // Reads the API key from AI_ENGINE_INTERNAL_API_KEY environment variable
-// Defaults to http://localhost:8080 if not set
+// Defaults to http://localhost:9066 if not set
 func NewClient() Client {
 	baseURL := os.Getenv("AI_ENGINE_URL")
 	if baseURL == "" {
-		baseURL = "http://localhost:8080"
+		baseURL = "http://localhost:9066"
 	}
 
 	apiKey := os.Getenv("AI_ENGINE_INTERNAL_API_KEY")

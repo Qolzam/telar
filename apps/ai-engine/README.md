@@ -46,14 +46,14 @@ cd apps/ai-engine
 docker-compose -f apps/ai-engine/deployments/docker-compose/docker-compose.yml up --build -d
 ```
 
-The AI Engine API will now be available at `http://localhost:8000`.
+The AI Engine API will now be available at `http://localhost:9066`.
 
 ### 3. Test the System
 
 **Option A: Interactive Demo UI**
 ```bash
 # Open your browser and navigate to:
-http://localhost:8000
+http://localhost:9066
 ```
 
 
@@ -61,15 +61,15 @@ http://localhost:8000
 
 ```bash
 # Health check
-curl http://localhost:8000/health
+curl http://localhost:9066/health
 
 # Ingest a document
-curl -X POST http://localhost:8000/api/v1/ingest \
+curl -X POST http://localhost:9066/api/v1/ingest \
   -H "Content-Type: application/json" \
   -d '{"text": "The Telar platform is built with Go and Next.js.", "metadata": {"source": "docs"}}'
 
 # Query the knowledge base
-curl -X POST http://localhost:8000/api/v1/query \
+curl -X POST http://localhost:9066/api/v1/query \
   -H "Content-Type: application/json" \
   -d '{"question": "What is Telar built with?"}'
 ```
@@ -132,7 +132,7 @@ The AI Engine supports multiple deployment scenarios, each optimized for a diffe
 **Example Usage**:
 ```bash
 # Analyze content for moderation
-curl -X POST http://localhost:8000/api/v1/analyze/content \
+curl -X POST http://localhost:9066/api/v1/analyze/content \
   -H "Content-Type: application/json" \
   -d '{"content": "Text to analyze"}'
 

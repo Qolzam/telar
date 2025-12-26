@@ -153,3 +153,18 @@ func (m *MockPostRepository) GetByIDs(ctx context.Context, ids []uuid.UUID) ([]*
 	}
 	return args.Get(0).([]*models.Post), args.Error(1)
 }
+
+// FindByStatus mocks the FindByStatus method
+func (m *MockPostRepository) FindByStatus(ctx context.Context, status string, limit, offset int) ([]*models.Post, error) {
+	args := m.Called(ctx, status, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.Post), args.Error(1)
+}
+
+// CountByStatus mocks the CountByStatus method
+func (m *MockPostRepository) CountByStatus(ctx context.Context, status string) (int64, error) {
+	args := m.Called(ctx, status)
+	return args.Get(0).(int64), args.Error(1)
+}

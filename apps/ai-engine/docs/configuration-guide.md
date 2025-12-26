@@ -77,9 +77,9 @@ GROQ_MODEL=llama-3.1-8b-instant
 - ⚠️ **Note**: OpenRouter does not support embeddings - use for completions only
 
 ### **Infrastructure Settings**
-- `WEAVIATE_URL`: Vector database URL (default: `http://weaviate:8080`)
+- `WEAVIATE_URL`: Vector database URL (default: `http://weaviate:8080` for internal Docker network, `http://localhost:9077` for external access)
 - `WEAVIATE_API_KEY`: Vector database API key (optional)
-- `AI_ENGINE_PORT`: Service port (default: `8000`)
+- `AI_ENGINE_PORT`: Service port (default: `9066`)
 - `SERVER_ENV`: Environment (default: `development`)
 
 ## ✅ **Configuration Validation**

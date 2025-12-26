@@ -83,4 +83,10 @@ type PostRepository interface {
 
 	// GetByIDs returns posts matching given IDs using ANY for bulk fetch.
 	GetByIDs(ctx context.Context, ids []uuid.UUID) ([]*models.Post, error)
+
+	// FindByStatus retrieves posts by moderation status with pagination
+	FindByStatus(ctx context.Context, status string, limit, offset int) ([]*models.Post, error)
+
+	// CountByStatus returns the number of posts with a specific status
+	CountByStatus(ctx context.Context, status string) (int64, error)
 }

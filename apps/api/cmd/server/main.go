@@ -51,6 +51,7 @@ import (
 	"github.com/qolzam/telar/apps/api/storage"
 	storageHandlers "github.com/qolzam/telar/apps/api/storage/handlers"
 	storageProvider "github.com/qolzam/telar/apps/api/storage/provider"
+	"github.com/qolzam/telar/packages/clients/aiengine"
 	storageRepository "github.com/qolzam/telar/apps/api/storage/repository"
 	storageServices "github.com/qolzam/telar/apps/api/storage/services"
 )
@@ -453,7 +454,8 @@ func main() {
 
 		// Create temporary service instances to get adapters
 		tempCommentsService := commentServices.NewCommentService(commentRepo, postRepo, cfg, nil)
-		tempPostsService := postsServices.NewPostService(postRepo, voteRepo, bookmarkRepo, cfg, nil, commentRepo)
+		aiEngineClient := aiengine.NewClient()
+		tempPostsService := postsServices.NewPostService(postRepo, voteRepo, bookmarkRepo, cfg, nil, commentRepo, aiEngineClient)
 
 		// Create direct call adapters
 		commentCounter = comments.NewDirectCallCounter(tempCommentsService)
@@ -463,7 +465,8 @@ func main() {
 
 	// Re-initialize services with cross-service dependencies
 	commentsService = commentServices.NewCommentService(commentRepo, postRepo, cfg, postStatsUpdater)
-	postsService = postsServices.NewPostService(postRepo, voteRepo, bookmarkRepo, cfg, commentCounter, commentRepo)
+	aiEngineClient := aiengine.NewClient()
+	postsService = postsServices.NewPostService(postRepo, voteRepo, bookmarkRepo, cfg, commentCounter, commentRepo, aiEngineClient)
 
 	// Index creation is now handled by SQL migrations
 	log.Println("✅ Posts service initialized (indexes managed via SQL migrations)")
