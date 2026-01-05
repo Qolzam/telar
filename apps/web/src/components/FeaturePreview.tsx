@@ -6,6 +6,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import PendingIcon from '@mui/icons-material/Pending';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import Image from 'next/image';
+import { ReactElement } from 'react';
 import { AI_ACCENT_GRADIENT } from '@/lib/theme/theme';
 
 type FeatureStatus = 'live' | 'in-progress' | 'coming-soon';
@@ -183,13 +184,16 @@ export function FeaturePreview({
           }}
         >
           <Typography variant="body2" sx={{ opacity: 0.9, mb: 1, fontWeight: 700 }}>
-            Sneak peek
+            Sneak Peek
           </Typography>
-          <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.4 }}>
-            Visual preview of the experience
+          <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.4, mb: 1 }}>
+            The Expertise Graph
           </Typography>
-          <Typography variant="body2" sx={{ opacity: 0.9, mt: 1.5 }}>
-            A blurred mock of the Expertise Graph so users feel the product is already taking shape.
+          <Typography variant="body2" sx={{ opacity: 0.9, mb: 1.5 }}>
+            We are visualizing trust. Soon, you won't just see a list of users; you'll see a dynamic map of verified experts and their contributions.
+          </Typography>
+          <Typography variant="caption" sx={{ opacity: 0.8, fontStyle: 'italic' }}>
+            Coming in Phase 3.
           </Typography>
         </Box>
       </Box>
