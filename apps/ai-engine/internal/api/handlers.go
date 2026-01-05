@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -12,22 +13,23 @@ import (
 	"github.com/qolzam/telar/apps/ai-engine/internal/config"
 	"github.com/qolzam/telar/apps/ai-engine/internal/generator"
 	"github.com/qolzam/telar/apps/ai-engine/internal/knowledge"
+	"github.com/qolzam/telar/apps/ai-engine/internal/moderation"
 )
 
 // Handler contains HTTP handlers for AI Engine endpoints
 type Handler struct {
 	knowledgeService *knowledge.Service
 	generatorService *generator.Service
-	analyzerService  *analyzer.Service
+	modPipeline      *moderation.Pipeline
 	config           *config.Config
 }
 
 // NewHandler creates a new handler instance
-func NewHandler(knowledgeService *knowledge.Service, generatorService *generator.Service, analyzerService *analyzer.Service, config *config.Config) *Handler {
+func NewHandler(knowledgeService *knowledge.Service, generatorService *generator.Service, modPipeline *moderation.Pipeline, config *config.Config) *Handler {
 	return &Handler{
 		knowledgeService: knowledgeService,
 		generatorService: generatorService,
-		analyzerService:  analyzerService,
+		modPipeline:      modPipeline,
 		config:           config,
 	}
 }
@@ -346,8 +348,8 @@ func (h *Handler) AnalyzeContent(c *fiber.Ctx) error {
 		})
 	}
 
-	// Perform the analysis
-	result, err := h.analyzerService.AnalyzeContent(c.Context(), req.Content)
+	// Perform the analysis through the tiered moderation pipeline
+	result, err := h.modPipeline.Execute(c.Context(), req.Content)
 	if err != nil {
 		log.Printf("Content analysis failed: %v", err)
 
@@ -373,5 +375,33 @@ func (h *Handler) AnalyzeContent(c *fiber.Ctx) error {
 		})
 	}
 
-	return c.JSON(result)
+	// Convert ModerationResult to AnalysisResult for backward compatibility
+	analysisResult := &analyzer.AnalysisResult{
+		IsFlagged:       result.IsFlagged,
+		FlagReason:      result.FlagReason,
+		Scores:          result.Scores,
+		SuggestedAction: result.SuggestedAction,
+		Timestamp:       "", // Will be set below
+	}
+
+	// Extract confidence from scores if available, otherwise calculate from max score
+	if confidence, ok := result.Scores["confidence"]; ok {
+		analysisResult.Confidence = confidence
+	} else if len(result.Scores) > 0 {
+		// Use max score as confidence fallback
+		maxScore := 0.0
+		for _, score := range result.Scores {
+			if score > maxScore {
+				maxScore = score
+			}
+		}
+		analysisResult.Confidence = maxScore
+	}
+
+	// Set timestamp if not already set
+	if analysisResult.Timestamp == "" {
+		analysisResult.Timestamp = time.Now().UTC().Format(time.RFC3339)
+	}
+
+	return c.JSON(analysisResult)
 }

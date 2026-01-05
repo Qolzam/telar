@@ -57,7 +57,7 @@ func TestPostgresRepository_Integration(t *testing.T) {
 	require.NoError(t, err, "Failed to set search_path")
 
 	// 5. Apply Schema Manually
-	// Read and execute the migration SQL
+	// Read and execute the migration SQL - includes all migrations (001, 002, 003)
 	migrationSQL := `
 		CREATE TABLE IF NOT EXISTS posts (
 			id UUID PRIMARY KEY,
@@ -85,7 +85,9 @@ func TestPostgresRepository_Integration(t *testing.T) {
 			disable_sharing BOOLEAN DEFAULT FALSE,
 			permission VARCHAR(50) DEFAULT 'Public',
 			version VARCHAR(50),
-			metadata JSONB DEFAULT '{}'::jsonb
+			metadata JSONB DEFAULT '{}'::jsonb,
+			status VARCHAR(50) NOT NULL DEFAULT 'published',
+			moderation_details JSONB
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_posts_owner ON posts(owner_user_id);
@@ -95,6 +97,7 @@ func TestPostgresRepository_Integration(t *testing.T) {
 		CREATE INDEX IF NOT EXISTS idx_posts_post_type ON posts(post_type_id);
 		CREATE INDEX IF NOT EXISTS idx_posts_deleted ON posts(is_deleted) WHERE is_deleted = FALSE;
 		CREATE INDEX IF NOT EXISTS idx_posts_url_key ON posts(url_key) WHERE url_key IS NOT NULL;
+		CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status);
 	`
 
 	_, err = client.DB().ExecContext(ctx, migrationSQL)

@@ -9,6 +9,10 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/qolzam/telar/apps/api/admin"
+	adminMembers "github.com/qolzam/telar/apps/api/admin/members"
+	adminModeration "github.com/qolzam/telar/apps/api/admin/moderation"
+	authmgmt "github.com/qolzam/telar/apps/api/auth/management"
 	"github.com/qolzam/telar/apps/api/auth"
 	adminUC "github.com/qolzam/telar/apps/api/auth/admin"
 	adminRepository "github.com/qolzam/telar/apps/api/auth/admin/repository"
@@ -29,6 +33,7 @@ import (
 	commentServices "github.com/qolzam/telar/apps/api/comments/services"
 	dbi "github.com/qolzam/telar/apps/api/internal/database/interfaces"
 	"github.com/qolzam/telar/apps/api/internal/database/postgres"
+	"github.com/qolzam/telar/apps/api/internal/cache"
 	requestid "github.com/qolzam/telar/apps/api/internal/middleware/requestid"
 	platform "github.com/qolzam/telar/apps/api/internal/platform"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
@@ -51,8 +56,10 @@ import (
 	"github.com/qolzam/telar/apps/api/storage"
 	storageHandlers "github.com/qolzam/telar/apps/api/storage/handlers"
 	storageProvider "github.com/qolzam/telar/apps/api/storage/provider"
+	"github.com/qolzam/telar/packages/clients/aiengine"
 	storageRepository "github.com/qolzam/telar/apps/api/storage/repository"
 	storageServices "github.com/qolzam/telar/apps/api/storage/services"
+	"github.com/qolzam/telar/apps/api/cmd/server/bootstrap"
 )
 
 func main() {
@@ -173,6 +180,11 @@ func main() {
 	authRepo := authRepository.NewPostgresAuthRepository(pgClient)
 	verifRepo := authRepository.NewPostgresVerificationRepository(pgClient)
 	profileRepo := profileRepository.NewPostgresProfileRepository(pgClient)
+
+	// Bootstrap Admin User
+	if err := bootstrap.EnsureAdminUser(ctx, authRepo, profileRepo, cfg); err != nil {
+		log.Fatalf("Failed to seed admin user: %v", err)
+	}
 
 	// Create signup service with verification repository
 	signupService := signupUC.NewService(verifRepo, signupServiceConfig)
@@ -414,6 +426,29 @@ func main() {
 	auth.RegisterRoutes(app, authHandlers, cfg)
 	profile.RegisterRoutes(app, profileHandlers, cfg)
 
+	// Initialize Admin microservice
+	// 1. Initialize Auth Management (Dependency for Admin)
+	cacheService := cache.NewGenericCacheServiceFor("admin")
+	userMgmtService := authmgmt.NewUserManagementService(baseService, cacheService)
+
+	// 2. Initialize Admin Members Domain
+	adminMembersService := adminMembers.NewService(baseService, userMgmtService)
+	adminMembersHandler := adminMembers.NewHandler(adminMembersService)
+
+	// Initialize Moderation Domain (requires postRepo which is created above)
+	adminModService := adminModeration.NewService(postRepo)
+	adminModHandler := adminModeration.NewHandler(adminModService)
+
+	// Combine into Handlers struct
+	adminHandlers := &admin.Handlers{
+		Members:    adminMembersHandler,
+		Moderation: adminModHandler,
+	}
+
+	// 4. Register the Routes
+	admin.RegisterRoutes(app, adminHandlers)
+	log.Println("✅ Admin microservice initialized and routes registered")
+
 	// We'll re-initialize them after setting up the adapters
 	var commentsService commentServices.CommentService
 	var postsService postsServices.PostService
@@ -453,7 +488,8 @@ func main() {
 
 		// Create temporary service instances to get adapters
 		tempCommentsService := commentServices.NewCommentService(commentRepo, postRepo, cfg, nil)
-		tempPostsService := postsServices.NewPostService(postRepo, voteRepo, bookmarkRepo, cfg, nil, commentRepo)
+		aiEngineClient := aiengine.NewClient()
+		tempPostsService := postsServices.NewPostService(postRepo, voteRepo, bookmarkRepo, cfg, nil, commentRepo, aiEngineClient)
 
 		// Create direct call adapters
 		commentCounter = comments.NewDirectCallCounter(tempCommentsService)
@@ -463,7 +499,8 @@ func main() {
 
 	// Re-initialize services with cross-service dependencies
 	commentsService = commentServices.NewCommentService(commentRepo, postRepo, cfg, postStatsUpdater)
-	postsService = postsServices.NewPostService(postRepo, voteRepo, bookmarkRepo, cfg, commentCounter, commentRepo)
+	aiEngineClient := aiengine.NewClient()
+	postsService = postsServices.NewPostService(postRepo, voteRepo, bookmarkRepo, cfg, commentCounter, commentRepo, aiEngineClient)
 
 	// Index creation is now handled by SQL migrations
 	log.Println("✅ Posts service initialized (indexes managed via SQL migrations)")

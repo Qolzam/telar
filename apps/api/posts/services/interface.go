@@ -60,4 +60,9 @@ type PostService interface {
 
 	// Response conversion
 	ConvertPostToResponse(ctx context.Context, post *models.Post) models.PostResponse
+
+	// Moderation operations
+	GetModerationQueue(ctx context.Context, limit, offset int) ([]*models.Post, int64, error)
+	ApprovePost(ctx context.Context, postID uuid.UUID) error
+	RejectPost(ctx context.Context, postID uuid.UUID) error
 }

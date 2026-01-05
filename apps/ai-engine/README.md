@@ -46,14 +46,14 @@ cd apps/ai-engine
 docker-compose -f apps/ai-engine/deployments/docker-compose/docker-compose.yml up --build -d
 ```
 
-The AI Engine API will now be available at `http://localhost:8000`.
+The AI Engine API will now be available at `http://localhost:9066`.
 
 ### 3. Test the System
 
 **Option A: Interactive Demo UI**
 ```bash
 # Open your browser and navigate to:
-http://localhost:8000
+http://localhost:9066
 ```
 
 
@@ -61,15 +61,15 @@ http://localhost:8000
 
 ```bash
 # Health check
-curl http://localhost:8000/health
+curl http://localhost:9066/health
 
 # Ingest a document
-curl -X POST http://localhost:8000/api/v1/ingest \
+curl -X POST http://localhost:9066/api/v1/ingest \
   -H "Content-Type: application/json" \
   -d '{"text": "The Telar platform is built with Go and Next.js.", "metadata": {"source": "docs"}}'
 
 # Query the knowledge base
-curl -X POST http://localhost:8000/api/v1/query \
+curl -X POST http://localhost:9066/api/v1/query \
   -H "Content-Type: application/json" \
   -d '{"question": "What is Telar built with?"}'
 ```
@@ -129,11 +129,22 @@ The AI Engine supports multiple deployment scenarios, each optimized for a diffe
 - **Structured Results**: Get detailed scores, confidence levels, and reasons
 - **Async Processing**: Non-blocking analysis for high-performance applications
 
+## 🛡️ Moderation Architecture: The Guardian Protocol
+
+The AI Engine utilizes a **Tiered Pipeline Architecture** to balance cost, speed, and accuracy. It does not rely solely on expensive LLM calls.
+
+1.  **L1 Cache (Instant):** SHA-256 hash lookup prevents re-analyzing known content. Latency: <1ms.
+2.  **L2 Heuristics (Zero-Latency):** Regex and Keyword matching layer filters obvious violations (spam patterns, slurs) before they reach the inference layer. Latency: <5ms.
+3.  **L3 Semantic Analysis (Deep Reasoning):** If content passes L1 and L2, it is analyzed by a Large Language Model (Qwen 2.5) for context-aware decisions. Latency: ~3s (CPU).
+
+*Architectural Note: The L3 layer is designed behind a `ContentModerator` interface, allowing for hot-swapping to high-throughput ONNX/DistilBERT models for enterprise-scale deployments without changing the core pipeline logic.*
+
 **Example Usage**:
 ```bash
 # Analyze content for moderation
-curl -X POST http://localhost:8000/api/v1/analyze/content \
+curl -X POST http://localhost:9066/api/v1/analyze/content \
   -H "Content-Type: application/json" \
+  -H "X-Internal-API-Key: your-api-key" \
   -d '{"content": "Text to analyze"}'
 
 # Response

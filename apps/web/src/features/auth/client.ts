@@ -22,6 +22,7 @@ import type {
   ResendVerificationRequest,
   SessionData,
 } from '@telar/sdk';
+import type { LoginResponse } from '@telar/sdk';
 
 // ============================================================================
 // Session Management
@@ -95,12 +96,26 @@ export function useLogin() {
 
   const mutation = useMutation({
     mutationFn: (credentials: LoginRequest) => sdk.auth.login(credentials),
-    onSuccess: () => {
+    onSuccess: (response: LoginResponse) => {
       invalidateSession();
       
+      // Get user role directly from login response (single round-trip)
+      const userRole = response.user?.role;
+      
+      // Check if there's a 'from' parameter (e.g., from middleware redirect)
       const searchParams = new URLSearchParams(window.location.search);
-      const from = searchParams.get('from') || '/dashboard';
+      const from = searchParams.get('from');
+      
+      // Redirect based on role
+      if (userRole === 'admin') {
+        router.push('/admin');
+      } else if (from && !from.startsWith('/admin')) {
+        // If there's a 'from' parameter and it's not an admin route, use it
       router.push(from);
+      } else {
+        // Default redirect for regular users
+        router.push('/');
+      }
     },
     onError: (error: Error) => {
       console.error('[Login] Login failed:', error.message);

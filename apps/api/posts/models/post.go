@@ -46,6 +46,10 @@ type Post struct {
 	CreatedAt   time.Time `json:"createdAt,omitempty" bson:"createdAt,omitempty" db:"created_at"`
 	UpdatedAt   time.Time `json:"updatedAt,omitempty" bson:"updatedAt,omitempty" db:"updated_at"`
 
+	// Moderation fields
+	Status            string `json:"status" bson:"status" db:"status"`                                                         // published, needs_moderation, rejected, approved
+	ModerationDetails JSONB  `json:"moderation_details,omitempty" bson:"moderation_details,omitempty" db:"moderation_details"` // AI moderation analysis results
+
 	// Unstructured data (The "Blob") - Only for truly dynamic data
 	Votes          map[string]string `json:"votes" bson:"votes" db:"-"`                                  // Stored in metadata JSONB
 	Album          *Album            `json:"album" bson:"album" db:"-"`                                  // Stored in metadata JSONB

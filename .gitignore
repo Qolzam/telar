@@ -34,7 +34,9 @@ bin/
 *.dll
 *.so
 *.dylib
-ai-engine
+# Ignore ai-engine binary/build artifacts (but allow apps/ai-engine/ directory)
+**/ai-engine$
+/apps/ai-engine/api
 tools/linters/no_setenv_in_tests
 tools/linters/*.so
 

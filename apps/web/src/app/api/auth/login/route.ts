@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { apiRequest, ApiError } from '@/lib/api';
 import { createSessionCookie } from '@/lib/auth/cookies';
+import { verifyToken } from '@/lib/auth/jwt';
 import type { LoginRequest, GoApiLoginResponse } from '@telar/sdk';
 
 export async function POST(request: NextRequest) {
@@ -36,6 +37,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Decode token to get user role (for routing logic - API validates signature)
+    let userRole = 'user'; // Default role
+    try {
+      const claim = await verifyToken(loginResponse.accessToken);
+      if (claim?.role) {
+        userRole = claim.role;
+      }
+    } catch (error) {
+      // If token decode fails, continue with default role
+      // The API will validate the signature on actual requests
+      console.warn('[Login] Could not decode token for role, using default:', error);
+    }
+
     const response = NextResponse.json(
       { 
         success: true,
@@ -44,6 +58,7 @@ export async function POST(request: NextRequest) {
           displayName: loginResponse.user.fullName,
           socialName: loginResponse.user.socialName,
           email: loginResponse.user.email,
+          role: userRole,
         }
       },
       { status: 200 }

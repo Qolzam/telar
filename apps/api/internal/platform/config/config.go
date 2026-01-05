@@ -89,11 +89,13 @@ type SecurityConfig struct {
 
 // AppConfig holds application-related configuration
 type AppConfig struct {
-	WebDomain      string `json:"webDomain"`
-	OrgName        string `json:"orgName"`
-	Name           string `json:"name"`
-	OrgAvatar      string `json:"orgAvatar"`
-	QueryPrettyURL bool   `json:"queryPrettyUrl"`
+	WebDomain            string `json:"webDomain"`
+	OrgName              string `json:"orgName"`
+	Name                 string `json:"name"`
+	OrgAvatar            string `json:"orgAvatar"`
+	QueryPrettyURL       bool   `json:"queryPrettyUrl"`
+	InitialAdminEmail    string `json:"initialAdminEmail"`
+	InitialAdminPassword string `json:"initialAdminPassword"`
 }
 
 // ExternalConfig holds external service configuration
@@ -158,18 +160,18 @@ type ClusterConfig struct {
 
 // StorageConfig holds storage provider configuration (Cloudflare R2, AWS S3, etc.)
 type StorageConfig struct {
-	Provider        string   `json:"provider"`         // "r2", "s3", "gcs"
-	AccountID       string   `json:"accountId"`        // Cloudflare Account ID (for R2)
-	AccessKeyID     string   `json:"accessKeyId"`      // Access Key ID
-	SecretAccessKey string   `json:"secretAccessKey"`  // Secret Access Key
-	BucketName      string   `json:"bucketName"`        // Bucket name
-	PublicURL       string   `json:"publicUrl"`        // Public CDN URL (e.g., https://media.telar.press)
-	Region          string   `json:"region"`           // Region (for S3 compatibility)
-	Endpoint              string   `json:"endpoint"`                // Custom endpoint (for R2: https://<account-id>.r2.cloudflarestorage.com)
-	MaxFileSizeMB         int      `json:"maxFileSizeMB"`           // Maximum file size in MB (hard cap, requires client-side compression)
-	AllowedMimeTypes      []string `json:"allowedMimeTypes"`        // Allowed MIME types (comma-separated in env)
-	GlobalDailyUploadLimit int     `json:"globalDailyUploadLimit"`  // Global daily upload limit (Class A protection)
-	UserDailyUploadLimit   int     `json:"userDailyUploadLimit"`    // Per-user daily upload limit
+	Provider               string   `json:"provider"`               // "r2", "s3", "gcs"
+	AccountID              string   `json:"accountId"`              // Cloudflare Account ID (for R2)
+	AccessKeyID            string   `json:"accessKeyId"`            // Access Key ID
+	SecretAccessKey        string   `json:"secretAccessKey"`        // Secret Access Key
+	BucketName             string   `json:"bucketName"`             // Bucket name
+	PublicURL              string   `json:"publicUrl"`              // Public CDN URL (e.g., https://media.telar.press)
+	Region                 string   `json:"region"`                 // Region (for S3 compatibility)
+	Endpoint               string   `json:"endpoint"`               // Custom endpoint (for R2: https://<account-id>.r2.cloudflarestorage.com)
+	MaxFileSizeMB          int      `json:"maxFileSizeMB"`          // Maximum file size in MB (hard cap, requires client-side compression)
+	AllowedMimeTypes       []string `json:"allowedMimeTypes"`       // Allowed MIME types (comma-separated in env)
+	GlobalDailyUploadLimit int      `json:"globalDailyUploadLimit"` // Global daily upload limit (Class A protection)
+	UserDailyUploadLimit   int      `json:"userDailyUploadLimit"`   // Per-user daily upload limit
 }
 
 // LoadFromEnv loads configuration from the environment.
@@ -254,11 +256,13 @@ func LoadFromEnv() (*Config, error) {
 			Origin:            getEnvOrDefault("ORIGIN", ""),
 		},
 		App: AppConfig{
-			WebDomain:      getEnvOrDefault("WEB_DOMAIN", "http://localhost:3000"),
-			OrgName:        getEnvOrDefault("ORG_NAME", "Telar"),
-			Name:           getEnvOrDefault("APP_NAME", "Telar"),
-			OrgAvatar:      getEnvOrDefault("ORG_AVATAR", ""),
-			QueryPrettyURL: getEnvAsBool("QUERY_PRETTY_URL", false),
+			WebDomain:            getEnvOrDefault("WEB_DOMAIN", "http://localhost:3000"),
+			OrgName:              getEnvOrDefault("ORG_NAME", "Telar"),
+			Name:                 getEnvOrDefault("APP_NAME", "Telar"),
+			OrgAvatar:            getEnvOrDefault("ORG_AVATAR", ""),
+			QueryPrettyURL:       getEnvAsBool("QUERY_PRETTY_URL", false),
+			InitialAdminEmail:    getEnvOrDefault("INITIAL_ADMIN_EMAIL", ""),
+			InitialAdminPassword: getEnvOrDefault("INITIAL_ADMIN_PASSWORD", "ChangeMe123!"),
 		},
 		External: ExternalConfig{
 			GitHubClientID:    getEnvOrDefault("GITHUB_CLIENT_ID", ""),
@@ -318,16 +322,16 @@ func LoadFromEnv() (*Config, error) {
 			},
 		},
 		Storage: StorageConfig{
-			Provider:              getEnvOrDefault("STORAGE_PROVIDER", "r2"),
-			AccountID:             getEnvOrDefault("R2_ACCOUNT_ID", ""),
-			AccessKeyID:           getEnvOrDefault("R2_ACCESS_KEY_ID", ""),
-			SecretAccessKey:       getEnvOrDefault("R2_SECRET_ACCESS_KEY", ""),
-			BucketName:            getEnvOrDefault("R2_BUCKET_NAME", ""),
-			PublicURL:             getEnvOrDefault("R2_PUBLIC_URL", ""),
-			Region:                getEnvOrDefault("R2_REGION", "auto"),
-			Endpoint:              getEnvOrDefault("R2_ENDPOINT", ""),
-			MaxFileSizeMB:         getEnvAsInt("STORAGE_MAX_FILE_SIZE_MB", 2),
-			AllowedMimeTypes:      parseCommaSeparated(getEnvOrDefault("STORAGE_ALLOWED_MIME_TYPES", "image/jpeg,image/png,image/webp")),
+			Provider:               getEnvOrDefault("STORAGE_PROVIDER", "r2"),
+			AccountID:              getEnvOrDefault("R2_ACCOUNT_ID", ""),
+			AccessKeyID:            getEnvOrDefault("R2_ACCESS_KEY_ID", ""),
+			SecretAccessKey:        getEnvOrDefault("R2_SECRET_ACCESS_KEY", ""),
+			BucketName:             getEnvOrDefault("R2_BUCKET_NAME", ""),
+			PublicURL:              getEnvOrDefault("R2_PUBLIC_URL", ""),
+			Region:                 getEnvOrDefault("R2_REGION", "auto"),
+			Endpoint:               getEnvOrDefault("R2_ENDPOINT", ""),
+			MaxFileSizeMB:          getEnvAsInt("STORAGE_MAX_FILE_SIZE_MB", 2),
+			AllowedMimeTypes:       parseCommaSeparated(getEnvOrDefault("STORAGE_ALLOWED_MIME_TYPES", "image/jpeg,image/png,image/webp")),
 			GlobalDailyUploadLimit: getEnvAsInt("STORAGE_GLOBAL_DAILY_UPLOAD_LIMIT", 30000),
 			UserDailyUploadLimit:   getEnvAsInt("STORAGE_USER_DAILY_UPLOAD_LIMIT", 20),
 		},
@@ -521,16 +525,16 @@ func LoadFromMap(envMap map[string]string) (*Config, error) {
 			},
 		},
 		Storage: StorageConfig{
-			Provider:              get("STORAGE_PROVIDER", "r2"),
-			AccountID:             get("R2_ACCOUNT_ID", ""),
-			AccessKeyID:           get("R2_ACCESS_KEY_ID", ""),
-			SecretAccessKey:       get("R2_SECRET_ACCESS_KEY", ""),
-			BucketName:            get("R2_BUCKET_NAME", ""),
-			PublicURL:             get("R2_PUBLIC_URL", ""),
-			Region:                get("R2_REGION", "auto"),
-			Endpoint:              get("R2_ENDPOINT", ""),
-			MaxFileSizeMB:         getInt("STORAGE_MAX_FILE_SIZE_MB", 2),
-			AllowedMimeTypes:      parseCommaSeparated(get("STORAGE_ALLOWED_MIME_TYPES", "image/jpeg,image/png,image/webp")),
+			Provider:               get("STORAGE_PROVIDER", "r2"),
+			AccountID:              get("R2_ACCOUNT_ID", ""),
+			AccessKeyID:            get("R2_ACCESS_KEY_ID", ""),
+			SecretAccessKey:        get("R2_SECRET_ACCESS_KEY", ""),
+			BucketName:             get("R2_BUCKET_NAME", ""),
+			PublicURL:              get("R2_PUBLIC_URL", ""),
+			Region:                 get("R2_REGION", "auto"),
+			Endpoint:               get("R2_ENDPOINT", ""),
+			MaxFileSizeMB:          getInt("STORAGE_MAX_FILE_SIZE_MB", 2),
+			AllowedMimeTypes:       parseCommaSeparated(get("STORAGE_ALLOWED_MIME_TYPES", "image/jpeg,image/png,image/webp")),
 			GlobalDailyUploadLimit: getInt("STORAGE_GLOBAL_DAILY_UPLOAD_LIMIT", 30000),
 			UserDailyUploadLimit:   getInt("STORAGE_USER_DAILY_UPLOAD_LIMIT", 20),
 		},

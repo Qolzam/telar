@@ -58,7 +58,7 @@ func TestPostgresCommentRepository_Integration(t *testing.T) {
 	_, err = client.DB().ExecContext(ctx, setSearchPathSQL)
 	require.NoError(t, err, "Failed to set search_path")
 
-	// 5. Apply Posts Schema Migration (required for foreign key)
+	// 5. Apply Posts Schema Migration (required for foreign key) - includes all migrations (001, 002, 003)
 	postsMigrationSQL := `
 		CREATE TABLE IF NOT EXISTS posts (
 			id UUID PRIMARY KEY,
@@ -86,8 +86,11 @@ func TestPostgresCommentRepository_Integration(t *testing.T) {
 			disable_sharing BOOLEAN DEFAULT FALSE,
 			permission VARCHAR(50) DEFAULT 'Public',
 			version VARCHAR(50),
-			metadata JSONB DEFAULT '{}'::jsonb
+			metadata JSONB DEFAULT '{}'::jsonb,
+			status VARCHAR(50) NOT NULL DEFAULT 'published',
+			moderation_details JSONB
 		);
+		CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status);
 	`
 	_, err = client.DB().ExecContext(ctx, postsMigrationSQL)
 	require.NoError(t, err, "Failed to apply posts migration")

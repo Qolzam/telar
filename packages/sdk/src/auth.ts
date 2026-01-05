@@ -22,12 +22,24 @@ import type {
 /**
  * Auth API interface
  */
+export interface LoginResponse {
+  success: boolean;
+  user: {
+    id: string;
+    displayName: string;
+    socialName: string;
+    email: string;
+    role: string;
+  };
+}
+
 export interface IAuthApi {
   /**
    * Login with username and password
    * Sets httpOnly session cookie on success
+   * Returns user data including role for client-side routing
    */
-  login(credentials: LoginRequest): Promise<void>;
+  login(credentials: LoginRequest): Promise<LoginResponse>;
 
   /**
    * Logout current user
@@ -77,8 +89,8 @@ export interface IAuthApi {
  * Create Auth API instance
  */
 export const authApi = (client: ApiClient): IAuthApi => ({
-  login: async (credentials: LoginRequest): Promise<void> => {
-    await client.post(ENDPOINTS.AUTH.LOGIN, credentials);
+  login: async (credentials: LoginRequest): Promise<LoginResponse> => {
+    return client.post<LoginResponse>(ENDPOINTS.AUTH.LOGIN, credentials);
   },
 
   logout: async (): Promise<void> => {

@@ -60,6 +60,7 @@ done
 MIGRATIONS=(
     "${API_DIR}/posts/migrations/001_create_posts_table.sql"
     "${API_DIR}/posts/migrations/002_add_search_index.sql"
+    "${API_DIR}/posts/migrations/003_add_moderation_to_posts.sql"
     "${API_DIR}/auth/migrations/003_create_auth_tables.sql"
     "${API_DIR}/profile/migrations/002_create_profiles_table.sql"
     "${API_DIR}/profile/migrations/003_add_search_index.sql"

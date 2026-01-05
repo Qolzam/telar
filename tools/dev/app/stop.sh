@@ -78,6 +78,23 @@ cleanup_files() {
     log_success "Cleanup complete."
 }
 
+stop_ai_engine() {
+    log_info "Stopping AI Engine services (Docker Compose)..."
+    local project_root="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+    local docker_compose_dir="$project_root/apps/ai-engine/deployments/docker-compose"
+    
+    if [[ -f "$docker_compose_dir/docker-compose.yml" ]]; then
+        cd "$docker_compose_dir"
+        if docker compose down >/dev/null 2>&1; then
+            log_success "AI Engine services stopped"
+        else
+            log_warn "AI Engine services may not have been running"
+        fi
+    else
+        log_warn "Docker Compose file not found, skipping AI Engine stop"
+    fi
+}
+
 main() {
     log_info "🛑 Stopping Telar Development Servers..."
     local web_port="${WEB_PORT:-3000}"
@@ -85,11 +102,17 @@ main() {
     local profile_port="${PROFILE_PORT:-8081}"
     local posts_port="${POSTS_PORT:-8082}"
     local comments_port="${COMMENTS_PORT:-8083}"
+    local ai_engine_port="${AI_ENGINE_PORT:-9066}"
+    local weaviate_port="${WEAVIATE_PORT:-9077}"
+    
     kill_port "$web_port" "Next.js Web"
     kill_port "$api_port" "Go API Server"
     kill_port "$profile_port" "Profile Service (Standalone)"
     kill_port "$posts_port" "Posts Service (Standalone)"
     kill_port "$comments_port" "Comments Service (Standalone)"
+    stop_ai_engine
+    kill_port "$ai_engine_port" "AI Engine" || true
+    kill_port "$weaviate_port" "Weaviate" || true
     cleanup_node_zombies
     cleanup_files
     log_success "✅ All servers stopped and ports cleared."

@@ -3,6 +3,7 @@ package posts
 import (
 	"github.com/gofiber/fiber/v2"
 	authhmac "github.com/qolzam/telar/apps/api/internal/middleware/authhmac"
+	adminmw "github.com/qolzam/telar/apps/api/internal/middleware/admin"
 	constraints "github.com/qolzam/telar/apps/api/internal/middleware/constraints"
 	dualauth "github.com/qolzam/telar/apps/api/internal/middleware/dualauth"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
@@ -88,4 +89,11 @@ func RegisterRoutes(app *fiber.App, handlers *PostsHandlers, cfg *platformconfig
 	userGroup.Get("/cursor/info/:postId", constraints.RequireUUID("postId"), handlers.PostHandler.GetCursorInfo)
 	userGroup.Get("/:postId", constraints.RequireUUID("postId"), handlers.PostHandler.GetPost)
 	userGroup.Delete("/:postId", constraints.RequireUUID("postId"), handlers.PostHandler.DeletePost)
+
+	// --- Moderation Routes (Admin Only) ---
+	// These routes require admin authentication for moderation queue management
+	moderationGroup := group.Group("/moderation", dualAuthMiddleware, adminmw.New(adminmw.Config{}))
+	moderationGroup.Get("/queue", handlers.PostHandler.GetModerationQueue)
+	moderationGroup.Post("/:id/approve", constraints.RequireUUID("id"), handlers.PostHandler.ApprovePost)
+	moderationGroup.Post("/:id/reject", constraints.RequireUUID("id"), handlers.PostHandler.RejectPost)
 }

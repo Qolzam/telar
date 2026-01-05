@@ -800,3 +800,74 @@ func (h *PostHandler) convertPostToResponse(post *models.Post) models.PostRespon
 		Version:          post.Version,
 	}
 }
+
+// GetModerationQueue handles retrieving posts that need moderation
+func (h *PostHandler) GetModerationQueue(c *fiber.Ctx) error {
+	// Parse pagination parameters
+	limit := c.QueryInt("limit", 20)
+	offset := c.QueryInt("offset", 0)
+
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	posts, totalCount, err := h.postService.GetModerationQueue(c.Context(), limit, offset)
+	if err != nil {
+		return errors.HandleServiceError(c, err)
+	}
+
+	// Convert posts to response format
+	responses := make([]models.PostResponse, len(posts))
+	for i, post := range posts {
+		responses[i] = h.postService.ConvertPostToResponse(c.Context(), post)
+	}
+
+	return c.JSON(fiber.Map{
+		"posts":      responses,
+		"totalCount": totalCount,
+		"limit":      limit,
+		"offset":     offset,
+	})
+}
+
+// ApprovePost handles approving a post in the moderation queue
+func (h *PostHandler) ApprovePost(c *fiber.Ctx) error {
+	postIDStr := c.Params("id")
+	postID, err := uuid.FromString(postIDStr)
+	if err != nil {
+		return errors.HandleInvalidRequestError(c, "Invalid post ID")
+	}
+
+	if err := h.postService.ApprovePost(c.Context(), postID); err != nil {
+		return errors.HandleServiceError(c, err)
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Post approved successfully",
+		"postId":  postID.String(),
+	})
+}
+
+// RejectPost handles rejecting a post in the moderation queue
+func (h *PostHandler) RejectPost(c *fiber.Ctx) error {
+	postIDStr := c.Params("id")
+	postID, err := uuid.FromString(postIDStr)
+	if err != nil {
+		return errors.HandleInvalidRequestError(c, "Invalid post ID")
+	}
+
+	if err := h.postService.RejectPost(c.Context(), postID); err != nil {
+		return errors.HandleServiceError(c, err)
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Post rejected successfully",
+		"postId":  postID.String(),
+	})
+}

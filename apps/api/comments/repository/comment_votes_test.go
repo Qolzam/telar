@@ -464,7 +464,7 @@ func applyMigrations(t *testing.T, ctx context.Context, db interface{}, schema s
 		);
 	`
 
-	// Apply posts migration
+	// Apply posts migration - includes all migrations (001, 002, 003)
 	postsSQL := `
 		CREATE TABLE IF NOT EXISTS posts (
 			id UUID PRIMARY KEY,
@@ -492,8 +492,11 @@ func applyMigrations(t *testing.T, ctx context.Context, db interface{}, schema s
 			disable_sharing BOOLEAN DEFAULT FALSE,
 			permission VARCHAR(50) DEFAULT 'Public',
 			version VARCHAR(50),
-			metadata JSONB DEFAULT '{}'::jsonb
+			metadata JSONB DEFAULT '{}'::jsonb,
+			status VARCHAR(50) NOT NULL DEFAULT 'published',
+			moderation_details JSONB
 		);
+		CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status);
 	`
 
 	// Apply comments migration (005_create_comments_table.sql + 008_add_reply_to_user.sql)
