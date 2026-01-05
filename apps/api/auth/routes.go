@@ -9,7 +9,8 @@ import (
 	"github.com/qolzam/telar/apps/api/auth/password"
 	"github.com/qolzam/telar/apps/api/auth/signup"
 	"github.com/qolzam/telar/apps/api/auth/verification"
-	authhmac "github.com/qolzam/telar/apps/api/internal/middleware/authhmac"
+	adminmw "github.com/qolzam/telar/apps/api/internal/middleware/admin"
+	"github.com/qolzam/telar/apps/api/internal/middleware/authhmac"
 	authjwt "github.com/qolzam/telar/apps/api/internal/middleware/authjwt"
 	"github.com/qolzam/telar/apps/api/internal/middleware/ratelimit"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
@@ -186,5 +187,13 @@ func RegisterRoutes(app *fiber.App, handlers *AuthHandlers, cfg *platformconfig.
 
 	// JWKS endpoint (public, no authentication required)
 	group.Get("/.well-known/jwks.json", handlers.JWKSHandler.Handle)
+
+	// Admin user management (JWT + admin middleware required)
+	// This route allows admins to create users directly without email verification
+	adminUserGroup := app.Group("/admin",
+		authJWTMiddleware(*routerConfig),
+		adminmw.New(adminmw.Config{}),
+	)
+	adminUserGroup.Post("/users", handlers.AdminHandler.CreateUser)
 
 }

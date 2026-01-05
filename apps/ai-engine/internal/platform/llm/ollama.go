@@ -120,6 +120,7 @@ type ollamaGenerateRequest struct {
 	Model  string `json:"model"`
 	Prompt string `json:"prompt"`
 	Stream bool   `json:"stream"`
+	Format string `json:"format,omitempty"` // "json" to enforce JSON output
 }
 
 type ollamaGenerateResponse struct {
@@ -145,6 +146,11 @@ func (c *OllamaClient) GenerateCompletion(ctx context.Context, modelType ModelTy
 		Model:  modelToUse,
 		Prompt: prompt,
 		Stream: false,
+	}
+	
+	// Enforce JSON format for classification tasks (moderation analysis)
+	if modelType == ModelTypeClassification {
+		reqBody.Format = "json"
 	}
 
 	jsonBody, err := json.Marshal(reqBody)

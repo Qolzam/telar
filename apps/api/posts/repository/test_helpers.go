@@ -26,7 +26,7 @@ func ApplyPostsMigration(ctx context.Context, client *postgres.Client, schema st
 		}
 	}
 
-	// Apply the migration SQL
+	// Apply the migration SQL - includes all migrations (001, 002, 003)
 	migrationSQL := `
 		CREATE TABLE IF NOT EXISTS posts (
 			id UUID PRIMARY KEY,
@@ -54,7 +54,9 @@ func ApplyPostsMigration(ctx context.Context, client *postgres.Client, schema st
 			disable_sharing BOOLEAN DEFAULT FALSE,
 			permission VARCHAR(50) DEFAULT 'Public',
 			version VARCHAR(50),
-			metadata JSONB DEFAULT '{}'::jsonb
+			metadata JSONB DEFAULT '{}'::jsonb,
+			status VARCHAR(50) NOT NULL DEFAULT 'published',
+			moderation_details JSONB
 		);
 		CREATE INDEX IF NOT EXISTS idx_posts_owner ON posts(owner_user_id);
 		CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at DESC);
@@ -63,6 +65,7 @@ func ApplyPostsMigration(ctx context.Context, client *postgres.Client, schema st
 		CREATE INDEX IF NOT EXISTS idx_posts_post_type ON posts(post_type_id);
 		CREATE INDEX IF NOT EXISTS idx_posts_deleted ON posts(is_deleted) WHERE is_deleted = FALSE;
 		CREATE INDEX IF NOT EXISTS idx_posts_url_key ON posts(url_key) WHERE url_key IS NOT NULL;
+		CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status);
 	`
 
 	_, err := client.DB().ExecContext(ctx, migrationSQL)

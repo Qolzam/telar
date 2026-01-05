@@ -23,7 +23,7 @@ export * from './config';
 export { ApiClient, ApiError } from './client';
 export type { RequestOptions, ApiClientConfig } from './client';
 export { authApi } from './auth';
-export type { IAuthApi } from './auth';
+export type { IAuthApi, LoginResponse } from './auth';
 export { profileApi } from './profile';
 export type { IProfileApi } from './profile';
 export { postsApi } from './posts';
@@ -42,7 +42,7 @@ export type { UploadRequest, UploadResponse, ConfirmUploadRequest, FileURLRespon
 export { compressImage, validateFile, uploadFileWithCompression } from './storage-utils';
 export { adminApi } from './admin';
 export type { IAdminApi } from './admin';
-export type { AdminMember, MembersListResponse } from './admin';
+export type { AdminMember, MembersListResponse, FlaggedPost, ModerationListResponse, ModerationDetails } from './admin';
 
 import { ApiClient } from './client';
 import { SDK_CONFIG } from './config';

@@ -56,7 +56,7 @@ func TestCreatePost_AsyncModeration_FlaggedContent(t *testing.T) {
 	// Create test post request
 	req := &models.CreatePostRequest{
 		PostTypeId: 1,
-		Body:        "This is toxic hate speech content that should be flagged",
+		Body:       "This is toxic hate speech content that should be flagged",
 	}
 
 	// Mock AI Engine to return flagged result (must be set BEFORE CreatePost triggers async goroutine)
@@ -144,7 +144,7 @@ func TestCreatePost_AsyncModeration_SafeContent(t *testing.T) {
 
 	req := &models.CreatePostRequest{
 		PostTypeId: 1,
-		Body:        "This is a friendly post about technology",
+		Body:       "This is a friendly post about technology",
 	}
 
 	// Mock AI Engine to return safe result (must be set BEFORE CreatePost)
@@ -225,7 +225,7 @@ func TestCreatePost_AsyncModeration_AIEngineError(t *testing.T) {
 
 	req := &models.CreatePostRequest{
 		PostTypeId: 1,
-		Body:        "Test content",
+		Body:       "Test content",
 	}
 
 	// Mock AI Engine to return a retryable error (Service Unavailable) - should trigger retries
@@ -239,7 +239,27 @@ func TestCreatePost_AsyncModeration_AIEngineError(t *testing.T) {
 	// Expect 4 calls (initial + 3 retries)
 	mockAIEngine.On("AnalyzeContent", mock.Anything, mock.Anything).Return(nil, retryableErr).Times(4)
 
-	mockRepo.On("Create", ctx, mock.AnythingOfType("*models.Post")).Return(nil)
+	var createdPost *models.Post
+	mockRepo.On("Create", ctx, mock.AnythingOfType("*models.Post")).Run(func(args mock.Arguments) {
+		createdPost = args.Get(1).(*models.Post)
+	}).Return(nil)
+
+	// Mock FindByID for race condition check and UpdateFields (called twice: race check + UpdateFields)
+	mockRepo.On("FindByID", mock.Anything, mock.AnythingOfType("uuid.UUID")).Return(func() *models.Post {
+		if createdPost != nil {
+			postCopy := *createdPost
+			return &postCopy
+		}
+		return &models.Post{
+			Body:   req.Body,
+			Status: "published",
+		}
+	}(), nil).Twice() // Called twice: race check + UpdateFields
+
+	// Mock Update for fail-safe status update to analysis_failed
+	mockRepo.On("Update", mock.Anything, mock.MatchedBy(func(post *models.Post) bool {
+		return post.Status == "analysis_failed"
+	})).Return(nil).Once()
 
 	post, err := svc.CreatePost(ctx, req, user)
 	assert.NoError(t, err)
@@ -252,8 +272,8 @@ func TestCreatePost_AsyncModeration_AIEngineError(t *testing.T) {
 	// Verify AI Engine was called multiple times (retries)
 	mockAIEngine.AssertExpectations(t)
 
-	// Verify repository Update was NOT called (error should be logged but not crash)
-	mockRepo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything)
+	// Verify repository Update WAS called (fail-safe mechanism now updates status to analysis_failed)
+	mockRepo.AssertExpectations(t)
 }
 
 // TestCreatePost_AsyncModeration_NonRetryableError tests that non-retryable errors fail immediately
@@ -292,7 +312,7 @@ func TestCreatePost_AsyncModeration_NonRetryableError(t *testing.T) {
 
 	req := &models.CreatePostRequest{
 		PostTypeId: 1,
-		Body:        "Test content",
+		Body:       "Test content",
 	}
 
 	// Mock AI Engine to return a non-retryable error (Unauthorized) - should NOT retry
@@ -351,8 +371,10 @@ func TestGetModerationQueue(t *testing.T) {
 		Status:   "needs_moderation",
 	}
 
-	mockRepo.On("FindByStatus", ctx, "needs_moderation", 20, 0).Return([]*models.Post{post1, post2}, nil)
-	mockRepo.On("CountByStatus", ctx, "needs_moderation").Return(int64(2), nil)
+	// Updated to use FindByStatuses which includes both needs_moderation and analysis_failed
+	statuses := []string{"needs_moderation", "analysis_failed"}
+	mockRepo.On("FindByStatuses", ctx, statuses, 20, 0).Return([]*models.Post{post1, post2}, nil)
+	mockRepo.On("CountByStatuses", ctx, statuses).Return(int64(2), nil)
 
 	posts, totalCount, err := svc.GetModerationQueue(ctx, 20, 0)
 
@@ -435,4 +457,3 @@ func TestRejectPost(t *testing.T) {
 	assert.NoError(t, err)
 	mockRepo.AssertExpectations(t)
 }
-

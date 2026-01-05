@@ -16,6 +16,7 @@ import (
 	"github.com/qolzam/telar/apps/ai-engine/internal/config"
 	"github.com/qolzam/telar/apps/ai-engine/internal/generator"
 	"github.com/qolzam/telar/apps/ai-engine/internal/knowledge"
+	"github.com/qolzam/telar/apps/ai-engine/internal/moderation"
 	"github.com/qolzam/telar/apps/ai-engine/internal/platform/llm"
 	"github.com/qolzam/telar/apps/ai-engine/internal/platform/weaviate"
 	"github.com/tmc/langchaingo/llms"
@@ -236,6 +237,36 @@ func main() {
 		moderationThresholds.Toxicity, moderationThresholds.Spam, moderationThresholds.Sexual,
 		moderationThresholds.Violence, moderationThresholds.Misinformation)
 
+	// Determine classification model name for logging
+	var classificationModelName string
+	switch completionProvider {
+	case "openai", "openrouter":
+		classificationModelName = cfg.LLM.OpenAIClassificationModel
+	case "groq":
+		classificationModelName = cfg.LLM.GroqClassificationModel
+	case "ollama":
+		classificationModelName = cfg.LLM.OllamaClassificationModel
+	default:
+		classificationModelName = "unknown"
+	}
+
+	log.Printf("Initializing tiered moderation pipeline...")
+	// Initialize L1 Cache
+	modCache := moderation.NewInMemoryCache()
+	log.Printf("✓ L1 Cache initialized (InMemoryCache)")
+
+	// Initialize L2 Heuristics
+	keywordFilter := moderation.NewKeywordFilter()
+	log.Printf("✓ L2 Keyword Filter initialized")
+
+	// Initialize L3 LLM Analyzer (adapter)
+	llmAnalyzer := moderation.NewLLMAnalyzerAdapter(analyzerService, classificationModelName)
+	log.Printf("✓ L3 LLM Analyzer initialized (model: %s)", classificationModelName)
+
+	// Build Pipeline
+	modPipeline := moderation.NewPipeline(modCache, llmAnalyzer, keywordFilter)
+	log.Printf("✓ Tiered Moderation Pipeline initialized (L1 Cache → L2 Heuristics → L3 LLM)")
+
 	log.Println("Performing health checks...")
 	if err := knowledgeService.HealthCheck(ctx); err != nil {
 		log.Printf("Warning: Health check failed: %v", err)
@@ -244,7 +275,7 @@ func main() {
 		log.Println("All health checks passed")
 	}
 
-	app := api.Router(knowledgeService, generatorService, analyzerService, cfg)
+	app := api.Router(knowledgeService, generatorService, modPipeline, cfg)
 
 	go func() {
 		addr := fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port)

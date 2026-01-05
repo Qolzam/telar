@@ -19,8 +19,16 @@ const PROTECTED_ROUTES = [
   '/messages',
 ] as const;
 
+const ADMIN_ROUTES = [
+  '/admin',
+] as const;
+
 function isProtectedRoute(pathname: string): boolean {
   return PROTECTED_ROUTES.some(route => pathname.startsWith(route));
+}
+
+function isAdminRoute(pathname: string): boolean {
+  return ADMIN_ROUTES.some(route => pathname.startsWith(route));
 }
 
 /**
@@ -86,10 +94,13 @@ export async function middleware(request: NextRequest) {
     });
   }
 
-  // Step 4: Check if route needs authentication
+  // Step 4: Check if route needs authentication or is admin route
   const needsAuth = isProtectedRoute(pathname);
+  const isAdmin = isAdminRoute(pathname);
+
   
-  if (!needsAuth) {
+  // If route doesn't need auth and isn't admin route, allow access
+  if (!needsAuth && !isAdmin) {
     // Allow access to public routes and unprotected pages
     // Response already has locale cookie set
     return response;
@@ -160,7 +171,30 @@ export async function middleware(request: NextRequest) {
       return redirectResponse;
     }
 
-    // Valid token - allow access
+    // Step 5: Admin route protection - check role
+    if (isAdmin) {
+      if (claim.role !== 'admin') {
+        // Non-admin trying to access admin route - redirect to home
+        const homeUrl = new URL('/', request.url);
+        const redirectResponse = NextResponse.redirect(homeUrl);
+        
+        // Ensure locale cookie is set in redirect response
+        if (currentCookie !== locale) {
+          redirectResponse.cookies.set(cookieName, locale, {
+            path: '/',
+            maxAge: 31536000,
+            sameSite: 'lax',
+            httpOnly: false,
+          });
+        }
+        
+        return redirectResponse;
+      }
+      // Admin user accessing admin route - allow access
+      return response;
+    }
+
+    // Valid token for protected route (non-admin) - allow access
     // Response already has locale cookie set from earlier
     return response;
 

@@ -165,12 +165,15 @@ func (s *Service) AnalyzeContent(ctx context.Context, content string) (*Analysis
 	defer cancel()
 
 	// Construct the moderation prompt (simplified for SLM - only scores, no decisions)
+	// Prompt explicitly requests JSON format with no explanatory text
 	prompt := prompts.NewPromptTemplate(
-		`Analyze this text and return ONLY a JSON object with scores. No explanations, no decisions, just scores.
+		`You are a JSON-only content moderation analyzer. Return ONLY valid JSON. No explanations, no markdown, no text before or after the JSON.
+
+Analyze this text and return a JSON object with scores:
 
 Text: "{{.content}}"
 
-Return JSON:
+Required JSON format:
 {
   "scores": {
     "toxicity": 0.0-1.0,
@@ -222,7 +225,8 @@ Return JSON:
 	}
 
 	if err := json.Unmarshal([]byte(cleanedResponse), &llmResponse); err != nil {
-		log.Printf("Failed to parse LLM response as JSON. Raw response: %s", response)
+		log.Printf("[AI-DEBUG] JSON Parse Error: %v", err)
+		log.Printf("[AI-DEBUG] Failed to parse LLM response as JSON. Raw response: %s", response)
 		return nil, fmt.Errorf("failed to parse analysis result: %w. Raw response: %s", err, response)
 	}
 

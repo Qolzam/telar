@@ -639,6 +639,30 @@ func (m *MockPostService) GetCursorInfo(ctx context.Context, postID uuid.UUID, s
 	}, nil
 }
 
+func (m *MockPostService) ApprovePost(ctx context.Context, postID uuid.UUID) error {
+	// Check for configured failure
+	if m.shouldFail {
+		return m.failureError
+	}
+	return nil
+}
+
+func (m *MockPostService) RejectPost(ctx context.Context, postID uuid.UUID) error {
+	// Check for configured failure
+	if m.shouldFail {
+		return m.failureError
+	}
+	return nil
+}
+
+func (m *MockPostService) GetModerationQueue(ctx context.Context, limit, offset int) ([]*models.Post, int64, error) {
+	// Check for configured failure
+	if m.shouldFail {
+		return nil, 0, m.failureError
+	}
+	return []*models.Post{}, 0, nil
+}
+
 func (m *MockPostService) ConvertPostToResponse(ctx context.Context, post *models.Post) models.PostResponse {
 	if post == nil {
 		return models.PostResponse{}

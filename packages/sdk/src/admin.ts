@@ -15,11 +15,39 @@ export interface MembersListResponse {
   offset: number;
 }
 
+export interface ModerationDetails {
+  flag_reason?: string;
+  is_flagged?: boolean;
+  scores?: Record<string, number>;
+  suggested_action?: string;
+  model_used?: string;
+  analysis_time_ms?: number;
+  confidence?: number;
+  timestamp?: string;
+}
+
+export interface FlaggedPost {
+  id: string;
+  content: string;
+  authorId: string;
+  authorName: string;
+  moderationDetails: ModerationDetails | null;
+  createdAt: number;
+}
+
+export interface ModerationListResponse {
+  items: FlaggedPost[];
+  count: number;
+}
+
 export interface IAdminApi {
   listMembers(args?: { limit?: number; offset?: number; search?: string; sortBy?: string; sortOrder?: 'asc' | 'desc' }): Promise<MembersListResponse>;
   getMember(userId: string): Promise<AdminMember>;
   updateMemberRole(userId: string, role: string): Promise<void>;
   banMember(userId: string): Promise<void>;
+  getModerationQueue(): Promise<ModerationListResponse>;
+  approvePost(postId: string): Promise<{ message: string }>;
+  rejectPost(postId: string): Promise<{ message: string }>;
 }
 
 export const adminApi = (client: ApiClient): IAdminApi => ({
@@ -45,6 +73,18 @@ export const adminApi = (client: ApiClient): IAdminApi => ({
 
   async banMember(userId: string): Promise<void> {
     await client.post(`/admin/members/${userId}/ban`);
+  },
+
+  async getModerationQueue(): Promise<ModerationListResponse> {
+    return client.get<ModerationListResponse>('/admin/moderation/queue');
+  },
+
+  async approvePost(postId: string): Promise<{ message: string }> {
+    return client.post<{ message: string }>(`/admin/moderation/${postId}/approve`, {});
+  },
+
+  async rejectPost(postId: string): Promise<{ message: string }> {
+    return client.post<{ message: string }>(`/admin/moderation/${postId}/reject`, {});
   },
 });
 

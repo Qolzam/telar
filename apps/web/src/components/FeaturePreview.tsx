@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import { Box, Button, Chip, Stack, Typography } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import PendingIcon from '@mui/icons-material/Pending';
@@ -23,7 +24,7 @@ type FeaturePreviewProps = {
   backgroundImage?: string;
 };
 
-const STATUS_ICON: Record<FeatureStatus, JSX.Element> = {
+const STATUS_ICON: Record<FeatureStatus, React.ReactElement> = {
   live: <CheckCircleIcon color="success" fontSize="small" />,
   'in-progress': <PendingIcon color="warning" fontSize="small" />,
   'coming-soon': <RadioButtonUncheckedIcon color="disabled" fontSize="small" />,

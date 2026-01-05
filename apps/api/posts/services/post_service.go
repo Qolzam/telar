@@ -266,6 +266,26 @@ func (s *postService) CreatePost(ctx context.Context, req *models.CreatePostRequ
 		}
 	}
 
+	// Defensive Programming: Ensure all string fields have non-empty defaults
+	// This prevents NULL values in the database that cause scan errors
+	ownerDisplayName := user.DisplayName
+	if ownerDisplayName == "" {
+		ownerDisplayName = user.SocialName // Fallback to social name
+	}
+	if ownerDisplayName == "" {
+		ownerDisplayName = "Unknown User" // Final safety net
+	}
+
+	ownerAvatar := user.Avatar
+	if ownerAvatar == "" {
+		ownerAvatar = "" // Explicit empty string, not NULL
+	}
+
+	permission := req.Permission
+	if permission == "" {
+		permission = "Public" // Default permission
+	}
+
 	// Create the post entity
 	post := &models.Post{
 		ObjectId:         objectId,
@@ -275,8 +295,8 @@ func (s *postService) CreatePost(ctx context.Context, req *models.CreatePostRequ
 		ViewCount:        0,
 		Body:             req.Body,
 		OwnerUserId:      user.UserID,
-		OwnerDisplayName: user.DisplayName,
-		OwnerAvatar:      user.Avatar,
+		OwnerDisplayName: ownerDisplayName,
+		OwnerAvatar:      ownerAvatar,
 		URLKey:           common.GeneratePostURLKey(user.SocialName, req.Body, objectId.String()),
 		Tags:             req.Tags,
 		CommentCounter:   0,
@@ -291,7 +311,7 @@ func (s *postService) CreatePost(ctx context.Context, req *models.CreatePostRequ
 		CreatedDate:      utils.UTCNowUnix(),
 		LastUpdated:      0,
 		AccessUserList:   req.AccessUserList,
-		Permission:       req.Permission,
+		Permission:       permission,
 		Version:          req.Version,
 	}
 
@@ -1592,7 +1612,59 @@ func (s *postService) triggerContentAnalysis(ctx context.Context, post *models.P
 	// After all retries exhausted
 	if err != nil {
 		log.Error("[MODERATION] AI Engine analysis failed after %d attempts: post_id=%s, error=%v, ai_engine_status=permanent_failure", maxRetries, postID, err)
-		// TODO: In a future v2, mark post as 'analysis_failed' for manual review
+
+		// Fail-safe behavior - mark post as 'analysis_failed' for manual review
+		// This prevents toxic content from being published when AI service is unavailable
+		// Extract detailed error information for debugging
+		errorMessage := err.Error()
+		originalErr := err
+		if clientErr, ok := err.(*aiengine.ClientError); ok {
+			errorMessage = fmt.Sprintf("%s (status: %d, retryable: %v)", clientErr.Error(), clientErr.StatusCode, clientErr.Retryable)
+			if clientErr.OriginalErr != nil {
+				errorMessage += fmt.Sprintf(" - original: %v", clientErr.OriginalErr)
+			}
+		} else if unwrapped := errors.Unwrap(err); unwrapped != nil {
+			errorMessage = fmt.Sprintf("%s (wrapped: %v)", errorMessage, unwrapped)
+		}
+
+		moderationDetails := models.JSONB{
+			"is_flagged":       false,
+			"flag_reason":      "AI Engine analysis failed - requires manual review",
+			"error":            errorMessage,
+			"error_type":       fmt.Sprintf("%T", originalErr),
+			"timestamp":        time.Now().Format(time.RFC3339),
+			"suggested_action": "review_needed",
+			"analysis_status":  "permanent_failure",
+		}
+
+		updates := map[string]interface{}{
+			"status":             "analysis_failed",
+			"moderation_details": moderationDetails,
+		}
+
+		// CRITICAL: Check if post was manually updated by admin (race condition protection)
+		// Load current post state to avoid overwriting admin actions
+		currentPost, loadErr := s.repo.FindByID(ctx, post.ObjectId)
+		if loadErr != nil {
+			log.Error("[MODERATION] Failed to load post for race condition check: post_id=%s, error=%v", postID, loadErr)
+			// Continue with update attempt anyway
+		} else if currentPost.Status != "published" && currentPost.Status != "analysis_failed" {
+			// Post was manually updated by admin (e.g., rejected, approved) - don't overwrite
+			log.Info("[MODERATION] Post status was manually changed by admin, skipping AI worker update: post_id=%s, current_status=%s", postID, currentPost.Status)
+			return
+		}
+
+		if updateErr := s.UpdateFields(ctx, post.ObjectId, updates); updateErr != nil {
+			log.Error("[MODERATION] CRITICAL: Failed to update post status to analysis_failed: post_id=%s, error=%v", postID, updateErr)
+			// Even if update fails, we log it - the post remains published (still a risk, but we've attempted mitigation)
+		} else {
+			log.Info("[MODERATION] Post marked as analysis_failed for manual review: post_id=%s", postID)
+			// CRITICAL: Invalidate cache to remove post from public feed (Scenario 4 fix)
+			if s.cacheService != nil {
+				s.invalidateAllPosts(ctx)
+				log.Info("[MODERATION] Cache invalidated after status flip to analysis_failed: post_id=%s", postID)
+			}
+		}
 		return
 	}
 
@@ -1612,6 +1684,14 @@ func (s *postService) triggerContentAnalysis(ctx context.Context, post *models.P
 
 	// If moderation is needed, update post status
 	if result.SuggestedAction == "review_needed" {
+		// Check if post was manually updated by admin (race condition protection)
+		currentPost, loadErr := s.repo.FindByID(ctx, post.ObjectId)
+		if loadErr == nil && currentPost.Status != "published" && currentPost.Status != "needs_moderation" {
+			// Post was manually updated by admin - don't overwrite
+			log.Info("[MODERATION] Post status was manually changed by admin, skipping AI worker update: post_id=%s, current_status=%s", postID, currentPost.Status)
+			return
+		}
+
 		updates := map[string]interface{}{
 			"status":             "needs_moderation",
 			"moderation_details": moderationDetails,
@@ -1624,6 +1704,11 @@ func (s *postService) triggerContentAnalysis(ctx context.Context, post *models.P
 
 		log.Info("[MODERATION] Post flagged for review: post_id=%s, flag_reason=%s, confidence=%.2f, scores=%+v",
 			postID, result.FlagReason, result.Confidence, result.Scores)
+
+		// Invalidate cache when post is flagged
+		if s.cacheService != nil {
+			s.invalidateAllPosts(ctx)
+		}
 	} else {
 		// Store moderation result even if approved (for audit trail)
 		updates := map[string]interface{}{
@@ -1640,6 +1725,7 @@ func (s *postService) triggerContentAnalysis(ctx context.Context, post *models.P
 }
 
 // GetModerationQueue retrieves posts that need moderation review
+// Includes both 'needs_moderation' (AI-flagged) and 'analysis_failed' (AI service unavailable) posts
 func (s *postService) GetModerationQueue(ctx context.Context, limit, offset int) ([]*models.Post, int64, error) {
 	if limit <= 0 {
 		limit = 20
@@ -1651,12 +1737,14 @@ func (s *postService) GetModerationQueue(ctx context.Context, limit, offset int)
 		offset = 0
 	}
 
-	posts, err := s.repo.FindByStatus(ctx, "needs_moderation", limit, offset)
+	// Include both statuses for fail-safe moderation queue
+	statuses := []string{"needs_moderation", "analysis_failed"}
+	posts, err := s.repo.FindByStatuses(ctx, statuses, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to get moderation queue: %w", err)
 	}
 
-	totalCount, err := s.repo.CountByStatus(ctx, "needs_moderation")
+	totalCount, err := s.repo.CountByStatuses(ctx, statuses)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to count moderation queue: %w", err)
 	}
@@ -1675,8 +1763,8 @@ func (s *postService) ApprovePost(ctx context.Context, postID uuid.UUID) error {
 		return fmt.Errorf("failed to get post: %w", err)
 	}
 
-	// Verify post is in moderation queue
-	if post.Status != "needs_moderation" {
+	// Verify post is in moderation queue (either needs_moderation or analysis_failed)
+	if post.Status != "needs_moderation" && post.Status != "analysis_failed" {
 		return fmt.Errorf("post is not in moderation queue (current status: %s)", post.Status)
 	}
 

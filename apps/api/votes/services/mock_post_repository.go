@@ -155,3 +155,16 @@ func (m *MockPostRepositoryForVotes) CountByStatus(ctx context.Context, status s
 	args := m.Called(ctx, status)
 	return args.Get(0).(int64), args.Error(1)
 }
+
+func (m *MockPostRepositoryForVotes) FindByStatuses(ctx context.Context, statuses []string, limit, offset int) ([]*models.Post, error) {
+	args := m.Called(ctx, statuses, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.Post), args.Error(1)
+}
+
+func (m *MockPostRepositoryForVotes) CountByStatuses(ctx context.Context, statuses []string) (int64, error) {
+	args := m.Called(ctx, statuses)
+	return args.Get(0).(int64), args.Error(1)
+}

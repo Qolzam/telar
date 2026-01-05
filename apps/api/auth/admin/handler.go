@@ -4,6 +4,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/qolzam/telar/apps/api/auth/errors"
 	platformconfig "github.com/qolzam/telar/apps/api/internal/platform/config"
+	"github.com/qolzam/telar/apps/api/internal/types"
 )
 
 // AdminHandler handles all admin-related HTTP requests
@@ -71,4 +72,69 @@ func (h *AdminHandler) Login(c *fiber.Ctx) error {
 		return errors.HandleServiceError(c, err)
 	}
 	return c.JSON(fiber.Map{"token": token})
+}
+
+// CreateUserRequest represents the request payload for creating a user
+type CreateUserRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	FullName string `json:"fullName"`
+	Role     string `json:"role"`
+}
+
+// CreateUser handles POST /admin/users - create new user directly (admin only)
+func (h *AdminHandler) CreateUser(c *fiber.Ctx) error {
+	// Security check: Ensure user is admin (double-check even if middleware does it)
+	user, ok := c.Locals(types.UserCtxName).(types.UserContext)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"code":    "UNAUTHORIZED",
+			"message": "missing user context",
+		})
+	}
+	if user.SystemRole != "admin" {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"code":    "FORBIDDEN",
+			"message": "admin access required",
+		})
+	}
+
+	// Parse and validate request
+	var req CreateUserRequest
+	if err := c.BodyParser(&req); err != nil {
+		return errors.HandleValidationError(c, "invalid request body")
+	}
+
+	// Basic validation
+	if req.Email == "" {
+		return errors.HandleValidationError(c, "email is required")
+	}
+	if req.Password == "" {
+		return errors.HandleValidationError(c, "password is required")
+	}
+	if len(req.Password) < 8 {
+		return errors.HandleValidationError(c, "password must be at least 8 characters")
+	}
+	if req.FullName == "" {
+		return errors.HandleValidationError(c, "fullName is required")
+	}
+	if req.Role == "" {
+		return errors.HandleValidationError(c, "role is required")
+	}
+	if req.Role != "user" && req.Role != "admin" {
+		return errors.HandleValidationError(c, "role must be 'user' or 'admin'")
+	}
+
+	// Call service
+	userID, err := h.adminService.CreateUserDirectly(c.Context(), req.Email, req.Password, req.FullName, req.Role)
+	if err != nil {
+		return errors.HandleServiceError(c, err)
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+		"id":       userID.String(),
+		"email":    req.Email,
+		"fullName": req.FullName,
+		"role":     req.Role,
+	})
 }

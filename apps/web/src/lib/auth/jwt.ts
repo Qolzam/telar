@@ -1,27 +1,41 @@
-import { jwtVerify, createRemoteJWKSet } from 'jose';
-import type { TokenClaim, JWKS } from '@telar/sdk';
+import { jwtVerify, importSPKI } from 'jose';
+import type { TokenClaim } from '@telar/sdk';
 import { COOKIE_CONFIG } from './cookies';
 
-const getAuthApiUrl = () => {
-  const url = process.env.INTERNAL_API_URL || 'http://localhost:9099';
-  return url.replace('localhost', '127.0.0.1');
-};
+// Cache the public key to avoid re-importing on every request
+let cachedPublicKey: Awaited<ReturnType<typeof importSPKI>> | null = null;
 
-const AUTH_API_URL = getAuthApiUrl();
-const JWKS_URL = `${AUTH_API_URL}/auth/.well-known/jwks.json`;
+/**
+ * Get the public key for JWT verification
+ * Uses static key from environment variable (zero network latency)
+ */
+async function getPublicKey() {
+  if (cachedPublicKey) {
+    return cachedPublicKey;
+  }
 
-const JWKS = createRemoteJWKSet(new URL(JWKS_URL));
+  const pem = process.env.AUTH_PUBLIC_KEY || process.env.NEXT_PUBLIC_AUTH_PUBLIC_KEY;
+  if (!pem) {
+    throw new Error('AUTH_PUBLIC_KEY or NEXT_PUBLIC_AUTH_PUBLIC_KEY environment variable is required');
+  }
+
+  // Import the PEM-encoded ECDSA public key (ES256 algorithm)
+  cachedPublicKey = await importSPKI(pem, 'ES256');
+  return cachedPublicKey;
+}
 
 /**
  * Verify JWT token and extract claims
+ * Uses static public key (no network calls, Edge Runtime compatible)
  * 
  * @param token - JWT token string
  * @returns TokenClaim if valid, null if invalid
  */
 export async function verifyToken(token: string): Promise<TokenClaim | null> {
   try {
-    const { payload } = await jwtVerify(token, JWKS, {
-      issuer: 'telar-social@telar', 
+    const publicKey = await getPublicKey();
+    const { payload } = await jwtVerify(token, publicKey, {
+      issuer: 'telar-social@telar', // Matches backend: "telar-social@" + providerName where providerName="telar"
       audience: '', 
     });
 

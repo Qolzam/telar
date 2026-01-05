@@ -220,6 +220,106 @@ func (s *Service) Login(ctx context.Context, email, password string) (string, er
 	return s.createTelarToken(profileInfo, claim)
 }
 
+// CreateUserDirectly creates a new user directly without email verification
+// This is a privileged operation that bypasses the normal signup flow
+// Used by admins to create team members manually
+func (s *Service) CreateUserDirectly(ctx context.Context, email, password, fullName, role string) (uuid.UUID, error) {
+	if email == "" || password == "" || fullName == "" || role == "" {
+		return uuid.Nil, authErrors.WrapValidationError(fmt.Errorf("email, password, fullName, and role are required"), "email,password,fullName,role")
+	}
+
+	if role != "user" && role != "admin" {
+		return uuid.Nil, authErrors.WrapValidationError(fmt.Errorf("role must be 'user' or 'admin'"), "role")
+	}
+
+	if s.authRepo == nil || s.profileRepo == nil {
+		return uuid.Nil, fmt.Errorf("repositories not available")
+	}
+
+	var createdUserID uuid.UUID
+
+	// Use AuthRepository's WithTransaction for atomic User+Profile creation
+	err := s.authRepo.WithTransaction(ctx, func(txCtx context.Context) error {
+		// 1. Check if user with this email already exists
+		existingUser, err := s.authRepo.FindByUsername(txCtx, email)
+		if err == nil && existingUser != nil {
+			return authErrors.ErrUserAlreadyExists
+		}
+		// If error is "user not found", that's fine - continue
+		if err != nil && err.Error() != "user not found" {
+			return fmt.Errorf("failed to check for existing user: %w", err)
+		}
+
+		// 2. Hash password (CPU-intensive, do this before transaction work)
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			return authErrors.NewAuthError(authErrors.CodeSystemError, "failed to hash password", err)
+		}
+
+		// 3. Create userAuth (within transaction)
+		userID := uuid.Must(uuid.NewV4())
+		now := time.Now().Unix()
+		userAuth := &models.UserAuth{
+			ObjectId:      userID,
+			Username:      email,
+			Password:      hashedPassword,
+			Role:          role,
+			EmailVerified: true, // Admin-created users are pre-verified
+			PhoneVerified: false,
+			CreatedDate:   now,
+			LastUpdated:   now,
+		}
+
+		if err := s.authRepo.CreateUser(txCtx, userAuth); err != nil {
+			// Check for unique constraint violation
+			if err.Error() == "username already exists" {
+				return authErrors.ErrUserAlreadyExists
+			}
+			return fmt.Errorf("failed to create user auth: %w", err)
+		}
+
+		// 4. Create userProfile (within transaction)
+		socialName := generateSocialName(fullName, userID.String())
+		profile := &profileModels.Profile{
+			ObjectId:    userID,
+			FullName:    fullName,
+			SocialName:  socialName,
+			Email:       email,
+			Avatar:      "https://util.telar.dev/api/avatars/" + userID.String(),
+			Banner:      "https://picsum.photos/id/1/900/300/?blur",
+			Tagline:     "",
+			CreatedDate: now,
+			LastUpdated: now,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+			Permission:  "Public",
+		}
+
+		if err := s.profileRepo.Create(txCtx, profile); err != nil {
+			return fmt.Errorf("failed to create profile: %w", err)
+		}
+
+		// Store the created user ID for return after commit
+		createdUserID = userID
+		return nil // Returning nil commits the transaction
+	})
+
+	if err != nil {
+		// If the transaction failed, check if it's already a properly typed error
+		if authErr, ok := err.(*authErrors.AuthError); ok {
+			return uuid.Nil, authErr
+		}
+		// Check if it's the "user already exists" error
+		if err == authErrors.ErrUserAlreadyExists || errors.Is(err, authErrors.ErrUserAlreadyExists) {
+			return uuid.Nil, authErrors.ErrUserAlreadyExists
+		}
+		// Otherwise, wrap as database error but preserve the underlying error message
+		return uuid.Nil, authErrors.NewAuthError(authErrors.CodeDatabaseError, fmt.Sprintf("Database operation failed: %v", err), err)
+	}
+
+	return createdUserID, nil
+}
+
 // helpers
 func generateSocialName(name, uid string) string {
 	return strings.ToLower(strings.ReplaceAll(name, " ", "") + strings.Split(uid, "-")[0])

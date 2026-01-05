@@ -89,4 +89,11 @@ type PostRepository interface {
 
 	// CountByStatus returns the number of posts with a specific status
 	CountByStatus(ctx context.Context, status string) (int64, error)
+
+	// FindByStatuses retrieves posts by multiple moderation statuses with pagination
+	// Used for moderation queue to include both 'needs_moderation' and 'analysis_failed' posts
+	FindByStatuses(ctx context.Context, statuses []string, limit, offset int) ([]*models.Post, error)
+
+	// CountByStatuses returns the number of posts matching any of the given statuses
+	CountByStatuses(ctx context.Context, statuses []string) (int64, error)
 }

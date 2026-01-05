@@ -1,41 +1,52 @@
-'use client';
+/**
+ * Admin Layout
+ * 
+ * Layout for admin pages with sidebar and header
+ * 
+ * Note: Authentication and role checks are handled by middleware.
+ * This layout is a server component for proper Next.js route resolution.
+ */
 
-import { ReactNode } from 'react';
-import { Container, Typography } from '@mui/material';
-import { useSession } from '@/features/auth/client';
-import { useRouter } from 'next/navigation';
+import type { Metadata } from 'next';
+import { Box } from '@mui/material';
+import AdminSidebar from '@/components/layouts/AdminSidebar';
+import AdminHeader from '@/components/layouts/AdminHeader';
+import { TechPreviewBanner } from '@/components/TechPreviewBanner';
 
-export default function AdminLayout({ children }: { children: ReactNode }) {
-  const { user, isAuthenticated } = useSession();
-  const router = useRouter();
+export const metadata: Metadata = {
+  title: 'Admin Dashboard | Telar',
+};
 
-  if (!isAuthenticated) {
-    // Redirect to login preserving path
-    if (typeof window !== 'undefined') {
-      const from = encodeURIComponent(window.location.pathname);
-      router.push(`/login?from=${from}`);
-    }
-    return null;
-  }
-
-  if (user?.role !== 'admin') {
-    return (
-      <Container maxWidth="md" sx={{ py: 6 }}>
-        <Typography variant="h6">Access denied</Typography>
-        <Typography variant="body2" color="text.secondary">
-          You don&apos;t have permission to access the admin dashboard.
-        </Typography>
-      </Container>
-    );
-  }
-
+export default function AdminLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
-      <Typography variant="h4" sx={{ mb: 3 }}>
-        Admin Dashboard
-      </Typography>
-      {children}
-    </Container>
+    <Box sx={{ display: 'flex', minHeight: '100vh' }}>
+      {/* Sidebar */}
+      <AdminSidebar />
+      
+      {/* Main content area */}
+      <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
+        <TechPreviewBanner />
+
+        {/* Header */}
+        <AdminHeader />
+
+        {/* Page content */}
+        <Box 
+          component="main" 
+          sx={{ 
+            flexGrow: 1, 
+            p: 3, 
+            bgcolor: 'background.default' 
+          }}
+        >
+          {children}
+        </Box>
+      </Box>
+    </Box>
   );
 }
 

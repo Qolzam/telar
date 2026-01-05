@@ -94,6 +94,11 @@ func (r *postgresRepository) Create(ctx context.Context, post *models.Post) erro
 		post.Status = "published"
 	}
 
+	// Ensure URLKey is never empty (prevent NULL in database)
+	if post.URLKey == "" {
+		post.URLKey = fmt.Sprintf("post-%s", post.ObjectId.String())
+	}
+
 	// Convert ModerationDetails JSONB to json.RawMessage
 	moderationDetailsJSON := json.RawMessage("{}")
 	if post.ModerationDetails != nil {
@@ -553,6 +558,81 @@ func (r *postgresRepository) CountByStatus(ctx context.Context, status string) (
 	err := sqlx.GetContext(ctx, r.getExecutor(ctx), &count, query, status)
 	if err != nil {
 		return 0, fmt.Errorf("failed to count posts by status: %w", err)
+	}
+
+	return count, nil
+}
+
+// FindByStatuses retrieves posts by multiple moderation statuses with pagination
+func (r *postgresRepository) FindByStatuses(ctx context.Context, statuses []string, limit, offset int) ([]*models.Post, error) {
+	if len(statuses) == 0 {
+		return []*models.Post{}, nil
+	}
+
+	// Build query with IN clause for multiple statuses
+	query, args, err := sqlx.In(`
+		SELECT 
+			id, owner_user_id, post_type_id, body, score, view_count,
+			comment_count, is_deleted, deleted_date, created_at, updated_at,
+			created_date, last_updated, tags, url_key, owner_display_name,
+			owner_avatar, image, image_full_path, video, thumbnail,
+			disable_comments, disable_sharing, permission, version, metadata,
+			status, moderation_details
+		FROM posts
+		WHERE status IN (?) AND is_deleted = FALSE
+		ORDER BY created_at DESC, id DESC
+		LIMIT ? OFFSET ?
+	`, statuses, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build query: %w", err)
+	}
+
+	// Convert to postgres format ($1, $2, etc.)
+	query = r.client.DB().Rebind(query)
+
+	var posts []models.Post
+	err = sqlx.SelectContext(ctx, r.getExecutor(ctx), &posts, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find posts by statuses: %w", err)
+	}
+
+	// Populate metadata for each post
+	result := make([]*models.Post, len(posts))
+	for i := range posts {
+		post := &posts[i]
+		if post.Metadata != nil {
+			metadataJSON, _ := json.Marshal(post.Metadata)
+			r.populateMetadata(post, metadataJSON)
+		}
+		result[i] = post
+	}
+
+	return result, nil
+}
+
+// CountByStatuses returns the number of posts matching any of the given statuses
+func (r *postgresRepository) CountByStatuses(ctx context.Context, statuses []string) (int64, error) {
+	if len(statuses) == 0 {
+		return 0, nil
+	}
+
+	// Build query with IN clause for multiple statuses
+	query, args, err := sqlx.In(`
+		SELECT COUNT(*) 
+		FROM posts
+		WHERE status IN (?) AND is_deleted = FALSE
+	`, statuses)
+	if err != nil {
+		return 0, fmt.Errorf("failed to build query: %w", err)
+	}
+
+	// Convert to postgres format ($1, $2, etc.)
+	query = r.client.DB().Rebind(query)
+
+	var count int64
+	err = sqlx.GetContext(ctx, r.getExecutor(ctx), &count, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count posts by statuses: %w", err)
 	}
 
 	return count, nil
