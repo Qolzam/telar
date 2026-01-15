@@ -2,7 +2,6 @@ package moderation
 
 import (
 	"context"
-	"errors"
 	"log"
 )
 
@@ -36,7 +35,14 @@ func (p *Pipeline) Execute(ctx context.Context, text string) (*ModerationResult,
 			return result, nil
 		}
 	}
-	return nil, errors.New("moderation pipeline exhausted with no result")
+	
+	// All layers returned nil, indicating content passed all checks (safe)
+	return &ModerationResult{
+		IsFlagged:       false,
+		FlagReason:      "safe",
+		SuggestedAction: "approve",
+		ModelUsed:       "pipeline-all-layers",
+	}, nil
 }
 
 
