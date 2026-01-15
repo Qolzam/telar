@@ -14,6 +14,7 @@ import (
 	"github.com/qolzam/telar/apps/ai-engine/internal/generator"
 	"github.com/qolzam/telar/apps/ai-engine/internal/knowledge"
 	"github.com/qolzam/telar/apps/ai-engine/internal/moderation"
+	"github.com/qolzam/telar/apps/ai-engine/internal/platform/llm"
 )
 
 // Handler contains HTTP handlers for AI Engine endpoints
@@ -31,6 +32,58 @@ func NewHandler(knowledgeService *knowledge.Service, generatorService *generator
 		generatorService: generatorService,
 		modPipeline:      modPipeline,
 		config:           config,
+	}
+}
+
+// handleOllamaErrorResponse handles Ollama-specific errors and returns appropriate HTTP responses
+// This centralizes error handling logic and uses structured error types instead of string parsing
+func handleOllamaErrorResponse(c *fiber.Ctx, err error, defaultMessage string) error {
+	ollamaErr, isOllamaErr := llm.IsOllamaError(err)
+	if !isOllamaErr {
+		// Not an Ollama error, return generic error
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error":   defaultMessage,
+			"details": err.Error(),
+		})
+	}
+
+	// Map Ollama error codes to HTTP status codes and user-friendly messages
+	switch ollamaErr.Code {
+	case llm.ErrCodeModelNotFound:
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error":   "Model not available",
+			"details": ollamaErr.Details,
+			"code":    ollamaErr.Code,
+		})
+	case llm.ErrCodeContextLengthExceeded:
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error":   "Input text exceeds model context window",
+			"details": ollamaErr.Details,
+			"code":    ollamaErr.Code,
+		})
+	case llm.ErrCodeConnectionRefused, llm.ErrCodeHostNotFound, llm.ErrCodeServiceUnavailable:
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+			"error":   "AI service temporarily unavailable",
+			"details": ollamaErr.Details,
+			"code":    "OLLAMA_UNAVAILABLE",
+		})
+	case llm.ErrCodeTimeout:
+		statusCode := fiber.StatusRequestTimeout
+		if ollamaErr.Model != "" {
+			// For model-specific timeouts (model loading), use ServiceUnavailable
+			statusCode = fiber.StatusServiceUnavailable
+		}
+		return c.Status(statusCode).JSON(fiber.Map{
+			"error":   "AI service timeout",
+			"details": ollamaErr.Details,
+			"code":    ollamaErr.Code,
+		})
+	default:
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+			"error":   "AI service temporarily unavailable",
+			"details": ollamaErr.Details,
+			"code":    "OLLAMA_UNAVAILABLE",
+		})
 	}
 }
 
@@ -69,15 +122,17 @@ type HealthResponse struct {
 }
 
 type StatusResponse struct {
-	Status             string `json:"status"`
-	EmbeddingProvider  string `json:"embedding_provider"`
-	CompletionProvider string `json:"completion_provider"`
+	Status                     string `json:"status"`
+	KnowledgeEmbeddingProvider string `json:"knowledge_embedding_provider"`
+	GeneratorProvider          string `json:"generator_provider"`
+	ModerationFallbackProvider string `json:"moderation_fallback_provider"`
+	ModerationONNXEnabled      bool   `json:"moderation_onnx_enabled"`
 }
 
 // GenerateRequest represents a request to generate conversation starters
 type GenerateRequest struct {
 	Topic string `json:"topic" binding:"required"`
-	Style string `json:"style,omitempty"` 
+	Style string `json:"style,omitempty"`
 	Count int    `json:"count,omitempty"`
 }
 
@@ -118,19 +173,7 @@ func (h *Handler) Ingest(c *fiber.Ctx) error {
 
 	if err := h.knowledgeService.StoreDocument(c.Context(), docReq); err != nil {
 		log.Printf("Failed to store document: %v", err)
-
-		if strings.Contains(err.Error(), "ollama service is not available") {
-			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
-				"error":   "AI service temporarily unavailable",
-				"details": "Ollama LLM service is not running. Please ensure Ollama is started and accessible.",
-				"code":    "OLLAMA_UNAVAILABLE",
-			})
-		}
-
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error":   "Failed to store document",
-			"details": err.Error(),
-		})
+		return handleOllamaErrorResponse(c, err, "Failed to store document")
 	}
 
 	response := IngestResponse{
@@ -144,6 +187,8 @@ func (h *Handler) Ingest(c *fiber.Ctx) error {
 
 // Query processes knowledge query requests using RAG
 func (h *Handler) Query(c *fiber.Ctx) error {
+	endToEndStart := time.Now()
+	
 	var req QueryRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -157,22 +202,15 @@ func (h *Handler) Query(c *fiber.Ctx) error {
 		Context: req.Context,
 	}
 
+	log.Printf("[RAG] End-to-end query started question_len=%d", len(req.Question))
+
 	result, err := h.knowledgeService.QueryKnowledge(c.Context(), queryReq)
+	endToEndDuration := time.Since(endToEndStart)
+	
 	if err != nil {
-		log.Printf("Failed to query knowledge: %v", err)
-
-		if strings.Contains(err.Error(), "ollama service is not available") {
-			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
-				"error":   "AI service temporarily unavailable",
-				"details": "Ollama LLM service is not running. Please ensure Ollama is started and accessible.",
-				"code":    "OLLAMA_UNAVAILABLE",
-			})
-		}
-
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error":   "Failed to process query",
-			"details": err.Error(),
-		})
+		log.Printf("[RAG] End-to-end query failed question_len=%d total_duration_ms=%d error=%v",
+			len(req.Question), endToEndDuration.Milliseconds(), err)
+		return handleOllamaErrorResponse(c, err, "Failed to process query")
 	}
 
 	var sources []SourceChunk
@@ -190,6 +228,9 @@ func (h *Handler) Query(c *fiber.Ctx) error {
 		Sources: sources,
 	}
 
+	log.Printf("[RAG] End-to-end query completed question_len=%d answer_len=%d sources_count=%d total_duration_ms=%d",
+		len(req.Question), len(result.Answer), len(sources), endToEndDuration.Milliseconds())
+
 	return c.JSON(response)
 }
 
@@ -206,15 +247,15 @@ func (h *Handler) GenerateConversationStarters(c *fiber.Ctx) error {
 	starters, err := h.generatorService.GenerateConversationStarters(c.Context(), req.CommunityTopic, req.Style)
 	if err != nil {
 		log.Printf("Generator service error: %v", err)
-		
+
 		if strings.Contains(err.Error(), "server is currently processing too many requests") {
 			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
-				"error": "server is currently processing too many requests",
-				"details": "Please try again in a moment. The server is limiting concurrent requests to prevent overload.",
+				"error":       "server is currently processing too many requests",
+				"details":     "Please try again in a moment. The server is limiting concurrent requests to prevent overload.",
 				"retry_after": "5 seconds",
 			})
 		}
-		
+
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate conversation starters", "details": err.Error()})
 	}
 
@@ -233,34 +274,26 @@ func (h *Handler) GetConcurrentStatus(c *fiber.Ctx) error {
 // GetModelConfig returns the current model configuration
 func (h *Handler) GetModelConfig(c *fiber.Ctx) error {
 	llmConfig := h.config.LLM
-	
-	var currentModel string
-	var provider string
-	
-	switch llmConfig.CompletionProvider {
-	case "openai":
-		provider = "OpenAI"
-		currentModel = llmConfig.OpenAIModel
-	case "groq":
-		provider = "Groq"
-		currentModel = llmConfig.GroqModel
-	case "ollama":
-		provider = "Ollama"
-		currentModel = llmConfig.CompletionModel
-	default:
-		provider = "Unknown"
-		currentModel = "Unknown"
-	}
-	
+
 	config := fiber.Map{
-		"provider":           llmConfig.CompletionProvider,
-		"provider_display":   provider,
-		"model":              currentModel,
-		"embedding_provider": llmConfig.EmbeddingProvider,
-		"embedding_model":    llmConfig.EmbeddingModel,
-		"max_concurrent":     llmConfig.MaxConcurrent,
+		"knowledge": fiber.Map{
+			"embedding_provider": llmConfig.KnowledgeEmbeddingProvider,
+			"embedding_model":    llmConfig.KnowledgeEmbeddingModel,
+		},
+		"generator": fiber.Map{
+			"provider": llmConfig.GeneratorProvider,
+			"model":    llmConfig.GeneratorModel,
+		},
+		"moderation": fiber.Map{
+			"fallback_provider":        llmConfig.ModerationFallbackProvider,
+			"fallback_model":           llmConfig.ModerationFallbackModel,
+			"onnx_toxicity_model_path": llmConfig.ModerationONNXToxicityModelPath,
+			"onnx_spam_model_path":     llmConfig.ModerationONNXSpamModelPath,
+			"onnx_enabled":             llmConfig.ModerationONNXToxicityModelPath != "" || llmConfig.ModerationONNXSpamModelPath != "",
+		},
+		"max_concurrent": llmConfig.MaxConcurrent,
 	}
-	
+
 	return c.JSON(fiber.Map{
 		"status": "success",
 		"data":   config,
@@ -298,23 +331,13 @@ func (h *Handler) Health(c *fiber.Ctx) error {
 
 // GetStatus returns the current configuration status
 func (h *Handler) GetStatus(c *fiber.Ctx) error {
-	embeddingProvider := os.Getenv("EMBEDDING_PROVIDER")
-	if embeddingProvider == "" {
-		embeddingProvider = "ollama"
-	}
-
-	completionProvider := os.Getenv("COMPLETION_PROVIDER")
-	if completionProvider == "" {
-		completionProvider = "ollama"
-	}
-
-	response := StatusResponse{
-		Status:             "healthy",
-		EmbeddingProvider:  embeddingProvider,
-		CompletionProvider: completionProvider,
-	}
-
-	return c.JSON(response)
+	return c.JSON(StatusResponse{
+		Status:                     "healthy",
+		KnowledgeEmbeddingProvider: h.config.LLM.KnowledgeEmbeddingProvider,
+		GeneratorProvider:          h.config.LLM.GeneratorProvider,
+		ModerationFallbackProvider: h.config.LLM.ModerationFallbackProvider,
+		ModerationONNXEnabled:      h.config.LLM.ModerationONNXToxicityModelPath != "" || h.config.LLM.ModerationONNXSpamModelPath != "",
+	})
 }
 
 // ServeDemo serves the demo UI
@@ -352,27 +375,7 @@ func (h *Handler) AnalyzeContent(c *fiber.Ctx) error {
 	result, err := h.modPipeline.Execute(c.Context(), req.Content)
 	if err != nil {
 		log.Printf("Content analysis failed: %v", err)
-
-		// Check for specific error types
-		if strings.Contains(err.Error(), "timeout") {
-			return c.Status(fiber.StatusRequestTimeout).JSON(fiber.Map{
-				"error":   "Analysis request timed out",
-				"details": "The content analysis took too long. Please try again.",
-			})
-		}
-
-		if strings.Contains(err.Error(), "ollama service is not available") {
-			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
-				"error":   "AI service temporarily unavailable",
-				"details": "Ollama LLM service is not running. Please ensure Ollama is started and accessible.",
-				"code":    "OLLAMA_UNAVAILABLE",
-			})
-		}
-
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error":   "Failed to analyze content",
-			"details": err.Error(),
-		})
+		return handleOllamaErrorResponse(c, err, "Failed to analyze content")
 	}
 
 	// Convert ModerationResult to AnalysisResult for backward compatibility
@@ -381,17 +384,21 @@ func (h *Handler) AnalyzeContent(c *fiber.Ctx) error {
 		FlagReason:      result.FlagReason,
 		Scores:          result.Scores,
 		SuggestedAction: result.SuggestedAction,
+		ModelUsed:       result.ModelUsed, // Include which model/layer made the decision
 		Timestamp:       "", // Will be set below
 	}
 
-	// Extract confidence from scores if available, otherwise calculate from max score
+	// Extract confidence from scores if available
+	// ONNX models set "confidence" explicitly, LLM models set it in the scores map
 	if confidence, ok := result.Scores["confidence"]; ok {
 		analysisResult.Confidence = confidence
 	} else if len(result.Scores) > 0 {
-		// Use max score as confidence fallback
+		// Fallback: For flagged content, use the max violation score as confidence
+		// For safe content, this should not happen (LLM should set confidence)
 		maxScore := 0.0
-		for _, score := range result.Scores {
-			if score > maxScore {
+		for key, score := range result.Scores {
+			// Skip non-score keys
+			if key != "confidence" && score > maxScore {
 				maxScore = score
 			}
 		}

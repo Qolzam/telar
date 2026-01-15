@@ -1,0 +1,19 @@
+# Model Builder - One-time container for exporting ONNX models
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY apps/ai-engine/scripts/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy export script
+COPY apps/ai-engine/scripts/export_model.py ./export_model.py
+
+# Export to shared volume
+VOLUME ["/app/models"]
+
+# Run export - default to exporting all models
+# Can be overridden via environment variable MODEL_TYPES (e.g., "toxicity spam" or "all")
+CMD ["python3", "export_model.py", "all"]
+

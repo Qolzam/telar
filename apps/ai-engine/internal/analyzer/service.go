@@ -104,19 +104,18 @@ type AnalysisResult struct {
 	Scores          map[string]float64 `json:"scores"`
 	Confidence      float64            `json:"confidence"`
 	Timestamp       string             `json:"timestamp"`
-	SuggestedAction string             `json:"suggested_action"` // "approve" or "review_needed"
+	SuggestedAction string             `json:"suggested_action"`     // "approve" or "review_needed"
+	ModelUsed       string             `json:"model_used,omitempty"` // e.g. "L3-ONNX-toxicity", "L3-ONNX-spam", "L3-Semantic-Model(qwen2.5:1.5b)"
 }
 
 // NewService creates a new analyzer service instance
 func NewService(compClient llms.Model, thresholds ...ModerationThresholds) *Service {
-	// Default thresholds (calibrated for qwen2.5:1.5b)
 	toxicity := 0.50
 	spam := 0.45
 	sexual := 0.75
 	violence := 0.75
 	misinformation := 0.70
 
-	// Override with provided thresholds if any
 	if len(thresholds) > 0 {
 		t := thresholds[0]
 		if t.Toxicity > 0 {
@@ -158,36 +157,39 @@ type ModerationThresholds struct {
 
 // AnalyzeContent performs AI-based content moderation analysis
 func (s *Service) AnalyzeContent(ctx context.Context, content string) (*AnalysisResult, error) {
-	log.Printf("Analyzing content for moderation (length: %d chars)", len(content))
-
-	// Create a timeout context for this analysis
 	analysisCtx, cancel := context.WithTimeout(ctx, s.requestTimeout)
 	defer cancel()
 
-	// Construct the moderation prompt (simplified for SLM - only scores, no decisions)
-	// Prompt explicitly requests JSON format with no explanatory text
 	prompt := prompts.NewPromptTemplate(
-		`You are a JSON-only content moderation analyzer. Return ONLY valid JSON. No explanations, no markdown, no text before or after the JSON.
+		`You are a strict Content Safety AI. Your job is to detect harm.
 
-Analyze this text and return a JSON object with scores:
+CRITICAL INSTRUCTIONS:
+1. POSITIVE content (praise, coding questions, tech discussions) must score 0.0.
+2. ONLY flag clear violations. If you are unsure, score 0.1.
+3. Spam requires COMMERCIAL intent or malicious links. Tech discussions are NOT spam.
 
-Text: "{{.content}}"
+SCORING GUIDE:
+- 0.0 to 0.2: Safe / Neutral / Positive
+- 0.3 to 0.6: Ambiguous / Borderline
+- 0.7 to 1.0: Explicit Violation
 
-Required JSON format:
+Analyze this text:
+"""{{.content}}"""
+
+Return a raw JSON object (no markdown) with this schema:
 {
   "scores": {
-    "toxicity": 0.0-1.0,
-    "sexual": 0.0-1.0,
-    "violence": 0.0-1.0,
-    "spam": 0.0-1.0,
-    "misinformation": 0.0-1.0
+    "toxicity": <float 0.0-1.0>,
+    "sexual": <float 0.0-1.0>,
+    "violence": <float 0.0-1.0>,
+    "spam": <float 0.0-1.0>,
+    "misinformation": <float 0.0-1.0>
   },
-  "confidence": 0.0-1.0
+  "confidence": <float 0.0-1.0>
 }`,
 		[]string{"content"},
 	)
 
-	// Format the prompt with the content
 	formattedPrompt, err := prompt.Format(map[string]any{
 		"content": content,
 	})
@@ -195,42 +197,32 @@ Required JSON format:
 		return nil, fmt.Errorf("failed to format analysis prompt: %w", err)
 	}
 
-	// Call the LLM for analysis
 	response, err := llms.GenerateFromSinglePrompt(analysisCtx, s.compClient, formattedPrompt)
 	if err != nil {
 		return nil, fmt.Errorf("llm analysis failed: %w", err)
 	}
 
-	// Parse the JSON response
 	var result AnalysisResult
 
-	// Clean the response - some LLMs may add markdown code blocks or explanatory text
 	cleanedResponse := strings.TrimSpace(response)
 	cleanedResponse = strings.TrimPrefix(cleanedResponse, "```json")
 	cleanedResponse = strings.TrimPrefix(cleanedResponse, "```")
 	cleanedResponse = strings.TrimSuffix(cleanedResponse, "```")
 	cleanedResponse = strings.TrimSpace(cleanedResponse)
-
-	// Extract JSON object from response if there's text before it
-	// LLMs sometimes add explanatory text like "Here's my analysis: { ... }"
 	cleanedResponse = extractJSONFromText(cleanedResponse)
 
-	// Parse LLM response - simplified format (only scores), but backward-compatible with old format
 	var llmResponse struct {
 		Scores          map[string]float64 `json:"scores"`
 		Confidence      float64            `json:"confidence"`
-		IsFlagged       bool               `json:"is_flagged"`       // Ignored - we use policy
-		FlagReason      string             `json:"flag_reason"`      // Ignored - we generate from scores
-		SuggestedAction string             `json:"suggested_action"` // Ignored - we use policy
+		IsFlagged       bool               `json:"is_flagged"`
+		FlagReason      string             `json:"flag_reason"`
+		SuggestedAction string             `json:"suggested_action"`
 	}
 
 	if err := json.Unmarshal([]byte(cleanedResponse), &llmResponse); err != nil {
-		log.Printf("[AI-DEBUG] JSON Parse Error: %v", err)
-		log.Printf("[AI-DEBUG] Failed to parse LLM response as JSON. Raw response: %s", response)
 		return nil, fmt.Errorf("failed to parse analysis result: %w. Raw response: %s", err, response)
 	}
 
-	// Initialize result with LLM scores and confidence
 	result.Scores = llmResponse.Scores
 	result.Confidence = llmResponse.Confidence
 	if result.Scores == nil {
@@ -282,7 +274,6 @@ Required JSON format:
 
 	result.Timestamp = time.Now().UTC().Format(time.RFC3339)
 
-	// Log the analysis result
 	if result.IsFlagged {
 		log.Printf("[CONTENT_FLAGGED] Reason: %s, Confidence: %.2f, Scores: %+v, Action: %s",
 			result.FlagReason, result.Confidence, result.Scores, result.SuggestedAction)
@@ -299,7 +290,6 @@ func (s *Service) HealthCheck(ctx context.Context) error {
 		return fmt.Errorf("completion client is not initialized")
 	}
 
-	// Perform a simple test analysis
 	testCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 )
@@ -21,7 +22,6 @@ var _ CompletionClient = (*GroqClient)(nil)
 // GroqConfig contains Groq client configuration
 type GroqConfig struct {
 	APIKey              string
-	CompletionModel     string // Legacy: defaults generation model
 	GenerationModel     string
 	ClassificationModel string
 	Timeout             time.Duration
@@ -32,12 +32,8 @@ func NewGroqClient(config GroqConfig) (*GroqClient, error) {
 	if config.APIKey == "" {
 		return nil, fmt.Errorf("Groq API key is required")
 	}
-	// Backward compatibility: if CompletionModel is set but GenerationModel is not, use CompletionModel
-	if config.GenerationModel == "" && config.CompletionModel != "" {
-		config.GenerationModel = config.CompletionModel
-	}
 	if config.GenerationModel == "" {
-		config.GenerationModel = "llama3-8b-8192"
+		config.GenerationModel = "llama-3.1-8b-instant"
 	}
 	if config.ClassificationModel == "" {
 		config.ClassificationModel = config.GenerationModel // Default to same as generation if not specified
@@ -115,8 +111,19 @@ func (c *GroqClient) GenerateCompletion(ctx context.Context, modelType ModelType
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := json.Marshal(resp.Body)
-		return "", fmt.Errorf("groq API returned status %d: %s", resp.StatusCode, string(body))
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyStr := string(bodyBytes)
+		// Try to parse error response for better error message
+		var errorResp struct {
+			Error struct {
+				Message string `json:"message"`
+				Type    string `json:"type"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(bodyBytes, &errorResp); err == nil && errorResp.Error.Message != "" {
+			return "", fmt.Errorf("groq API returned status %d: %s", resp.StatusCode, errorResp.Error.Message)
+		}
+		return "", fmt.Errorf("groq API returned status %d: %s", resp.StatusCode, bodyStr)
 	}
 
 	var groqResp groqCompletionResponse

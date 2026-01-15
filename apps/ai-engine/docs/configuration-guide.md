@@ -1,80 +1,94 @@
 # AI Engine Configuration Guide
 
-## 🎯 **Professional Configuration Management**
+## 🎯 ** Configuration Management**
 
-The AI Engine features a **fully provider-agnostic architecture** with independently configurable backends for both embedding and completion tasks. This guide explains how to configure the service for different deployment scenarios.
 
 ## 📋 **Quick Start Scenarios**
 
 ### **Scenario 1: Fully Local Development** (Cost: $0)
 ```bash
-EMBEDDING_PROVIDER=ollama
-COMPLETION_PROVIDER=ollama
+KNOWLEDGE_EMBEDDING_PROVIDER=ollama
+KNOWLEDGE_EMBEDDING_MODEL=nomic-embed-text
+GENERATOR_PROVIDER=ollama
+GENERATOR_MODEL=llama3:8b
+MODERATION_FALLBACK_PROVIDER=ollama
+MODERATION_FALLBACK_MODEL=qwen2.5:1.5b
 OLLAMA_BASE_URL=http://localhost:11434
-EMBEDDING_MODEL=nomic-embed-text
-COMPLETION_MODEL=llama3:8b
 ```
 **Use Case**: Development, testing, and full privacy.
 
 ### **Scenario 2: High-Speed Prototyping** (Cost: Low)
 ```bash
-EMBEDDING_PROVIDER=ollama
-COMPLETION_PROVIDER=groq
+KNOWLEDGE_EMBEDDING_PROVIDER=ollama
+KNOWLEDGE_EMBEDDING_MODEL=nomic-embed-text
+GENERATOR_PROVIDER=groq
+GENERATOR_MODEL=llama-3.1-8b-instant
+MODERATION_FALLBACK_PROVIDER=groq
+MODERATION_FALLBACK_MODEL=llama-3.1-8b-instant
 GROQ_API_KEY=your-groq-api-key
-GROQ_MODEL=llama-3.1-8b-instant
 OLLAMA_BASE_URL=http://localhost:11434
-EMBEDDING_MODEL=nomic-embed-text
 ```
 **Use Case**: The best "wow" demo experience. Blazing fast answers.
 
 ### **Scenario 3: Enterprise Cloud-Native** (Cost: High)
 ```bash
-EMBEDDING_PROVIDER=openai
-COMPLETION_PROVIDER=openai
+KNOWLEDGE_EMBEDDING_PROVIDER=openai
+KNOWLEDGE_EMBEDDING_MODEL=text-embedding-3-small
+GENERATOR_PROVIDER=openai
+GENERATOR_MODEL=gpt-3.5-turbo
+MODERATION_FALLBACK_PROVIDER=openai
+MODERATION_FALLBACK_MODEL=gpt-3.5-turbo
 OPENAI_API_KEY=your-openai-api-key
-OPENAI_EMBEDDING_MODEL=text-embedding-3-small
-OPENAI_COMPLETION_MODEL=gpt-3.5-turbo
 ```
 **Use Case**: Production deployments requiring a fully managed, auditable cloud pipeline.
 
 ### **Scenario 4: Mixed Enterprise** (Cost: High)
 ```bash
-EMBEDDING_PROVIDER=openai
-COMPLETION_PROVIDER=groq
+KNOWLEDGE_EMBEDDING_PROVIDER=openai
+KNOWLEDGE_EMBEDDING_MODEL=text-embedding-3-small
+GENERATOR_PROVIDER=groq
+GENERATOR_MODEL=llama-3.1-8b-instant
+MODERATION_FALLBACK_PROVIDER=groq
+MODERATION_FALLBACK_MODEL=llama-3.1-8b-instant
 OPENAI_API_KEY=your-openai-api-key
-OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 GROQ_API_KEY=your-groq-api-key
-GROQ_MODEL=llama-3.1-8b-instant
 ```
 **Use Case**: Production deployments that need OpenAI's embedding quality but Groq's completion speed.
 
 ## 🔧 **Configuration Variables Reference**
 
-### **Core Provider Selection**
-- `EMBEDDING_PROVIDER`: `ollama` | `openai` ⚠️ *Note: Groq and OpenRouter do not support embeddings*
-- `COMPLETION_PROVIDER`: `ollama` | `groq` | `openai` | `openrouter`
-
-### **Ollama Settings** (Local Models)
+### **Global Infrastructure**
 - `OLLAMA_BASE_URL`: Ollama server URL (default: `http://localhost:11434`)
-- `EMBEDDING_MODEL`: Embedding model name (default: `nomic-embed-text`)
-- `COMPLETION_MODEL`: Completion model name (default: `llama3:8b`)
-
-### **Groq Settings** (High-Speed Inference - Completions Only)
 - `GROQ_API_KEY`: Your Groq API key
-- `GROQ_MODEL`: Model name (e.g., `llama-3.1-8b-instant`)
-- ⚠️ **Note**: Groq does not support embeddings - use for completions only
-
-### **OpenAI Settings** (Enterprise Compatibility)
 - `OPENAI_API_KEY`: Your OpenAI API key
-- `OPENAI_EMBEDDING_MODEL`: Embedding model (default: `text-embedding-3-small`)
-- `OPENAI_COMPLETION_MODEL`: Completion model (default: `gpt-3.5-turbo`)
+- `OPENAI_BASE_URL`: OpenAI API base URL (default: `https://api.openai.com/v1`)
+- `GLOBAL_ONNX_LIB_PATH`: Path to ONNX Runtime library (default: `./libs/libonnxruntime.so`)
+- `MAX_CONCURRENT`: Maximum concurrent requests (default: `2`)
 
-### **OpenRouter Settings** (Cost-Effective Testing - Completions Only)
-- **Note**: OpenRouter uses OpenAI compatibility - no separate API key needed
-- `OPENAI_API_KEY`: Your OpenRouter API key (same as OpenAI)
-- `OPENAI_BASE_URL`: Set to `https://openrouter.ai/api/v1`
-- `OPENAI_MODEL`: Model name (e.g., `anthropic/claude-3-haiku`)
-- ⚠️ **Note**: OpenRouter does not support embeddings - use for completions only
+### **Feature: Knowledge (RAG)**
+- `KNOWLEDGE_EMBEDDING_PROVIDER`: `ollama` | `openai` ⚠️ *Note: Groq and OpenRouter do not support embeddings*
+- `KNOWLEDGE_EMBEDDING_MODEL`: Embedding model name (default: `nomic-embed-text`)
+
+### **Feature: Generator**
+- `GENERATOR_PROVIDER`: `ollama` | `groq` | `openai` | `openrouter`
+- `GENERATOR_MODEL`: Model name (default: `llama3:8b`)
+
+### **Feature: Moderation**
+- `MODERATION_ONNX_TOXICITY_MODEL_PATH`: Path to toxicity ONNX model file (optional, default: `./models/distilbert/model.onnx`)
+- `MODERATION_ONNX_SPAM_MODEL_PATH`: Path to spam ONNX model file (optional, default: `./models/spam/model.onnx`)
+- `MODERATION_FALLBACK_PROVIDER`: `ollama` | `groq` | `openai` | `openrouter` (mandatory)
+- `MODERATION_FALLBACK_MODEL`: Model name for moderation fallback (default: `qwen2.5:1.5b`)
+- `MODERATION_TOXICITY_THRESHOLD`: Toxicity threshold (0.0-1.0, default: `0.50`)
+- `MODERATION_SPAM_THRESHOLD`: Spam threshold (0.0-1.0, default: `0.45`)
+- `MODERATION_SEXUAL_THRESHOLD`: Sexual content threshold (0.0-1.0, default: `0.75`)
+- `MODERATION_VIOLENCE_THRESHOLD`: Violence threshold (0.0-1.0, default: `0.75`)
+- `MODERATION_MISINFORMATION_THRESHOLD`: Misinformation threshold (0.0-1.0, default: `0.70`)
+
+### **Provider-Specific Model Configuration**
+- For Ollama: Models are specified via `KNOWLEDGE_EMBEDDING_MODEL`, `GENERATOR_MODEL`, `MODERATION_FALLBACK_MODEL`
+- For Groq: Models are specified via `GENERATOR_MODEL` and `MODERATION_FALLBACK_MODEL` (Groq does not support embeddings)
+- For OpenAI: Models are specified via `GENERATOR_MODEL` and `MODERATION_FALLBACK_MODEL` (embedding model via `KNOWLEDGE_EMBEDDING_MODEL`)
+- For OpenRouter: Uses OpenAI compatibility - set `OPENAI_BASE_URL=https://openrouter.ai/api/v1` and use `OPENAI_API_KEY` with OpenRouter key
 
 ### **Infrastructure Settings**
 - `WEAVIATE_URL`: Vector database URL (default: `http://weaviate:8080` for internal Docker network, `http://localhost:9077` for external access)
@@ -92,11 +106,13 @@ The AI Engine includes robust startup validation that will:
 
 ### **Example Error Messages**
 ```bash
-❌ Configuration validation failed: invalid EMBEDDING_PROVIDER: 'groq'. Supported providers are 'ollama', 'openai'
+❌ Configuration validation failed: unsupported knowledge embedding provider: 'groq' (supported: ollama, openai)
 
-❌ Configuration validation failed: COMPLETION_PROVIDER is 'groq' but GROQ_API_KEY is not set
+❌ Configuration validation failed: GROQ_API_KEY is required when using Groq for generator
 
-⚠️ Embeddings are currently not supported by Groq. Please use Ollama or OpenAI for embeddings, or use a hybrid configuration with Groq for completions only
+❌ Configuration validation failed: MODERATION_FALLBACK_PROVIDER is required (moderation fallback is mandatory)
+
+⚠️ Embeddings are currently not supported by Groq. Please use Ollama or OpenAI for knowledge embeddings
 ```
 
 ## 🚀 **Best Practices**

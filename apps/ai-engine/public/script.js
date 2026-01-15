@@ -117,20 +117,24 @@ async function loadStatus() {
         const response = await fetch('/status');
         const data = await response.json();
         
-        document.getElementById('embedding-provider').textContent = data.embedding_provider;
-        document.getElementById('completion-provider').textContent = data.completion_provider;
-        document.getElementById('status-text').textContent = data.status;
+        // Update status display with new field names (mapping to existing HTML elements)
+        const knowledgeProviderEl = document.getElementById('embedding-provider');
+        const generatorProviderEl = document.getElementById('completion-provider');
+        
+        if (knowledgeProviderEl) knowledgeProviderEl.textContent = data.knowledge_embedding_provider || 'N/A';
+        if (generatorProviderEl) generatorProviderEl.textContent = data.generator_provider || 'N/A';
+        
+        const statusTextEl = document.getElementById('status-text');
+        if (statusTextEl) statusTextEl.textContent = data.status;
         
         // Update flow diagram tech labels
         const embedTech = document.getElementById('embed-tech');
-        const completionTech = document.getElementById('completion-tech');
         const genCompletionTech = document.getElementById('gen-completion-tech');
         const modCompletionTech = document.getElementById('mod-completion-tech');
         
-        if (embedTech) embedTech.textContent = data.embedding_provider;
-        if (completionTech) completionTech.textContent = data.completion_provider;
-        if (genCompletionTech) genCompletionTech.textContent = data.completion_provider;
-        if (modCompletionTech) modCompletionTech.textContent = data.completion_provider;
+        if (embedTech) embedTech.textContent = data.knowledge_embedding_provider || 'N/A';
+        if (genCompletionTech) genCompletionTech.textContent = data.generator_provider || 'N/A';
+        if (modCompletionTech) modCompletionTech.textContent = data.moderation_fallback_provider || 'N/A';
         
         if (data.status === 'healthy') {
             document.getElementById('status-indicator').style.color = '#4CAF50';
@@ -138,7 +142,7 @@ async function loadStatus() {
             document.getElementById('status-indicator').style.color = '#f44336';
         }
         
-        logMessage(`Status loaded: Embedding=${data.embedding_provider}, Completion=${data.completion_provider}`);
+        logMessage(`Status loaded: Knowledge=${data.knowledge_embedding_provider}, Generator=${data.generator_provider}, Moderation=${data.moderation_fallback_provider}, ONNX=${data.moderation_onnx_enabled ? 'Enabled' : 'Disabled'}`);
     } catch (error) {
         logMessage(`Failed to load status: ${error.message}`, 'error');
         document.getElementById('status-text').textContent = 'Error';
