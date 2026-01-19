@@ -42,8 +42,3 @@ func (f *KeywordFilter) Moderate(ctx context.Context, text string) (*ModerationR
 	// Return nil to signal "I didn't find anything, pass to next layer"
 	return nil, nil
 }
-
-
-
-
-

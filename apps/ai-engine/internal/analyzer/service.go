@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qolzam/telar/apps/ai-engine/internal/prompt"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/prompts"
 )
@@ -81,6 +82,9 @@ func extractCompleteJSONObject(text string) string {
 // Service handles content analysis and moderation tasks
 type Service struct {
 	compClient              llms.Model
+	registry                *prompt.Registry
+	modelName               string
+	variantOverride         string
 	requestTimeout          time.Duration
 	toxicityThreshold       float64
 	spamThreshold           float64
@@ -109,7 +113,9 @@ type AnalysisResult struct {
 }
 
 // NewService creates a new analyzer service instance
-func NewService(compClient llms.Model, thresholds ...ModerationThresholds) *Service {
+// registry: The prompt registry for dynamic prompt selection
+// modelName: The name of the LLM model (e.g., "qwen2.5:1.5b", "llama3:8b") used for prompt matching
+func NewService(compClient llms.Model, registry *prompt.Registry, modelName string, thresholds ...ModerationThresholds) *Service {
 	toxicity := 0.50
 	spam := 0.45
 	sexual := 0.75
@@ -137,6 +143,9 @@ func NewService(compClient llms.Model, thresholds ...ModerationThresholds) *Serv
 
 	return &Service{
 		compClient:              compClient,
+		registry:                registry,
+		modelName:               modelName,
+		variantOverride:         "", // Default: auto-select based on model
 		requestTimeout:          30 * time.Second,
 		toxicityThreshold:       toxicity,
 		spamThreshold:           spam,
@@ -144,6 +153,11 @@ func NewService(compClient llms.Model, thresholds ...ModerationThresholds) *Serv
 		violenceThreshold:       violence,
 		misinformationThreshold: misinformation,
 	}
+}
+
+// SetVariantOverride sets the variant override for A/B testing
+func (s *Service) SetVariantOverride(variantID string) {
+	s.variantOverride = variantID
 }
 
 // ModerationThresholds holds configurable moderation thresholds
@@ -160,33 +174,35 @@ func (s *Service) AnalyzeContent(ctx context.Context, content string) (*Analysis
 	analysisCtx, cancel := context.WithTimeout(ctx, s.requestTimeout)
 	defer cancel()
 
+	// Dynamic Prompt Selection: Get the appropriate template based on model
+	var templateStr string
+	var err error
+	var promptSource string
+
+	if s.registry != nil {
+		// Use variant override if set (for A/B testing)
+		templateStr, err = s.registry.GetTemplateWithOverride("moderation", s.modelName, s.variantOverride)
+		if err != nil {
+			log.Printf("Warning: Failed to get prompt template from registry: %v. Using fallback.", err)
+			templateStr = s.getFallbackPrompt()
+			promptSource = "fallback (registry error)"
+		} else {
+			if s.variantOverride != "" {
+				promptSource = fmt.Sprintf("registry (override: %s)", s.variantOverride)
+			} else {
+				promptSource = "registry"
+			}
+		}
+	} else {
+		// Registry not initialized, use fallback
+		templateStr = s.getFallbackPrompt()
+		promptSource = "fallback (no registry)"
+	}
+
+	log.Printf("[PROMPT] Using prompt from: %s (model: %s)", promptSource, s.modelName)
+
 	prompt := prompts.NewPromptTemplate(
-		`You are a strict Content Safety AI. Your job is to detect harm.
-
-CRITICAL INSTRUCTIONS:
-1. POSITIVE content (praise, coding questions, tech discussions) must score 0.0.
-2. ONLY flag clear violations. If you are unsure, score 0.1.
-3. Spam requires COMMERCIAL intent or malicious links. Tech discussions are NOT spam.
-
-SCORING GUIDE:
-- 0.0 to 0.2: Safe / Neutral / Positive
-- 0.3 to 0.6: Ambiguous / Borderline
-- 0.7 to 1.0: Explicit Violation
-
-Analyze this text:
-"""{{.content}}"""
-
-Return a raw JSON object (no markdown) with this schema:
-{
-  "scores": {
-    "toxicity": <float 0.0-1.0>,
-    "sexual": <float 0.0-1.0>,
-    "violence": <float 0.0-1.0>,
-    "spam": <float 0.0-1.0>,
-    "misinformation": <float 0.0-1.0>
-  },
-  "confidence": <float 0.0-1.0>
-}`,
+		templateStr,
 		[]string{"content"},
 	)
 
@@ -232,22 +248,29 @@ Return a raw JSON object (no markdown) with this schema:
 	violationFound := false
 	violationReasons := []string{}
 
-	toxicityScore := result.Scores["toxicity"]
-	if toxicityScore > s.toxicityThreshold {
+	// Check new taxonomy keys (aligned with ONNX)
+	toxicScore := result.Scores["toxic"]
+	if toxicScore > s.toxicityThreshold {
 		violationFound = true
-		violationReasons = append(violationReasons, fmt.Sprintf("High Toxicity (%.2f)", toxicityScore))
+		violationReasons = append(violationReasons, fmt.Sprintf("High Toxicity (%.2f)", toxicScore))
 	}
 
-	sexualScore := result.Scores["sexual"]
-	if sexualScore > s.sexualThreshold {
+	threatScore := result.Scores["threat"]
+	if threatScore > s.violenceThreshold {
 		violationFound = true
-		violationReasons = append(violationReasons, fmt.Sprintf("Sexual Content (%.2f)", sexualScore))
+		violationReasons = append(violationReasons, fmt.Sprintf("Threat/Violence (%.2f)", threatScore))
 	}
 
-	violenceScore := result.Scores["violence"]
-	if violenceScore > s.violenceThreshold {
+	insultScore := result.Scores["insult"]
+	if insultScore > s.toxicityThreshold {
 		violationFound = true
-		violationReasons = append(violationReasons, fmt.Sprintf("Violence (%.2f)", violenceScore))
+		violationReasons = append(violationReasons, fmt.Sprintf("Personal Insult (%.2f)", insultScore))
+	}
+
+	identityHateScore := result.Scores["identity_hate"]
+	if identityHateScore > s.violenceThreshold {
+		violationFound = true
+		violationReasons = append(violationReasons, fmt.Sprintf("Hate Speech (%.2f)", identityHateScore))
 	}
 
 	spamScore := result.Scores["spam"]
@@ -260,6 +283,24 @@ Return a raw JSON object (no markdown) with this schema:
 	if misinformationScore > s.misinformationThreshold {
 		violationFound = true
 		violationReasons = append(violationReasons, fmt.Sprintf("Misinformation (%.2f)", misinformationScore))
+	}
+
+	// Backward compatibility: Check old keys if new keys not present
+	if toxicScore == 0 && result.Scores["toxicity"] > 0 {
+		if result.Scores["toxicity"] > s.toxicityThreshold {
+			violationFound = true
+			violationReasons = append(violationReasons, fmt.Sprintf("High Toxicity (%.2f)", result.Scores["toxicity"]))
+		}
+	}
+	if threatScore == 0 && result.Scores["violence"] > 0 {
+		if result.Scores["violence"] > s.violenceThreshold {
+			violationFound = true
+			violationReasons = append(violationReasons, fmt.Sprintf("Violence (%.2f)", result.Scores["violence"]))
+		}
+	}
+	if result.Scores["sexual"] > s.sexualThreshold {
+		violationFound = true
+		violationReasons = append(violationReasons, fmt.Sprintf("Sexual Content (%.2f)", result.Scores["sexual"]))
 	}
 
 	if violationFound {
@@ -282,6 +323,19 @@ Return a raw JSON object (no markdown) with this schema:
 	}
 
 	return &result, nil
+}
+
+// getFallbackPrompt returns a basic prompt template when registry is unavailable
+func (s *Service) getFallbackPrompt() string {
+	return `You are a Content Safety AI for a SOFTWARE DEVELOPER COMMUNITY. Analyze this text: """{{.content}}""" and return a JSON object with scores (0.0-1.0) for: toxic, threat, insult, identity_hate, spam, misinformation, and confidence.`
+}
+
+// truncateString truncates a string to the specified length
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen]
 }
 
 // HealthCheck verifies the analyzer service is operational

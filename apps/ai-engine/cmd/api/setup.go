@@ -10,6 +10,7 @@ import (
 	"github.com/qolzam/telar/apps/ai-engine/internal/knowledge"
 	"github.com/qolzam/telar/apps/ai-engine/internal/moderation"
 	"github.com/qolzam/telar/apps/ai-engine/internal/platform/weaviate"
+	"github.com/qolzam/telar/apps/ai-engine/internal/prompt"
 	ort "github.com/yalue/onnxruntime_go"
 )
 
@@ -118,6 +119,15 @@ func initializeGeneratorService(cfg *config.Config) (*generator.Service, error) 
 
 // initializeModerationPipeline initializes the moderation pipeline with all layers
 func initializeModerationPipeline(cfg *config.Config) (*moderation.Pipeline, error) {
+	// Initialize Prompt Registry
+	promptRegistry, err := prompt.NewRegistry(cfg.LLM.PromptsPath)
+	if err != nil {
+		log.Printf("⚠️ Warning: Failed to load prompt registry from %s: %v. Using fallback prompts.", cfg.LLM.PromptsPath, err)
+		promptRegistry = nil
+	} else {
+		log.Printf("✓ Prompt Registry initialized (path: %s)", cfg.LLM.PromptsPath)
+	}
+
 	modCache := moderation.NewInMemoryCache()
 	keywordFilter := moderation.NewKeywordFilter()
 
@@ -138,17 +148,46 @@ func initializeModerationPipeline(cfg *config.Config) (*moderation.Pipeline, err
 
 		toxicityModelPath := cfg.LLM.ModerationONNXToxicityModelPath
 		if toxicityModelPath != "" {
-			toxicMod, err := moderation.NewONNXModerator(toxicityModelPath, moderation.ONNXConfig{
-				ModelPath:     toxicityModelPath,
-				Name:          "toxicity",
-				Threshold:     toxicityThreshold,
-				BadClassIndex: 1,
-			})
-			if err == nil {
-				modLayers = append(modLayers, toxicMod)
-				log.Printf("✓ L3a ONNX Toxicity Moderator initialized (model: %s, threshold: %.2f)", toxicityModelPath, toxicityThreshold)
+			// Detect if this is the multi-label toxic-bert model
+			isMultiLabel := len(cfg.LLM.ModerationONNXThresholds) > 0
+
+			var toxicMod moderation.ContentModerator
+			var err error
+
+			if isMultiLabel {
+				// Initialize multi-label toxic-bert model with forensic decision matrix
+				toxicMod, err = moderation.NewONNXModerator(toxicityModelPath, moderation.ONNXConfig{
+					ModelPath:  toxicityModelPath,
+					Name:       "toxic-bert",
+					Thresholds: cfg.LLM.ModerationONNXThresholds,
+				})
+				if err == nil {
+					modLayers = append(modLayers, toxicMod)
+					log.Printf("✓ L3a ONNX Toxic-BERT Multi-Label Moderator initialized (model: %s)", toxicityModelPath)
+					log.Printf("  Thresholds: toxic=%.2f, threat=%.2f, insult=%.2f, identity_hate=%.2f, severe_toxic=%.2f, obscene=%.2f",
+						cfg.LLM.ModerationONNXThresholds["toxic"],
+						cfg.LLM.ModerationONNXThresholds["threat"],
+						cfg.LLM.ModerationONNXThresholds["insult"],
+						cfg.LLM.ModerationONNXThresholds["identity_hate"],
+						cfg.LLM.ModerationONNXThresholds["severe_toxic"],
+						cfg.LLM.ModerationONNXThresholds["obscene"])
+				} else {
+					log.Printf("⚠️ Skipping L3a ONNX Toxic-BERT: %v", err)
+				}
 			} else {
-				log.Printf("⚠️ Skipping L3a ONNX Toxicity: %v", err)
+				// Initialize binary toxicity model (legacy)
+				toxicMod, err = moderation.NewONNXModerator(toxicityModelPath, moderation.ONNXConfig{
+					ModelPath:     toxicityModelPath,
+					Name:          "toxicity",
+					Threshold:     toxicityThreshold,
+					BadClassIndex: 1,
+				})
+				if err == nil {
+					modLayers = append(modLayers, toxicMod)
+					log.Printf("✓ L3a ONNX Toxicity Moderator initialized (model: %s, threshold: %.2f)", toxicityModelPath, toxicityThreshold)
+				} else {
+					log.Printf("⚠️ Skipping L3a ONNX Toxicity: %v", err)
+				}
 			}
 		}
 
@@ -180,6 +219,8 @@ func initializeModerationPipeline(cfg *config.Config) (*moderation.Pipeline, err
 
 	analyzerService := analyzer.NewService(
 		modFallbackClient,
+		promptRegistry,
+		cfg.LLM.ModerationFallbackModel,
 		analyzer.ModerationThresholds{
 			Toxicity:       cfg.LLM.ModerationToxicityThreshold,
 			Spam:           cfg.LLM.ModerationSpamThreshold,
@@ -188,6 +229,11 @@ func initializeModerationPipeline(cfg *config.Config) (*moderation.Pipeline, err
 			Misinformation: cfg.LLM.ModerationMisinformationThreshold,
 		},
 	)
+	// Set variant override for A/B testing if configured
+	if cfg.LLM.PromptVariantOverride != "" {
+		analyzerService.SetVariantOverride(cfg.LLM.PromptVariantOverride)
+		log.Printf("✓ Prompt variant override set: %s", cfg.LLM.PromptVariantOverride)
+	}
 
 	l4Mod := moderation.NewLLMAnalyzerAdapter(analyzerService, cfg.LLM.ModerationFallbackModel)
 	modLayers = append(modLayers, l4Mod)

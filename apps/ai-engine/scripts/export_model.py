@@ -3,10 +3,12 @@
 Export Models to ONNX Format
 Supports multiple model types:
   - toxicity: martin-ha/toxic-comment-model (DistilBERT trained on Jigsaw toxicity dataset)
+  - toxic-bert: unitary/toxic-bert (BERT multi-label classifier for Jigsaw Toxic Comment Taxonomy)
   - spam: mshenoda/roberta-spam (RoBERTa trained for spam detection)
 
 Usage:
   python export_model.py toxicity [--output-dir /path/to/output]
+  python export_model.py toxic-bert [--output-dir /path/to/output]
   python export_model.py spam [--output-dir /path/to/output]
 """
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
@@ -21,6 +23,11 @@ MODEL_CONFIGS = {
         "model_name": "martin-ha/toxic-comment-model",
         "default_output_dir": "/app/models/distilbert",
         "description": "DistilBERT toxicity classifier"
+    },
+    "toxic-bert": {
+        "model_name": "unitary/toxic-bert",
+        "default_output_dir": "/app/models/toxic-bert",
+        "description": "BERT multi-label classifier for Jigsaw Toxic Comment Taxonomy"
     },
     "spam": {
         "model_name": "mshenoda/roberta-spam",
@@ -70,17 +77,30 @@ def export_model(model_type: str, output_dir: str = None):
     print("[EXPORT] Exporting to ONNX...")
     dummy_input = tokenizer("This is a sample", return_tensors="pt")
 
+    # For multi-label models (toxic-bert), output shape should be fixed [batch_size, 6]
+    # For binary models, output shape should be fixed [batch_size, 2]
+    # Only make input dimensions dynamic to handle variable sequence lengths
+    dynamic_axes_config = {
+        "input_ids": {0: "batch_size", 1: "sequence_length"},
+        "attention_mask": {0: "batch_size", 1: "sequence_length"},
+    }
+    
+    # Only add dynamic output axis for binary models (2 outputs)
+    # Multi-label models (6 outputs) should have fixed output shape
+    if model_type == "toxic-bert":
+        # Fixed output shape [batch_size, 6] - don't make it dynamic
+        pass  # Don't add logits to dynamic_axes
+    else:
+        # Binary models can have dynamic batch dimension
+        dynamic_axes_config["logits"] = {0: "batch_size"}
+
     torch.onnx.export(
         model,
         (dummy_input["input_ids"], dummy_input["attention_mask"]),
         f"{output_dir}/model.onnx",
         input_names=["input_ids", "attention_mask"],
         output_names=["logits"],
-        dynamic_axes={
-            "input_ids": {0: "batch_size", 1: "sequence_length"},
-            "attention_mask": {0: "batch_size", 1: "sequence_length"},
-            "logits": {0: "batch_size"}
-        },
+        dynamic_axes=dynamic_axes_config,
         opset_version=18
     )
 

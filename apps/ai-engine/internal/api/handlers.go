@@ -132,7 +132,7 @@ type StatusResponse struct {
 // GenerateRequest represents a request to generate conversation starters
 type GenerateRequest struct {
 	Topic string `json:"topic" binding:"required"`
-	Style string `json:"style,omitempty"`
+	Style string `json:"style,omitempty"` 
 	Count int    `json:"count,omitempty"`
 }
 
@@ -247,7 +247,7 @@ func (h *Handler) GenerateConversationStarters(c *fiber.Ctx) error {
 	starters, err := h.generatorService.GenerateConversationStarters(c.Context(), req.CommunityTopic, req.Style)
 	if err != nil {
 		log.Printf("Generator service error: %v", err)
-
+		
 		if strings.Contains(err.Error(), "server is currently processing too many requests") {
 			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
 				"error":       "server is currently processing too many requests",
@@ -255,7 +255,7 @@ func (h *Handler) GenerateConversationStarters(c *fiber.Ctx) error {
 				"retry_after": "5 seconds",
 			})
 		}
-
+		
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate conversation starters", "details": err.Error()})
 	}
 
@@ -274,7 +274,7 @@ func (h *Handler) GetConcurrentStatus(c *fiber.Ctx) error {
 // GetModelConfig returns the current model configuration
 func (h *Handler) GetModelConfig(c *fiber.Ctx) error {
 	llmConfig := h.config.LLM
-
+	
 	config := fiber.Map{
 		"knowledge": fiber.Map{
 			"embedding_provider": llmConfig.KnowledgeEmbeddingProvider,
@@ -293,7 +293,7 @@ func (h *Handler) GetModelConfig(c *fiber.Ctx) error {
 		},
 		"max_concurrent": llmConfig.MaxConcurrent,
 	}
-
+	
 	return c.JSON(fiber.Map{
 		"status": "success",
 		"data":   config,

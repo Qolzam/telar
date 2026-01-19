@@ -154,12 +154,22 @@ services:
       RAG_CHUNK_OVERLAP: ${RAG_CHUNK_OVERLAP:-800}
       
       # Feature: Moderation
-      MODERATION_ONNX_TOXICITY_MODEL_PATH: ${MODERATION_ONNX_TOXICITY_MODEL_PATH:-./models/distilbert/model.onnx}
+      MODERATION_ONNX_TOXICITY_MODEL_PATH: ${MODERATION_ONNX_TOXICITY_MODEL_PATH:-./models/toxic-bert/model.onnx}
       MODERATION_ONNX_SPAM_MODEL_PATH: ${MODERATION_ONNX_SPAM_MODEL_PATH:-./models/spam/model.onnx}
-      MODERATION_ONNX_TOXICITY_THRESHOLD: ${MODERATION_ONNX_TOXICITY_THRESHOLD:-0.90}
+      MODERATION_ONNX_TOXICITY_THRESHOLD: ${MODERATION_ONNX_TOXICITY_THRESHOLD:-0.60}
       MODERATION_ONNX_SPAM_THRESHOLD: ${MODERATION_ONNX_SPAM_THRESHOLD:-0.80}
       MODERATION_FALLBACK_PROVIDER: ${MODERATION_FALLBACK_PROVIDER:-ollama}
       MODERATION_FALLBACK_MODEL: ${MODERATION_FALLBACK_MODEL:-qwen2.5:1.5b}
+      
+      # Multi-label ONNX thresholds (for toxic-bert model)
+      # Calibrated to prioritize specific harms over generic toxicity
+      # Priority order: Threat/Hate (low bar) -> Insult/Obscene (medium) -> Toxic (high bar)
+      MODERATION_ONNX_THRESHOLD_THREAT: ${MODERATION_ONNX_THRESHOLD_THREAT:-0.50}
+      MODERATION_ONNX_THRESHOLD_IDENTITY_HATE: ${MODERATION_ONNX_THRESHOLD_IDENTITY_HATE:-0.50}
+      MODERATION_ONNX_THRESHOLD_SEVERE_TOXIC: ${MODERATION_ONNX_THRESHOLD_SEVERE_TOXIC:-0.50}
+      MODERATION_ONNX_THRESHOLD_INSULT: ${MODERATION_ONNX_THRESHOLD_INSULT:-0.85}
+      MODERATION_ONNX_THRESHOLD_OBSCENE: ${MODERATION_ONNX_THRESHOLD_OBSCENE:-0.95}
+      MODERATION_ONNX_THRESHOLD_TOXIC: ${MODERATION_ONNX_THRESHOLD_TOXIC:-0.95}
       
       # Vector Database Configuration
       WEAVIATE_URL: ${WEAVIATE_URL:-http://weaviate:8080}
@@ -169,6 +179,8 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       CORS_ENABLED: ${CORS_ENABLED:-true}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      PROMPTS_PATH: ${PROMPTS_PATH:-/app/prompts}
+      PROMPT_VARIANT_OVERRIDE: ${PROMPT_VARIANT_OVERRIDE:-}  # For A/B testing: specify variant ID (e.g., "slm-strict-rules-v2")
       
       # Moderation Thresholds (Calibrated for qwen2.5:1.5b noise floor ~0.56)
       # Thresholds set above noise floor to prevent false positives from model confusion

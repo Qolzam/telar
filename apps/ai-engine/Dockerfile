@@ -55,6 +55,9 @@ COPY --from=builder /app/libs ./libs
 # Copy the public directory for static files
 COPY --from=builder /app/public ./public
 
+# Copy the prompts directory (Prompt Registry)
+COPY --from=builder /app/prompts ./prompts
+
 # Copy the Init Script
 COPY --from=builder /app/scripts/init-models.sh ./init-models.sh
 

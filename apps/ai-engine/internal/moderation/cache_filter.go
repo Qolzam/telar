@@ -9,7 +9,7 @@ import (
 )
 
 // InMemoryCache acts as a simple in-memory store for the demo.
-// 
+//
 // IMPORTANT PRODUCTION NOTE: This implementation has no TTL or eviction policy.
 // Every unique content hash will remain in memory indefinitely, which can lead
 // to memory leaks in long-running services. For production deployments, this
@@ -64,4 +64,3 @@ func generateHash(text string) string {
 	h.Write([]byte(text))
 	return hex.EncodeToString(h.Sum(nil))
 }
-

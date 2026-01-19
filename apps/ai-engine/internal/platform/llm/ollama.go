@@ -261,7 +261,7 @@ func (c *OllamaClient) GenerateEmbeddings(ctx context.Context, text string) ([]f
 			BaseURL: c.baseURL,
 			Model:   c.embeddingModel,
 			Cause:   fmt.Errorf("ollama API request failed with status %d: %s", resp.StatusCode, bodyStr),
-		}
+	}
 	}
 
 	decodeStart := time.Now()
@@ -313,7 +313,7 @@ func (c *OllamaClient) GenerateCompletion(ctx context.Context, modelType ModelTy
 		Prompt: prompt,
 		Stream: false,
 	}
-
+	
 	// Enforce JSON format for classification tasks (moderation analysis)
 	if modelType == ModelTypeClassification {
 		reqBody.Format = "json"

@@ -31,29 +31,34 @@ type LLMConfig struct {
 	OpenAIAPIKey      string `json:"openai_api_key,omitempty"`
 	OpenAIBaseURL     string `json:"openai_base_url,omitempty"`
 	GlobalONNXLibPath string `json:"global_onnx_lib_path,omitempty"`
-	MaxConcurrent      int    `json:"max_concurrent,omitempty"` // Required by generator service
+	MaxConcurrent     int    `json:"max_concurrent,omitempty"` // Required by generator service
 
 	// Feature: Knowledge (RAG)
 	KnowledgeEmbeddingProvider string `json:"knowledge_embedding_provider,omitempty"`
 	KnowledgeEmbeddingModel    string `json:"knowledge_embedding_model,omitempty"`
-	RAGContextMaxChars         int    `json:"rag_context_max_chars,omitempty"`         // Max context length in characters (default: 2000)
-	RAGMaxResponseTokens       int    `json:"rag_max_response_tokens,omitempty"`       // Max tokens to generate (default: 300)
-	RAGTopK                    int    `json:"rag_top_k,omitempty"`                    // Number of documents to retrieve (default: 5)
-	RAGChunkSize               int    `json:"rag_chunk_size,omitempty"`               // Chunk size in characters for document splitting (default: 4000)
-	RAGChunkOverlap            int    `json:"rag_chunk_overlap,omitempty"`            // Overlap size in characters between chunks (default: 800)
+	RAGContextMaxChars         int    `json:"rag_context_max_chars,omitempty"`   // Max context length in characters (default: 2000)
+	RAGMaxResponseTokens       int    `json:"rag_max_response_tokens,omitempty"` // Max tokens to generate (default: 300)
+	RAGTopK                    int    `json:"rag_top_k,omitempty"`               // Number of documents to retrieve (default: 5)
+	RAGChunkSize               int    `json:"rag_chunk_size,omitempty"`          // Chunk size in characters for document splitting (default: 4000)
+	RAGChunkOverlap            int    `json:"rag_chunk_overlap,omitempty"`       // Overlap size in characters between chunks (default: 800)
 
 	// Feature: Generator
 	GeneratorProvider string `json:"generator_provider,omitempty"`
 	GeneratorModel    string `json:"generator_model,omitempty"`
 
+	// Prompt Registry
+	PromptsPath           string `json:"prompts_path,omitempty"`            // Path to prompts directory (default: apps/ai-engine/prompts)
+	PromptVariantOverride string `json:"prompt_variant_override,omitempty"` // Override variant selection for A/B testing (e.g., "slm-strict-rules-v2")
+
 	// Feature: Moderation
-	ModerationONNXModelPath    string `json:"moderation_onnx_model_path,omitempty"`     // Legacy: single ONNX model (deprecated, use ModerationONNXToxicityModelPath)
-	ModerationONNXToxicityModelPath string `json:"moderation_onnx_toxicity_model_path,omitempty"` // Toxicity ONNX model
-	ModerationONNXSpamModelPath     string `json:"moderation_onnx_spam_model_path,omitempty"`     // Spam ONNX model
-	ModerationONNXToxicityThreshold  float64 `json:"moderation_onnx_toxicity_threshold,omitempty"` // Threshold for toxicity flagging (default: 0.90)
-	ModerationONNXSpamThreshold     float64 `json:"moderation_onnx_spam_threshold,omitempty"`     // Threshold for spam flagging (default: 0.80)
-	ModerationFallbackProvider string `json:"moderation_fallback_provider,omitempty"`
-	ModerationFallbackModel    string `json:"moderation_fallback_model,omitempty"`
+	ModerationONNXModelPath         string             `json:"moderation_onnx_model_path,omitempty"`          // Legacy: single ONNX model (deprecated, use ModerationONNXToxicityModelPath)
+	ModerationONNXToxicityModelPath string             `json:"moderation_onnx_toxicity_model_path,omitempty"` // Toxicity ONNX model
+	ModerationONNXSpamModelPath     string             `json:"moderation_onnx_spam_model_path,omitempty"`     // Spam ONNX model
+	ModerationONNXToxicityThreshold float64            `json:"moderation_onnx_toxicity_threshold,omitempty"`  // Threshold for binary toxicity flagging (default: 0.60)
+	ModerationONNXSpamThreshold     float64            `json:"moderation_onnx_spam_threshold,omitempty"`      // Threshold for spam flagging (default: 0.80)
+	ModerationONNXThresholds        map[string]float64 `json:"moderation_onnx_thresholds,omitempty"`          // Thresholds map for multi-label models (toxic-bert)
+	ModerationFallbackProvider      string             `json:"moderation_fallback_provider,omitempty"`
+	ModerationFallbackModel         string             `json:"moderation_fallback_model,omitempty"`
 
 	// Moderation Thresholds (required by analyzer)
 	ModerationToxicityThreshold       float64 `json:"moderation_toxicity_threshold,omitempty"`
@@ -75,35 +80,48 @@ func Load() (*Config, error) {
 	viper.SetDefault("HOST", "0.0.0.0")
 	viper.SetDefault("READ_TIMEOUT", "30s")
 	viper.SetDefault("WRITE_TIMEOUT", "30s")
-	
+
 	// Global Infrastructure
 	viper.SetDefault("OLLAMA_BASE_URL", "http://localhost:11434")
 	viper.SetDefault("OPENAI_BASE_URL", "https://api.openai.com/v1")
 	viper.SetDefault("GLOBAL_ONNX_LIB_PATH", "./libs/libonnxruntime.so")
 	viper.SetDefault("MAX_CONCURRENT", "2")
-	
+
 	// Feature: Knowledge
 	viper.SetDefault("KNOWLEDGE_EMBEDDING_PROVIDER", "ollama")
 	viper.SetDefault("KNOWLEDGE_EMBEDDING_MODEL", "nomic-embed-text")
-	viper.SetDefault("RAG_CONTEXT_MAX_CHARS", 2000)      // Limit context to 2000 chars for faster inference
-	viper.SetDefault("RAG_MAX_RESPONSE_TOKENS", 300)     // Limit response to 300 tokens (~1200 chars)
-	viper.SetDefault("RAG_TOP_K", 5)                     // Retrieve top 5 documents
-	viper.SetDefault("RAG_CHUNK_SIZE", 4000)             // Chunk size in characters (~1000 tokens)
-	viper.SetDefault("RAG_CHUNK_OVERLAP", 800)           // Overlap size in characters (~200 tokens)
-	
+	viper.SetDefault("RAG_CONTEXT_MAX_CHARS", 2000)  // Limit context to 2000 chars for faster inference
+	viper.SetDefault("RAG_MAX_RESPONSE_TOKENS", 300) // Limit response to 300 tokens (~1200 chars)
+	viper.SetDefault("RAG_TOP_K", 5)                 // Retrieve top 5 documents
+	viper.SetDefault("RAG_CHUNK_SIZE", 4000)         // Chunk size in characters (~1000 tokens)
+	viper.SetDefault("RAG_CHUNK_OVERLAP", 800)       // Overlap size in characters (~200 tokens)
+
 	// Feature: Generator
 	viper.SetDefault("GENERATOR_PROVIDER", "ollama")
 	viper.SetDefault("GENERATOR_MODEL", "llama3:8b")
-	
+
+	// Prompt Registry
+	viper.SetDefault("PROMPTS_PATH", "apps/ai-engine/prompts")
+	viper.SetDefault("PROMPT_VARIANT_OVERRIDE", "") // Empty = auto-select based on model
+
 	// Feature: Moderation
 	viper.SetDefault("MODERATION_ONNX_MODEL_PATH", "") // Legacy: backward compatibility
 	viper.SetDefault("MODERATION_ONNX_TOXICITY_MODEL_PATH", "")
 	viper.SetDefault("MODERATION_ONNX_SPAM_MODEL_PATH", "")
-	viper.SetDefault("MODERATION_ONNX_TOXICITY_THRESHOLD", 0.90) // Threshold for toxicity flagging
+	viper.SetDefault("MODERATION_ONNX_TOXICITY_THRESHOLD", 0.60) // Threshold for binary toxicity flagging (calibrated for martin-ha/toxic-comment-model output distribution)
 	viper.SetDefault("MODERATION_ONNX_SPAM_THRESHOLD", 0.80)     // Threshold for spam flagging
 	viper.SetDefault("MODERATION_FALLBACK_PROVIDER", "ollama")
 	viper.SetDefault("MODERATION_FALLBACK_MODEL", "qwen2.5:1.5b")
-	
+
+	// Multi-label ONNX thresholds (for toxic-bert model)
+	// Set defaults that solve the "I hate Mondays" false positive problem
+	viper.SetDefault("MODERATION_ONNX_THRESHOLD_TOXIC", 0.95)         // High bar for generic toxicity (Allows "I hate Mondays")
+	viper.SetDefault("MODERATION_ONNX_THRESHOLD_SEVERE_TOXIC", 0.80)  // Threshold for severe toxicity
+	viper.SetDefault("MODERATION_ONNX_THRESHOLD_OBSCENE", 0.95)       // Allow mild swearing
+	viper.SetDefault("MODERATION_ONNX_THRESHOLD_THREAT", 0.70)        // Low bar for violence (Catch "Break legs")
+	viper.SetDefault("MODERATION_ONNX_THRESHOLD_INSULT", 0.85)        // Medium bar for insults
+	viper.SetDefault("MODERATION_ONNX_THRESHOLD_IDENTITY_HATE", 0.70) // Low bar for racism
+
 	viper.SetDefault("WEAVIATE_URL", "http://localhost:9077")
 	viper.SetDefault("INTERNAL_API_KEY", "")
 
@@ -124,7 +142,7 @@ func Load() (*Config, error) {
 			OpenAIBaseURL:     viper.GetString("OPENAI_BASE_URL"),
 			GlobalONNXLibPath: viper.GetString("GLOBAL_ONNX_LIB_PATH"),
 			MaxConcurrent:     viper.GetInt("MAX_CONCURRENT"),
-			
+
 			// Feature: Knowledge
 			KnowledgeEmbeddingProvider: viper.GetString("KNOWLEDGE_EMBEDDING_PROVIDER"),
 			KnowledgeEmbeddingModel:    viper.GetString("KNOWLEDGE_EMBEDDING_MODEL"),
@@ -132,21 +150,26 @@ func Load() (*Config, error) {
 			RAGMaxResponseTokens:       viper.GetInt("RAG_MAX_RESPONSE_TOKENS"),
 			RAGTopK:                    viper.GetInt("RAG_TOP_K"),
 			RAGChunkSize:               viper.GetInt("RAG_CHUNK_SIZE"),
-			RAGChunkOverlap:             viper.GetInt("RAG_CHUNK_OVERLAP"),
-			
+			RAGChunkOverlap:            viper.GetInt("RAG_CHUNK_OVERLAP"),
+
 			// Feature: Generator
 			GeneratorProvider: viper.GetString("GENERATOR_PROVIDER"),
 			GeneratorModel:    viper.GetString("GENERATOR_MODEL"),
-			
+
+			// Prompt Registry
+			PromptsPath:           viper.GetString("PROMPTS_PATH"),
+			PromptVariantOverride: viper.GetString("PROMPT_VARIANT_OVERRIDE"),
+
 			// Feature: Moderation
 			ModerationONNXModelPath:         viper.GetString("MODERATION_ONNX_MODEL_PATH"), // Legacy
 			ModerationONNXToxicityModelPath: viper.GetString("MODERATION_ONNX_TOXICITY_MODEL_PATH"),
 			ModerationONNXSpamModelPath:     viper.GetString("MODERATION_ONNX_SPAM_MODEL_PATH"),
 			ModerationONNXToxicityThreshold: viper.GetFloat64("MODERATION_ONNX_TOXICITY_THRESHOLD"),
 			ModerationONNXSpamThreshold:     viper.GetFloat64("MODERATION_ONNX_SPAM_THRESHOLD"),
+			ModerationONNXThresholds:        buildONNXThresholdsMap(), // Build thresholds map from env vars
 			ModerationFallbackProvider:      viper.GetString("MODERATION_FALLBACK_PROVIDER"),
 			ModerationFallbackModel:         viper.GetString("MODERATION_FALLBACK_MODEL"),
-			
+
 			// Moderation Thresholds
 			ModerationToxicityThreshold:       viper.GetFloat64("MODERATION_TOXICITY_THRESHOLD"),
 			ModerationSpamThreshold:           viper.GetFloat64("MODERATION_SPAM_THRESHOLD"),
@@ -187,7 +210,7 @@ func (c *Config) validate() error {
 		}
 	default:
 		return fmt.Errorf("unsupported knowledge embedding provider: %s (supported: ollama, openai)", knowledgeProvider)
-		}
+	}
 
 	// Validate Generator Provider
 	generatorProvider := c.LLM.GeneratorProvider
@@ -248,4 +271,16 @@ func (c *Config) validate() error {
 	}
 
 	return nil
+}
+
+// buildONNXThresholdsMap builds the thresholds map for multi-label ONNX models from environment variables
+func buildONNXThresholdsMap() map[string]float64 {
+	thresholds := make(map[string]float64)
+	thresholds["toxic"] = viper.GetFloat64("MODERATION_ONNX_THRESHOLD_TOXIC")
+	thresholds["severe_toxic"] = viper.GetFloat64("MODERATION_ONNX_THRESHOLD_SEVERE_TOXIC")
+	thresholds["obscene"] = viper.GetFloat64("MODERATION_ONNX_THRESHOLD_OBSCENE")
+	thresholds["threat"] = viper.GetFloat64("MODERATION_ONNX_THRESHOLD_THREAT")
+	thresholds["insult"] = viper.GetFloat64("MODERATION_ONNX_THRESHOLD_INSULT")
+	thresholds["identity_hate"] = viper.GetFloat64("MODERATION_ONNX_THRESHOLD_IDENTITY_HATE")
+	return thresholds
 }
