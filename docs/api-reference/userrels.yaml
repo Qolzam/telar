@@ -11,7 +11,7 @@ info:
     url: https://github.com/qolzam/telar/blob/master/LICENSE
 
 servers:
-  - url: http://localhost:3000/userrels
+  - url: http://localhost:4000/userrels
     description: Development server
 
 paths:

@@ -77,7 +77,7 @@ docker-compose up
 
 Your Telar instance is now running!
 *   **API:** `http://localhost:9099`
-*   **Web App:** `http://localhost:3000`
+*   **Web App:** `http://localhost:4000`
 
 For more detailed setup and configuration, please see our [**Full Documentation**](./docs/README.md).
 

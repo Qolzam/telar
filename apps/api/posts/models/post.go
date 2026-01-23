@@ -239,6 +239,10 @@ type PostResponse struct {
 	Permission       string            `json:"permission"`
 	Version          string            `json:"version,omitempty"`
 	LatestComments   []CommentPreview  `json:"latestComments,omitempty"`
+
+	// Moderation fields
+	Status            string                 `json:"status"`                      // published, needs_moderation, rejected, analysis_failed
+	ModerationDetails map[string]interface{} `json:"moderationDetails,omitempty"` // Raw moderation details from AI Engine
 }
 
 // CommentPreview is a lightweight view of a comment for feed previews

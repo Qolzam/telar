@@ -87,7 +87,7 @@ func TestSignupService_SaveAndUpdateVerification_Coverage(t *testing.T) {
 			Secret: "test-secret",
 		},
 		AppConfig: platformconfig.AppConfig{
-			WebDomain: "http://localhost:3000",
+			WebDomain: "http://localhost:4000",
 		},
 	}
 	s := NewService(verifRepo, serviceConfig)

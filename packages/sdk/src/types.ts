@@ -316,6 +316,18 @@ export interface Post {
   version?: string;
   createdDate: number;
   lastUpdated?: number;
+
+  // Moderation fields (Glass Box visibility)
+  status: 'published' | 'needs_moderation' | 'rejected' | 'analysis_failed';
+  moderationDetails?: {
+    is_flagged?: boolean;
+    flag_reason?: string;
+    scores?: Record<string, number>;
+    confidence?: number;
+    suggested_action?: string;
+    model_used?: string;
+    [key: string]: unknown;
+  };
 }
 
 /**

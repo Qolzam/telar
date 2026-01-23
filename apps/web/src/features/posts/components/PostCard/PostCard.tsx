@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import React from 'react';
-import { Avatar, Card, CardHeader, CardContent, CardActions, IconButton, Typography, Box, Button, Stack, Dialog, DialogTitle, DialogContent, DialogActions, TextField } from '@mui/material';
+import { Avatar, Card, CardHeader, CardContent, CardActions, IconButton, Typography, Box, Button, Stack, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Alert, AlertTitle } from '@mui/material';
 import { useTheme, alpha } from '@mui/material/styles';
 import { ChatBubbleOutlineTwoTone, Share } from '@mui/icons-material';
 import type { Post } from '@telar/sdk';
@@ -85,6 +85,8 @@ export function PostCard({ post }: PostCardProps) {
 
   const contentParts = parseContent(post.body || '');
 
+  const isUnderReview = post.status === 'needs_moderation';
+
   return (
     <Card 
       sx={{ 
@@ -96,6 +98,8 @@ export function PostCard({ post }: PostCardProps) {
           ? '0 12px 40px rgba(0, 0, 0, 0.45)'
           : '0 2px 4px -2px rgba(23, 23, 23, 0.06), 0 4px 8px -2px rgba(23, 23, 23, 0.10)',
         overflow: 'hidden',
+        opacity: isUnderReview && isOwner ? 0.85 : 1,
+        borderColor: isUnderReview && isOwner ? theme.palette.warning.main : cardBorder,
       }}
     >
       <CardHeader
@@ -158,6 +162,33 @@ export function PostCard({ post }: PostCardProps) {
         }}
       />
       <CardContent sx={{ px: '20px', py: '16px' }}>
+        {isUnderReview && isOwner && (
+          <Box sx={{ mb: 2 }}>
+            <Alert severity="warning" variant="outlined">
+              <AlertTitle>Post Under Review</AlertTitle>
+              <Typography variant="body2" sx={{ mb: 0.5 }}>
+                This post was flagged by the AI Guardian and is currently awaiting moderator review.
+              </Typography>
+              {post.moderationDetails?.flag_reason && (
+                <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                  Reason: {post.moderationDetails.flag_reason}
+                </Typography>
+              )}
+              {post.moderationDetails?.scores && (
+                <Typography variant="caption" color="text.secondary">
+                  Top signal:{' '}
+                  {Object.entries(post.moderationDetails.scores)
+                    .sort(([, a], [, b]) => (b ?? 0) - (a ?? 0))
+                    .slice(0, 1)
+                    .map(([key, value]) => `${key}: ${Math.round((value ?? 0) * 100)}%`)}
+                </Typography>
+              )}
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                This post is visible only to you until a moderator approves or rejects it.
+              </Typography>
+            </Alert>
+          </Box>
+        )}
         {isEditing ? (
           <Stack spacing={2}>
             <TextField

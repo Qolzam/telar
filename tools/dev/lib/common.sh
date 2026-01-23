@@ -20,7 +20,7 @@ log_banner() { echo -e "${CYAN}$1${NC}"; }
 
 # Common Config
 export API_URL="http://localhost:9099"
-export WEB_URL="http://localhost:3000"
+export WEB_URL="http://localhost:4000"
 export BASE_URL="http://127.0.0.1:9099"
 export AUTH_BASE="${BASE_URL}/auth"
 export MAILHOG_URL="http://localhost:8025"

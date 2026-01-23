@@ -175,7 +175,7 @@ success "✓ Comments E2E passed"
 echo ""
 
 log ">> Running Comments Optimization Tests (Enterprise Test Protocol)..."
-log "   Prerequisites: clean-dbs, restart-servers, seed/users.sh 2"
+log "   Prerequisites: clean-dbs, api-reset, seed/users.sh 2"
 log "   Seeding test users..."
 if ! bash "${SCRIPT_DIR}/../seed/users.sh" 2 > /dev/null 2>&1; then
     warning "User seeding had issues, but continuing..."

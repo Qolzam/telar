@@ -15,24 +15,46 @@ export interface MembersListResponse {
   offset: number;
 }
 
-export interface ModerationDetails {
-  flag_reason?: string;
-  is_flagged?: boolean;
-  scores?: Record<string, number>;
-  suggested_action?: string;
-  model_used?: string;
-  analysis_time_ms?: number;
-  confidence?: number;
-  timestamp?: string;
+// Match the Go struct `ModerationScores`
+export interface ModerationScores {
+  toxic?: number;
+  severe_toxic?: number;
+  obscene?: number;
+  threat?: number;
+  insult?: number;
+  identity_hate?: number;
+  spam?: number;
+  misinformation?: number;
+  // Backward compatibility: support old keys
+  toxicity?: number;
+  sexual?: number;
+  violence?: number;
 }
 
+// Match the Go struct `ModerationDetails`
+export interface ModerationDetails {
+  is_flagged: boolean;
+  flag_reason: string;
+  scores: ModerationScores;
+  confidence: number;
+  suggested_action: "approve" | "review_needed";
+  model_used: string; // Critical for the "Forensic Badge"
+  timestamp: string;
+  error?: string; // For analysis_failed posts
+  analysis_status?: string;
+  analysis_time_ms?: number; // Backward compatibility
+}
+
+// Match the Go struct `FlaggedPost`
 export interface FlaggedPost {
   id: string;
   content: string;
   authorId: string;
   authorName: string;
+  authorAvatar?: string;
+  createdAt: number; // Unix timestamp
+  status: "needs_moderation" | "published" | "rejected" | "analysis_failed";
   moderationDetails: ModerationDetails | null;
-  createdAt: number;
 }
 
 export interface ModerationListResponse {

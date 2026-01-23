@@ -197,7 +197,7 @@ func (c *TestConfig) ToPlatformConfig(dbType string) *platformconfig.Config {
 		Security: platformconfig.SecurityConfig{
 			RecaptchaKey:    "test-recaptcha-key",
 			RecaptchaSiteKey: "test-recaptcha-site-key",
-			Origin:          "http://localhost:3000",
+			Origin:          "http://localhost:4000",
 		},
 		App: platformconfig.AppConfig{
 			Name:            "test-app",

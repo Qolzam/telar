@@ -39,7 +39,7 @@ func (p *Pipeline) Execute(ctx context.Context, text string) (*ModerationResult,
 			if result.IsFlagged {
 				p.cache.Set(text, result)
 				return result, nil
-			}
+		}
 
 			if i == len(processingLayers)-1 {
 				p.cache.Set(text, result)

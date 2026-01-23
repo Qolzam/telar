@@ -14,7 +14,7 @@ check_port_free() {
     local name=$2
     if lsof -ti:$port >/dev/null 2>&1; then
         log_error "Port $port is in use by another process. Cannot start $name."
-        log_error "Run 'make stop-servers' first."
+        log_error "Run 'make api-stop' first."
         return 1
     fi
     return 0
@@ -23,7 +23,7 @@ check_port_free() {
 prepare_env() {
     mkdir -p "$LOG_DIR" "$BIN_DIR"
     local api_port="${API_PORT:-9099}"
-    local web_port="${WEB_PORT:-3000}"
+    local web_port="${WEB_PORT:-4000}"
     check_port_free "$api_port" "API Server" || exit 1
     check_port_free "$web_port" "Web Server" || exit 1
 }
@@ -62,7 +62,7 @@ start_api() {
 start_web() {
     log_info "Starting Web Server (pnpm dev)..."
     cd "$PROJECT_ROOT/apps/web"
-    local web_port="${WEB_PORT:-3000}"
+    local web_port="${WEB_PORT:-4000}"
     nohup pnpm dev > "$LOG_DIR/web.log" 2>&1 &
     local pid=$!
     echo "$pid" > "$LOG_DIR/web.pid"
@@ -85,13 +85,13 @@ main() {
     start_api
     start_web
     local api_port="${API_PORT:-9099}"
-    local web_port="${WEB_PORT:-3000}"
+    local web_port="${WEB_PORT:-4000}"
     echo ""
     log_banner "✅ Environment Active"
     echo "   📡 API: http://localhost:$api_port"
     echo "   🌐 Web: http://localhost:$web_port"
     echo "   📜 Logs: $LOG_DIR/api.log | $LOG_DIR/web.log"
-    echo "   🛑 Stop: make stop-servers"
+    echo "   🛑 Stop: make api-stop"
 }
 
 main "$@"

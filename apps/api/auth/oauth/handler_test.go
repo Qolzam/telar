@@ -19,7 +19,7 @@ func TestAuthorized_Security_Validation(t *testing.T) {
 
 	// Create OAuth config (minimal for test)
 	config := NewOAuthConfig(
-		"http://localhost:3000",
+		"http://localhost:4000",
 		"test_client",
 		"test_secret",
 		"test_google_client",
@@ -37,7 +37,7 @@ func TestAuthorized_Security_Validation(t *testing.T) {
 			Secret: "test-secret",
 		},
 		AppConfig: platformconfig.AppConfig{
-			WebDomain: "http://localhost:3000",
+			WebDomain: "http://localhost:4000",
 		},
 	}
 	service := NewService(nil, serviceConfig) // nil BaseService for this test

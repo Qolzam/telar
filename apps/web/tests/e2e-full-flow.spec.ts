@@ -13,7 +13,7 @@
  * 
  * Server Management:
  * - Uses `make dev` to start servers if not running
- * - Uses `make restart-servers` if servers need restart
+ * - Uses `make api-reset` if servers need restart
  * - Automatically checks server health before tests
  * 
  * How to Run:
@@ -51,7 +51,7 @@ function logTiming(phase: string, startTime: number, endTime?: number): number {
   return now;
 }
 
-const BASE_URL = 'http://127.0.0.1:3000';
+const BASE_URL = 'http://127.0.0.1:4000';
 const MAILHOG_URL = 'http://127.0.0.1:8025';
 const API_URL = 'http://127.0.0.1:9099';
 
@@ -129,12 +129,12 @@ async function startServers(): Promise<void> {
 }
 
 /**
- * Restart servers using make restart-servers
+ * Restart servers using make api-reset
  */
 async function restartServers(): Promise<void> {
-  console.log('Restarting servers with make restart-servers...');
+  console.log('Restarting servers with make api-reset...');
   try {
-    execSync('cd /home/office/projects/telar/web-team/telar-new-arch && make restart-servers', {
+    execSync('cd /home/office/projects/telar/web-team/telar-new-arch && make api-reset', {
       stdio: 'pipe',
       timeout: 60000,
     });
@@ -244,7 +244,7 @@ test.describe('Full E2E Flow Test', () => {
     if (!webReady) {
       // Don't restart automatically - this spawns processes that prevent test completion
       // User should start servers manually with: make dev
-      throw new Error(`Web server not ready. Please run 'make dev' manually and ensure http://127.0.0.1:3000 is accessible.`);
+      throw new Error(`Web server not ready. Please run 'make dev' manually and ensure http://127.0.0.1:4000 is accessible.`);
     }
     
     const apiServerCheckStart = getTimestamp();
@@ -589,7 +589,7 @@ test.describe('Full E2E Flow Test', () => {
   test.afterAll(async () => {
     console.log('=== Test completed ===');
     // Servers will continue running for other tests
-    // Use make stop-servers if you want to stop them
+    // Use make api-stop if you want to stop them
   });
 });
 

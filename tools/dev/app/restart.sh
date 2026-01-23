@@ -34,7 +34,7 @@ kill_port() {
 stop_servers_safe() {
     log_info "Stopping servers by Port Authority..."
     kill_port 9099 "API Server"
-    kill_port 3000 "Web Server"
+    kill_port 4000 "Web Server"
     kill_port 8081 "Profile Service"
     rm -f "$LOG_DIR/api.pid" "$LOG_DIR/web.pid"
     log_info "Servers stopped safely"
@@ -95,33 +95,33 @@ start_web_server() {
     fi
     echo "$web_pid" > "$LOG_DIR/web.pid" 2>/dev/null || true
     log_info "Next.js process launched (PID: $web_pid)"
-    log_info "Waiting for Web Server to bind port 3000..."
+    log_info "Waiting for Web Server to bind port 4000..."
     local attempts=0
     local max_attempts=90
     while [ $attempts -lt $max_attempts ]; do
         local port_bound=false
-        if lsof -ti:3000 >/dev/null 2>&1; then
+        if lsof -ti:4000 >/dev/null 2>&1; then
             port_bound=true
-        elif ss -tlnp 2>/dev/null | grep -q ":3000 "; then
+        elif ss -tlnp 2>/dev/null | grep -q ":4000 "; then
             port_bound=true
-        elif netstat -tlnp 2>/dev/null | grep -q ":3000 "; then
+        elif netstat -tlnp 2>/dev/null | grep -q ":4000 "; then
             port_bound=true
         fi
         if [ "$port_bound" = true ]; then
-            if curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/login 2>/dev/null | grep -q "200\|404\|500"; then
-                log_info "✓ Web Server is listening on port 3000 and responding to HTTP."
+            if curl -s -o /dev/null -w "%{http_code}" http://localhost:4000/login 2>/dev/null | grep -q "200\|404\|500"; then
+                log_info "✓ Web Server is listening on port 4000 and responding to HTTP."
                 return 0
             fi
         fi
-        if curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/login 2>/dev/null | grep -q "200\|404\|500"; then
+        if curl -s -o /dev/null -w "%{http_code}" http://localhost:4000/login 2>/dev/null | grep -q "200\|404\|500"; then
             log_info "✓ Web Server is responding to HTTP requests."
             return 0
         fi
         if grep -q "Ready in" "$LOG_DIR/web.log" 2>/dev/null; then
             sleep 5
             for i in 1 2 3 4 5; do
-                if lsof -ti:3000 >/dev/null 2>&1; then
-                    log_info "✓ Web Server is listening on port 3000."
+                if lsof -ti:4000 >/dev/null 2>&1; then
+                    log_info "✓ Web Server is listening on port 4000."
                     return 0
                 fi
                 sleep 2
@@ -131,8 +131,8 @@ start_web_server() {
                 if kill -0 "$saved_pid" 2>/dev/null; then
                     log_warn "Server says Ready but port not bound. Process alive, waiting longer..."
                     sleep 5
-                    if lsof -ti:3000 >/dev/null 2>&1; then
-                        log_info "✓ Web Server is listening on port 3000 (delayed binding)."
+                    if lsof -ti:4000 >/dev/null 2>&1; then
+                        log_info "✓ Web Server is listening on port 4000 (delayed binding)."
                         return 0
                     fi
                 fi
@@ -142,15 +142,15 @@ start_web_server() {
         attempts=$((attempts+1))
     done
     local port_bound=false
-    if lsof -ti:3000 >/dev/null 2>&1; then
+    if lsof -ti:4000 >/dev/null 2>&1; then
         port_bound=true
-    elif ss -tlnp 2>/dev/null | grep -q ":3000 "; then
+    elif ss -tlnp 2>/dev/null | grep -q ":4000 "; then
         port_bound=true
-    elif netstat -tlnp 2>/dev/null | grep -q ":3000 "; then
+    elif netstat -tlnp 2>/dev/null | grep -q ":4000 "; then
         port_bound=true
     fi
     if [ "$port_bound" = true ]; then
-        log_info "✓ Web Server is listening on port 3000 (HTTP check timed out, but port is bound)."
+        log_info "✓ Web Server is listening on port 4000 (HTTP check timed out, but port is bound)."
         return 0
     fi
     log_error "Web Server failed to start after $max_attempts seconds."
@@ -188,7 +188,7 @@ main() {
     start_servers
     log_info "✅ Servers restarted with fresh builds"
     echo "📡 API: http://localhost:9099"
-    echo "🌐 Web: http://localhost:3000"
+    echo "🌐 Web: http://localhost:4000"
     echo ""
     echo "📋 Logs:"
     echo "   API: tail -f $LOG_DIR/api.log"
