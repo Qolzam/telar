@@ -5,8 +5,8 @@
 # ==============================================================================
 
 API_URL="http://localhost:9066/api/v1/analyze/content"
-# Internal API Key (empty string is allowed for development)
-AUTH_TOKEN="${INTERNAL_API_KEY:-}"
+# API Key for authentication (use AI_ENGINE_INTERNAL_API_KEY or INTERNAL_API_KEY)
+AUTH_TOKEN="${AI_ENGINE_INTERNAL_API_KEY:-${INTERNAL_API_KEY:-}}"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -37,7 +37,7 @@ run_test() {
     start_time=$(date +%s%N)
     response=$(curl -s -X POST "$API_URL" \
         -H "Content-Type: application/json" \
-        -H "X-Internal-API-Key: $AUTH_TOKEN" \
+        -H "Authorization: Bearer $AUTH_TOKEN" \
         -d "$json_input")
     duration=$(( ($(date +%s%N) - $start_time) / 1000000 ))
 

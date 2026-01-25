@@ -15,6 +15,7 @@ import (
 	"github.com/qolzam/telar/apps/ai-engine/internal/knowledge"
 	"github.com/qolzam/telar/apps/ai-engine/internal/moderation"
 	"github.com/qolzam/telar/apps/ai-engine/internal/platform/llm"
+	"github.com/qolzam/telar/apps/ai-engine/internal/types"
 )
 
 // Handler contains HTTP handlers for AI Engine endpoints
@@ -132,7 +133,7 @@ type StatusResponse struct {
 // GenerateRequest represents a request to generate conversation starters
 type GenerateRequest struct {
 	Topic string `json:"topic" binding:"required"`
-	Style string `json:"style,omitempty"` 
+	Style string `json:"style,omitempty"`
 	Count int    `json:"count,omitempty"`
 }
 
@@ -188,7 +189,7 @@ func (h *Handler) Ingest(c *fiber.Ctx) error {
 // Query processes knowledge query requests using RAG
 func (h *Handler) Query(c *fiber.Ctx) error {
 	endToEndStart := time.Now()
-	
+
 	var req QueryRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -206,7 +207,7 @@ func (h *Handler) Query(c *fiber.Ctx) error {
 
 	result, err := h.knowledgeService.QueryKnowledge(c.Context(), queryReq)
 	endToEndDuration := time.Since(endToEndStart)
-	
+
 	if err != nil {
 		log.Printf("[RAG] End-to-end query failed question_len=%d total_duration_ms=%d error=%v",
 			len(req.Question), endToEndDuration.Milliseconds(), err)
@@ -247,7 +248,7 @@ func (h *Handler) GenerateConversationStarters(c *fiber.Ctx) error {
 	starters, err := h.generatorService.GenerateConversationStarters(c.Context(), req.CommunityTopic, req.Style)
 	if err != nil {
 		log.Printf("Generator service error: %v", err)
-		
+
 		if strings.Contains(err.Error(), "server is currently processing too many requests") {
 			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
 				"error":       "server is currently processing too many requests",
@@ -255,7 +256,7 @@ func (h *Handler) GenerateConversationStarters(c *fiber.Ctx) error {
 				"retry_after": "5 seconds",
 			})
 		}
-		
+
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate conversation starters", "details": err.Error()})
 	}
 
@@ -274,7 +275,7 @@ func (h *Handler) GetConcurrentStatus(c *fiber.Ctx) error {
 // GetModelConfig returns the current model configuration
 func (h *Handler) GetModelConfig(c *fiber.Ctx) error {
 	llmConfig := h.config.LLM
-	
+
 	config := fiber.Map{
 		"knowledge": fiber.Map{
 			"embedding_provider": llmConfig.KnowledgeEmbeddingProvider,
@@ -293,7 +294,7 @@ func (h *Handler) GetModelConfig(c *fiber.Ctx) error {
 		},
 		"max_concurrent": llmConfig.MaxConcurrent,
 	}
-	
+
 	return c.JSON(fiber.Map{
 		"status": "success",
 		"data":   config,
@@ -355,6 +356,15 @@ func (h *Handler) ServeDemo(c *fiber.Ctx) error {
 
 // AnalyzeContent handles content moderation analysis requests
 func (h *Handler) AnalyzeContent(c *fiber.Ctx) error {
+	// Extract tenant/app context (available from APIKeyAuth middleware)
+	tenantID := c.Locals(types.CtxTenantID)
+	appID := c.Locals(types.CtxAppID)
+
+	// Log tenant/app for debugging
+	if tenantID != nil && appID != nil {
+		log.Printf("[MODERATION] Request from tenant_id=%v, app_id=%v", tenantID, appID)
+	}
+
 	var req analyzer.AnalysisRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -385,7 +395,7 @@ func (h *Handler) AnalyzeContent(c *fiber.Ctx) error {
 		Scores:          result.Scores,
 		SuggestedAction: result.SuggestedAction,
 		ModelUsed:       result.ModelUsed, // Include which model/layer made the decision
-		Timestamp:       "", // Will be set below
+		Timestamp:       "",               // Will be set below
 	}
 
 	// Extract confidence from scores if available

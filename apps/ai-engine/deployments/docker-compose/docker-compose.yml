@@ -200,6 +200,14 @@ services:
       
       # Model Management
       SKIP_MODEL_DOWNLOAD: ${SKIP_MODEL_DOWNLOAD:-false}  # Changed default: try R2 download if configured
+      
+      # Database Configuration
+      POSTGRES_HOST: ${POSTGRES_HOST:-telar-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USERNAME: ${POSTGRES_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE:-ai_engine}
+      POSTGRES_SSL_MODE: ${POSTGRES_SSL_MODE:-disable}
     ports:
       - "${AI_ENGINE_PORT:-9066}:${AI_ENGINE_PORT:-9066}"
     depends_on:

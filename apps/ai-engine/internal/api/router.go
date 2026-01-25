@@ -8,12 +8,13 @@ import (
 	"github.com/qolzam/telar/apps/ai-engine/internal/config"
 	"github.com/qolzam/telar/apps/ai-engine/internal/generator"
 	"github.com/qolzam/telar/apps/ai-engine/internal/knowledge"
-	"github.com/qolzam/telar/apps/ai-engine/internal/middleware/internalauth"
+	"github.com/qolzam/telar/apps/ai-engine/internal/middleware"
 	"github.com/qolzam/telar/apps/ai-engine/internal/moderation"
+	"github.com/qolzam/telar/apps/ai-engine/internal/repository"
 )
 
 // Router creates and configures the Fiber application with middleware and routes
-func Router(knowledgeService *knowledge.Service, generatorService *generator.Service, modPipeline *moderation.Pipeline, config *config.Config) *fiber.App {
+func Router(knowledgeService *knowledge.Service, generatorService *generator.Service, modPipeline *moderation.Pipeline, config *config.Config, appRepo repository.AppRepository) *fiber.App {
 	handler := NewHandler(knowledgeService, generatorService, modPipeline, config)
 
 	app := fiber.New(fiber.Config{
@@ -43,10 +44,9 @@ func Router(knowledgeService *knowledge.Service, generatorService *generator.Ser
 	v1.Post("/generate/conversation-starters", handler.GenerateConversationStarters)
 	v1.Get("/concurrent-status", handler.GetConcurrentStatus)
 	v1.Get("/model-config", handler.GetModelConfig)
-	
-	// Internal API routes (require API key authentication)
-	internalAuth := internalauth.New(config.InternalAPIKey)
-	v1.Post("/analyze/content", internalAuth, handler.AnalyzeContent)
+
+	apiKeyAuth := middleware.APIKeyAuth(appRepo)
+	v1.Post("/analyze/content", apiKeyAuth, handler.AnalyzeContent)
 
 	return app
 }

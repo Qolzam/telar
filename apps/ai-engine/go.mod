@@ -6,8 +6,11 @@ toolchain go1.24.7
 
 require (
 	github.com/gofiber/fiber/v2 v2.52.9
+	github.com/gofrs/uuid v3.2.0+incompatible
 	github.com/google/uuid v1.6.0
+	github.com/jmoiron/sqlx v1.4.0
 	github.com/joho/godotenv v1.3.0
+	github.com/lib/pq v1.10.9
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	github.com/sugarme/tokenizer v0.3.0
@@ -15,6 +18,8 @@ require (
 	github.com/weaviate/weaviate v1.27.0
 	github.com/weaviate/weaviate-go-client/v4 v4.16.1
 	github.com/yalue/onnxruntime_go v1.25.0
+	golang.org/x/crypto v0.29.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -79,7 +84,6 @@ require (
 	github.com/yargevad/filepathx v1.0.0 // indirect
 	go.mongodb.org/mongo-driver v1.14.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/crypto v0.29.0 // indirect
 	golang.org/x/exp v0.0.0-20230713183714-613f0c0eb8a1 // indirect
 	golang.org/x/net v0.29.0 // indirect
 	golang.org/x/oauth2 v0.23.0 // indirect
@@ -88,5 +92,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240903143218-8af14fe29dc1 // indirect
 	google.golang.org/grpc v1.66.2 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

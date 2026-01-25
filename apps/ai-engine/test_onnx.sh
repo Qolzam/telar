@@ -5,7 +5,7 @@
 set -e
 
 API_URL="http://localhost:9066/api/v1/analyze/content"
-API_KEY="${INTERNAL_API_KEY:-test-key}"
+API_KEY="${AI_ENGINE_INTERNAL_API_KEY:-${INTERNAL_API_KEY:-test-key}}"
 
 echo "=========================================="
 echo "ONNX Performance Proof Test"
@@ -19,7 +19,7 @@ echo "---"
 START_TIME=$(date +%s%N)
 RESPONSE=$(curl -s -X POST "$API_URL" \
   -H "Content-Type: application/json" \
-  -H "X-Internal-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{"content": "You are an idiot"}')
 END_TIME=$(date +%s%N)
 ELAPSED_MS=$(( (END_TIME - START_TIME) / 1000000 ))
@@ -38,7 +38,7 @@ echo "---"
 START_TIME=$(date +%s%N)
 RESPONSE=$(curl -s -X POST "$API_URL" \
   -H "Content-Type: application/json" \
-  -H "X-Internal-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{"content": "I strongly disagree with this approach."}')
 END_TIME=$(date +%s%N)
 ELAPSED_MS=$(( (END_TIME - START_TIME) / 1000000 ))
@@ -57,7 +57,7 @@ echo "---"
 START_TIME=$(date +%s%N)
 RESPONSE=$(curl -s -X POST "$API_URL" \
   -H "Content-Type: application/json" \
-  -H "X-Internal-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{"content": "I love this community."}')
 END_TIME=$(date +%s%N)
 ELAPSED_MS=$(( (END_TIME - START_TIME) / 1000000 ))

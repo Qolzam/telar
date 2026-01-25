@@ -144,7 +144,7 @@ The AI Engine utilizes a **Tiered Pipeline Architecture** to balance cost, speed
 # Analyze content for moderation
 curl -X POST http://localhost:9066/api/v1/analyze/content \
   -H "Content-Type: application/json" \
-  -H "X-Internal-API-Key: your-api-key" \
+  -H "Authorization: Bearer your-api-key" \
   -d '{"content": "Text to analyze"}'
 
 # Response

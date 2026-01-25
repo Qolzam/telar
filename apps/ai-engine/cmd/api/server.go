@@ -16,7 +16,7 @@ import (
 
 // startServer starts the HTTP server and returns the app instance
 func startServer(services *Services, cfg *config.Config) *fiber.App {
-	app := api.Router(services.KnowledgeService, services.GeneratorService, services.ModPipeline, cfg)
+	app := api.Router(services.KnowledgeService, services.GeneratorService, services.ModPipeline, cfg, services.AppRepo)
 
 	addr := fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port)
 	log.Printf("Starting %s %s on %s", serviceName, serviceVersion, addr)

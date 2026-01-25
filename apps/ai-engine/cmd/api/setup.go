@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 
+	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
 	"github.com/qolzam/telar/apps/ai-engine/internal/analyzer"
 	"github.com/qolzam/telar/apps/ai-engine/internal/config"
 	"github.com/qolzam/telar/apps/ai-engine/internal/generator"
@@ -11,6 +14,7 @@ import (
 	"github.com/qolzam/telar/apps/ai-engine/internal/moderation"
 	"github.com/qolzam/telar/apps/ai-engine/internal/platform/weaviate"
 	"github.com/qolzam/telar/apps/ai-engine/internal/prompt"
+	"github.com/qolzam/telar/apps/ai-engine/internal/repository"
 	ort "github.com/yalue/onnxruntime_go"
 )
 
@@ -20,6 +24,45 @@ type Services struct {
 	GeneratorService *generator.Service
 	ModPipeline      *moderation.Pipeline
 	WeaviateClient   *weaviate.Client
+	TenantRepo       *repository.PostgresTenantRepository
+	AppRepo          *repository.PostgresAppRepository
+}
+
+// initializeDatabase initializes PostgreSQL database connection
+func initializeDatabase(ctx context.Context, cfg *config.Config) (*sqlx.DB, error) {
+	connStr := fmt.Sprintf(
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		cfg.Database.Postgres.Host,
+		cfg.Database.Postgres.Port,
+		cfg.Database.Postgres.Username,
+		cfg.Database.Postgres.Password,
+		cfg.Database.Postgres.Database,
+		cfg.Database.Postgres.SSLMode,
+	)
+
+	db, err := sqlx.ConnectContext(ctx, "postgres", connStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
+	}
+
+	// Configure connection pool
+	if cfg.Database.Postgres.MaxOpenConns > 0 {
+		db.SetMaxOpenConns(cfg.Database.Postgres.MaxOpenConns)
+	}
+	if cfg.Database.Postgres.MaxIdleConns > 0 {
+		db.SetMaxIdleConns(cfg.Database.Postgres.MaxIdleConns)
+	}
+	if cfg.Database.Postgres.ConnMaxLifetime > 0 {
+		db.SetConnMaxLifetime(cfg.Database.Postgres.ConnMaxLifetime)
+	}
+
+	// Test connection
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to ping PostgreSQL: %w", err)
+	}
+
+	return db, nil
 }
 
 // initializeONNX initializes ONNX Runtime if configured
@@ -250,6 +293,19 @@ func initializeModerationPipeline(cfg *config.Config) (*moderation.Pipeline, err
 func initializeServices(ctx context.Context, cfg *config.Config) (*Services, error) {
 	log.Println("=== Initializing Domain-Driven LLM Architecture ===")
 
+	// Initialize database connection
+	db, err := initializeDatabase(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize database: %w", err)
+	}
+	log.Printf("✓ PostgreSQL database connected (host: %s, db: %s)",
+		cfg.Database.Postgres.Host, cfg.Database.Postgres.Database)
+
+	// Initialize repositories
+	tenantRepo := repository.NewPostgresTenantRepository(db)
+	appRepo := repository.NewPostgresAppRepository(db)
+	log.Printf("✓ Repositories initialized")
+
 	initializeONNX(cfg.LLM.GlobalONNXLibPath)
 
 	weaviateClient, err := initializeWeaviate(ctx, cfg)
@@ -277,6 +333,8 @@ func initializeServices(ctx context.Context, cfg *config.Config) (*Services, err
 		GeneratorService: generatorService,
 		ModPipeline:      modPipeline,
 		WeaviateClient:   weaviateClient,
+		TenantRepo:       tenantRepo,
+		AppRepo:          appRepo,
 	}, nil
 }
 

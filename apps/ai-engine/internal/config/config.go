@@ -12,7 +12,7 @@ type Config struct {
 	Server         ServerConfig   `json:"server"`
 	LLM            LLMConfig      `json:"llm"`
 	Weaviate       WeaviateConfig `json:"weaviate"`
-	InternalAPIKey string         `json:"internal_api_key,omitempty"`
+	Database       DatabaseConfig `json:"database"`
 }
 
 // ServerConfig contains HTTP server settings
@@ -74,6 +74,24 @@ type WeaviateConfig struct {
 	APIKey string `json:"api_key,omitempty"`
 }
 
+// DatabaseConfig contains PostgreSQL settings
+type DatabaseConfig struct {
+	Postgres PostgresConfig `json:"postgres"`
+}
+
+// PostgresConfig contains PostgreSQL connection settings
+type PostgresConfig struct {
+	Host            string        `json:"host"`
+	Port            int           `json:"port"`
+	Username        string        `json:"username"`
+	Password        string        `json:"password"`
+	Database        string        `json:"database"`
+	SSLMode         string        `json:"ssl_mode"`
+	MaxOpenConns    int           `json:"max_open_conns"`
+	MaxIdleConns    int           `json:"max_idle_conns"`
+	ConnMaxLifetime time.Duration `json:"conn_max_lifetime"`
+}
+
 // Load reads configuration from environment variables with sensible defaults
 func Load() (*Config, error) {
 	viper.SetDefault("PORT", "9066")
@@ -123,7 +141,17 @@ func Load() (*Config, error) {
 	viper.SetDefault("MODERATION_ONNX_THRESHOLD_IDENTITY_HATE", 0.70) // Low bar for racism
 
 	viper.SetDefault("WEAVIATE_URL", "http://localhost:9077")
-	viper.SetDefault("INTERNAL_API_KEY", "")
+
+	// Database Configuration
+	viper.SetDefault("POSTGRES_HOST", "localhost")
+	viper.SetDefault("POSTGRES_PORT", 5432)
+	viper.SetDefault("POSTGRES_USERNAME", "postgres")
+	viper.SetDefault("POSTGRES_PASSWORD", "postgres")
+	viper.SetDefault("POSTGRES_DATABASE", "ai_engine")
+	viper.SetDefault("POSTGRES_SSL_MODE", "disable")
+	viper.SetDefault("POSTGRES_MAX_OPEN_CONNS", 25)
+	viper.SetDefault("POSTGRES_MAX_IDLE_CONNS", 25)
+	viper.SetDefault("POSTGRES_CONN_MAX_LIFETIME", "300s")
 
 	viper.AutomaticEnv()
 
@@ -181,7 +209,19 @@ func Load() (*Config, error) {
 			URL:    viper.GetString("WEAVIATE_URL"),
 			APIKey: viper.GetString("WEAVIATE_API_KEY"),
 		},
-		InternalAPIKey: viper.GetString("INTERNAL_API_KEY"),
+		Database: DatabaseConfig{
+			Postgres: PostgresConfig{
+				Host:            viper.GetString("POSTGRES_HOST"),
+				Port:            viper.GetInt("POSTGRES_PORT"),
+				Username:        viper.GetString("POSTGRES_USERNAME"),
+				Password:        viper.GetString("POSTGRES_PASSWORD"),
+				Database:        viper.GetString("POSTGRES_DATABASE"),
+				SSLMode:         viper.GetString("POSTGRES_SSL_MODE"),
+				MaxOpenConns:    viper.GetInt("POSTGRES_MAX_OPEN_CONNS"),
+				MaxIdleConns:    viper.GetInt("POSTGRES_MAX_IDLE_CONNS"),
+				ConnMaxLifetime: viper.GetDuration("POSTGRES_CONN_MAX_LIFETIME"),
+			},
+		},
 	}
 
 	if err := config.validate(); err != nil {

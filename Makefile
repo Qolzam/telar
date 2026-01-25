@@ -331,6 +331,8 @@ help:
 	@echo "  ai-reset        - Reset AI Engine (clear all data and restart)."
 	@echo "  ai-status       - Show AI Engine service status and URLs."
 	@echo "  ai-export-models - Export ONNX models using Docker (one-time setup)."
+	@echo "  ai-migrate      - Apply AI Engine database migrations."
+	@echo "  ai-seed         - Seed AI Engine database with test tenant/app."
 	@echo ""
 	@echo "E2E Testing:"
 	@echo "  test-e2e SERVICE=<name> - Run E2E tests for a service (auth, posts, comments, profile)."
@@ -490,3 +492,11 @@ ai-export-models:
 	@echo ""
 	@echo "Exported models:"
 	@ls -lh apps/ai-engine/models/*/model.onnx 2>/dev/null || echo "  No models found (check export logs above)"
+
+ai-migrate:
+	@echo "Applying AI Engine database migrations..."
+	@bash apps/ai-engine/scripts/migrate-db.sh
+
+ai-seed:
+	@echo "Seeding AI Engine database with test data..."
+	@cd apps/ai-engine && go run scripts/seed-db.go
