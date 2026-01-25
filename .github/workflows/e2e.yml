@@ -39,7 +39,7 @@ jobs:
         env:
           E2E_USERNAME: ${{ secrets.E2E_USERNAME }}
           E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
-          BASE_URL: http://localhost:3000
+          BASE_URL: http://localhost:4000
         run: pnpm run test:e2e
 
       - name: Upload Playwright report

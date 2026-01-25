@@ -5,24 +5,35 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/qolzam/telar/apps/ai-engine/internal/platform/llm"
 	"github.com/qolzam/telar/apps/ai-engine/internal/platform/weaviate"
+	"github.com/qolzam/telar/apps/ai-engine/internal/processor/chunker"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/prompts"
 )
 
 // Service provides knowledge management and retrieval functionality
 type Service struct {
-	embedClient    llm.EmbeddingClient
-	compClient     llms.Model
-	vectorClient   *weaviate.Client
-	embeddingModel string
+	embedClient       llm.EmbeddingClient
+	compClient        llms.Model
+	vectorClient      *weaviate.Client
+	chunker           *chunker.Chunker
+	embeddingModel    string
+	contextMaxChars   int
+	maxResponseTokens int
+	topK              int
 }
 
 // Config holds knowledge service configuration
 type Config struct {
-	EmbeddingModel string
+	EmbeddingModel    string
+	ContextMaxChars   int
+	MaxResponseTokens int
+	TopK              int
+	ChunkSize         int
+	ChunkOverlap      int
 }
 
 // QueryRequest represents a knowledge query request
@@ -63,52 +74,88 @@ type GenerationResponse struct {
 
 // NewService creates a new knowledge service instance
 func NewService(embedClient llm.EmbeddingClient, compClient llms.Model, vectorClient *weaviate.Client, config Config) *Service {
+	if config.ContextMaxChars == 0 {
+		config.ContextMaxChars = 2000
+	}
+	if config.MaxResponseTokens == 0 {
+		config.MaxResponseTokens = 300
+	}
+	if config.TopK == 0 {
+		config.TopK = 5
+	}
+
+	// Initialize chunker
+	chunkerInstance := chunker.NewChunker(chunker.Config{
+		ChunkSize:    config.ChunkSize,
+		ChunkOverlap: config.ChunkOverlap,
+	})
+
 	return &Service{
-		embedClient:    embedClient,
-		compClient:     compClient,
-		vectorClient:   vectorClient,
-		embeddingModel: config.EmbeddingModel,
+		embedClient:       embedClient,
+		compClient:        compClient,
+		vectorClient:      vectorClient,
+		chunker:           chunkerInstance,
+		embeddingModel:    config.EmbeddingModel,
+		contextMaxChars:   config.ContextMaxChars,
+		maxResponseTokens: config.MaxResponseTokens,
+		topK:              config.TopK,
 	}
 }
 
-// StoreDocument ingests a document by generating embeddings and storing in vector DB
+// StoreDocument ingests a document by chunking it, generating embeddings for each chunk, and storing in vector DB
 func (s *Service) StoreDocument(ctx context.Context, req *DocumentRequest) error {
-	log.Printf("Storing document: %s", req.ID)
+	log.Printf("Storing document: %s (text_len=%d)", req.ID, len(req.Text))
 
-	embedding, err := s.embedClient.GenerateEmbeddings(ctx, req.Text)
-	if err != nil {
-		return fmt.Errorf("failed to generate embeddings: %w", err)
+	// Step 1: Chunk the document
+	chunks := s.chunker.Split(req.Text)
+	log.Printf("Document %s split into %d chunks", req.ID, len(chunks))
+
+	// Step 2: Process each chunk
+	for i, textChunk := range chunks {
+		// Step 3: Generate embedding for the chunk
+		embedding, err := s.embedClient.GenerateEmbeddings(ctx, textChunk)
+		if err != nil {
+			// If we hit context limit here, it means our Chunker config is too aggressive
+			log.Printf("Failed to generate embedding for chunk %d of document %s: %v", i, req.ID, err)
+			return fmt.Errorf("failed to generate embeddings for chunk %d: %w", i, err)
+		}
+
+		// Step 4: Store chunk in vector DB
+		if err := s.vectorClient.StoreChunk(ctx, req.ID, i, textChunk, req.Metadata, embedding); err != nil {
+			log.Printf("Failed to store chunk %d of document %s: %v", i, req.ID, err)
+			return fmt.Errorf("failed to store chunk %d in vector DB: %w", i, err)
+		}
 	}
 
-	doc := &weaviate.Document{
-		ID:       req.ID,
-		Text:     req.Text,
-		Metadata: req.Metadata,
-	}
-
-	if err := s.vectorClient.StoreDocument(ctx, doc, embedding); err != nil {
-		return fmt.Errorf("failed to store document in vector DB: %w", err)
-	}
-
-	log.Printf("Successfully stored document: %s", req.ID)
+	log.Printf("Successfully stored document: %s (%d chunks)", req.ID, len(chunks))
 	return nil
 }
 
 // QueryKnowledge performs RAG: retrieves relevant documents and generates contextual answers
 func (s *Service) QueryKnowledge(ctx context.Context, req *QueryRequest) (*QueryResponse, error) {
-	log.Printf("Processing knowledge query: %s", req.Query)
+	totalStart := time.Now()
+	log.Printf("[RAG] Processing knowledge query: %s", req.Query)
 
+	embedStart := time.Now()
 	queryEmbedding, err := s.embedClient.GenerateEmbeddings(ctx, req.Query)
+	embedDuration := time.Since(embedStart)
+
 	if err != nil {
+		log.Printf("[RAG] Failed at embedding generation query_len=%d embedding_duration_ms=%d total_duration_ms=%d error=%v",
+			len(req.Query), embedDuration.Milliseconds(), time.Since(totalStart).Milliseconds(), err)
 		return nil, fmt.Errorf("failed to generate query embeddings: %w", err)
 	}
 
-	// Retrieve similar documents
-	searchResults, err := s.vectorClient.SearchSimilar(ctx, queryEmbedding, 5)
+	searchStart := time.Now()
+	searchResults, err := s.vectorClient.SearchSimilar(ctx, queryEmbedding, s.topK)
+	searchDuration := time.Since(searchStart)
 	if err != nil {
+		log.Printf("[RAG] Failed at vector search embedding_dim=%d search_duration_ms=%d total_duration_ms=%d error=%v",
+			len(queryEmbedding), searchDuration.Milliseconds(), time.Since(totalStart).Milliseconds(), err)
 		return nil, fmt.Errorf("failed to search similar documents: %w", err)
 	}
 
+	contextStart := time.Now()
 	prompt := prompts.NewPromptTemplate(
 		"You are an expert Q&A system. Use the following pieces of context to answer the question at the end. If you don't know the answer, just say that you don't know, don't try to make up an answer.\n\nContext:\n{{.context}}\n\nQuestion: {{.question}}\n\nHelpful Answer:",
 		[]string{"context", "question"},
@@ -116,9 +163,24 @@ func (s *Service) QueryKnowledge(ctx context.Context, req *QueryRequest) (*Query
 
 	var contextBuilder strings.Builder
 	var avgRelevance float32
+	var totalContextLen int
 
 	for i, result := range searchResults {
-		contextBuilder.WriteString(fmt.Sprintf("Source %d: %s\n", i+1, result.Document.Text))
+		docText := result.Document.Text
+		contextLinePrefix := fmt.Sprintf("Source %d: ", i+1)
+		remainingChars := s.contextMaxChars - totalContextLen - len(contextLinePrefix) - 1
+
+		if remainingChars <= 200 {
+			break
+		}
+
+		if len(docText) > remainingChars {
+			docText = docText[:remainingChars] + "..."
+		}
+
+		contextLine := contextLinePrefix + docText + "\n"
+		contextBuilder.WriteString(contextLine)
+		totalContextLen += len(docText)
 		avgRelevance += result.Score
 	}
 
@@ -130,12 +192,20 @@ func (s *Service) QueryKnowledge(ctx context.Context, req *QueryRequest) (*Query
 		"context":  contextBuilder.String(),
 		"question": req.Query,
 	})
+	contextDuration := time.Since(contextStart)
 	if err != nil {
+		log.Printf("[RAG] Failed at context preparation results_count=%d context_duration_ms=%d total_duration_ms=%d error=%v",
+			len(searchResults), contextDuration.Milliseconds(), time.Since(totalStart).Milliseconds(), err)
 		return nil, fmt.Errorf("failed to format prompt template: %w", err)
 	}
 
+	llmStart := time.Now()
 	completion, err := s.generateCompletion(ctx, formattedPrompt)
+	llmDuration := time.Since(llmStart)
+
 	if err != nil {
+		log.Printf("[RAG] Failed at LLM generation prompt_len=%d llm_duration_ms=%d total_duration_ms=%d error=%v",
+			len(formattedPrompt), llmDuration.Milliseconds(), time.Since(totalStart).Milliseconds(), err)
 		return nil, fmt.Errorf("failed to generate completion: %w", err)
 	}
 
@@ -146,7 +216,13 @@ func (s *Service) QueryKnowledge(ctx context.Context, req *QueryRequest) (*Query
 		RelevanceScore: avgRelevance,
 	}
 
-	log.Printf("Successfully generated answer for query: %s", req.Query)
+	totalDuration := time.Since(totalStart)
+	log.Printf("[RAG] Completed query=%s query_len=%d results_count=%d context_len=%d prompt_len=%d response_len=%d "+
+		"embedding_ms=%d search_ms=%d context_prep_ms=%d llm_ms=%d total_ms=%d avg_relevance=%.4f",
+		truncateString(req.Query, 50), len(req.Query), len(searchResults), totalContextLen, len(formattedPrompt), len(completion),
+		embedDuration.Milliseconds(), searchDuration.Milliseconds(), contextDuration.Milliseconds(), llmDuration.Milliseconds(),
+		totalDuration.Milliseconds(), avgRelevance)
+
 	return response, nil
 }
 
@@ -221,7 +297,7 @@ Create {{.count}} starters using THESE EXACT FORMATS:`,
 
 	response := &GenerationResponse{
 		Starters: starters,
-		Model:    "completion-model", 
+		Model:    "completion-model",
 	}
 
 	log.Printf("Successfully generated %d conversation starters for topic: %s", len(starters), req.Topic)
@@ -240,7 +316,7 @@ func (s *Service) parseConversationStarters(completion string) []string {
 		}
 
 		if strings.Contains(line, ".") && len(line) > 3 {
-			
+
 			parts := strings.SplitN(line, ".", 2)
 			if len(parts) == 2 {
 				firstPart := strings.TrimSpace(parts[0])
@@ -348,7 +424,20 @@ func (s *Service) transformToStatement(question, topic string) string {
 }
 
 func (s *Service) generateCompletion(ctx context.Context, prompt string) (string, error) {
-	return llms.GenerateFromSinglePrompt(ctx, s.compClient, prompt)
+	start := time.Now()
+	result, err := llms.GenerateFromSinglePrompt(ctx, s.compClient, prompt)
+	duration := time.Since(start)
+
+	if err != nil {
+		log.Printf("[TIMING] langchain_completion failed prompt_len=%d duration_ms=%d error=%v",
+			len(prompt), duration.Milliseconds(), err)
+		return "", err
+	}
+
+	log.Printf("[TIMING] langchain_completion prompt_len=%d response_len=%d duration_ms=%d",
+		len(prompt), len(result), duration.Milliseconds())
+
+	return result, nil
 }
 
 // HealthCheck verifies connectivity to all external dependencies
@@ -367,4 +456,15 @@ func (s *Service) HealthCheck(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// Helper function for logging
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen < 3 {
+		maxLen = 3
+	}
+	return s[:maxLen-3] + "..."
 }

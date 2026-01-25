@@ -9,7 +9,7 @@ import (
 
 // LLMAnalyzerAdapter wraps analyzer.Service to implement ContentModerator interface
 type LLMAnalyzerAdapter struct {
-	service *analyzer.Service
+	service   *analyzer.Service
 	modelName string
 }
 
@@ -57,4 +57,3 @@ func (a *LLMAnalyzerAdapter) Moderate(ctx context.Context, text string) (*Modera
 
 	return result, nil
 }
-

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qolzam/telar/apps/ai-engine/internal/prompt"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/prompts"
 )
@@ -81,6 +82,9 @@ func extractCompleteJSONObject(text string) string {
 // Service handles content analysis and moderation tasks
 type Service struct {
 	compClient              llms.Model
+	registry                *prompt.Registry
+	modelName               string
+	variantOverride         string
 	requestTimeout          time.Duration
 	toxicityThreshold       float64
 	spamThreshold           float64
@@ -104,19 +108,20 @@ type AnalysisResult struct {
 	Scores          map[string]float64 `json:"scores"`
 	Confidence      float64            `json:"confidence"`
 	Timestamp       string             `json:"timestamp"`
-	SuggestedAction string             `json:"suggested_action"` // "approve" or "review_needed"
+	SuggestedAction string             `json:"suggested_action"`     // "approve" or "review_needed"
+	ModelUsed       string             `json:"model_used,omitempty"` // e.g. "L3-ONNX-toxicity", "L3-ONNX-spam", "L3-Semantic-Model(qwen2.5:1.5b)"
 }
 
 // NewService creates a new analyzer service instance
-func NewService(compClient llms.Model, thresholds ...ModerationThresholds) *Service {
-	// Default thresholds (calibrated for qwen2.5:1.5b)
+// registry: The prompt registry for dynamic prompt selection
+// modelName: The name of the LLM model (e.g., "qwen2.5:1.5b", "llama3:8b") used for prompt matching
+func NewService(compClient llms.Model, registry *prompt.Registry, modelName string, thresholds ...ModerationThresholds) *Service {
 	toxicity := 0.50
 	spam := 0.45
 	sexual := 0.75
 	violence := 0.75
 	misinformation := 0.70
 
-	// Override with provided thresholds if any
 	if len(thresholds) > 0 {
 		t := thresholds[0]
 		if t.Toxicity > 0 {
@@ -138,6 +143,9 @@ func NewService(compClient llms.Model, thresholds ...ModerationThresholds) *Serv
 
 	return &Service{
 		compClient:              compClient,
+		registry:                registry,
+		modelName:               modelName,
+		variantOverride:         "", // Default: auto-select based on model
 		requestTimeout:          30 * time.Second,
 		toxicityThreshold:       toxicity,
 		spamThreshold:           spam,
@@ -145,6 +153,11 @@ func NewService(compClient llms.Model, thresholds ...ModerationThresholds) *Serv
 		violenceThreshold:       violence,
 		misinformationThreshold: misinformation,
 	}
+}
+
+// SetVariantOverride sets the variant override for A/B testing
+func (s *Service) SetVariantOverride(variantID string) {
+	s.variantOverride = variantID
 }
 
 // ModerationThresholds holds configurable moderation thresholds
@@ -158,36 +171,41 @@ type ModerationThresholds struct {
 
 // AnalyzeContent performs AI-based content moderation analysis
 func (s *Service) AnalyzeContent(ctx context.Context, content string) (*AnalysisResult, error) {
-	log.Printf("Analyzing content for moderation (length: %d chars)", len(content))
-
-	// Create a timeout context for this analysis
 	analysisCtx, cancel := context.WithTimeout(ctx, s.requestTimeout)
 	defer cancel()
 
-	// Construct the moderation prompt (simplified for SLM - only scores, no decisions)
-	// Prompt explicitly requests JSON format with no explanatory text
+	// Dynamic Prompt Selection: Get the appropriate template based on model
+	var templateStr string
+	var err error
+	var promptSource string
+
+	if s.registry != nil {
+		// Use variant override if set (for A/B testing)
+		templateStr, err = s.registry.GetTemplateWithOverride("moderation", s.modelName, s.variantOverride)
+		if err != nil {
+			log.Printf("Warning: Failed to get prompt template from registry: %v. Using fallback.", err)
+			templateStr = s.getFallbackPrompt()
+			promptSource = "fallback (registry error)"
+		} else {
+			if s.variantOverride != "" {
+				promptSource = fmt.Sprintf("registry (override: %s)", s.variantOverride)
+			} else {
+				promptSource = "registry"
+			}
+		}
+	} else {
+		// Registry not initialized, use fallback
+		templateStr = s.getFallbackPrompt()
+		promptSource = "fallback (no registry)"
+	}
+
+	log.Printf("[PROMPT] Using prompt from: %s (model: %s)", promptSource, s.modelName)
+
 	prompt := prompts.NewPromptTemplate(
-		`You are a JSON-only content moderation analyzer. Return ONLY valid JSON. No explanations, no markdown, no text before or after the JSON.
-
-Analyze this text and return a JSON object with scores:
-
-Text: "{{.content}}"
-
-Required JSON format:
-{
-  "scores": {
-    "toxicity": 0.0-1.0,
-    "sexual": 0.0-1.0,
-    "violence": 0.0-1.0,
-    "spam": 0.0-1.0,
-    "misinformation": 0.0-1.0
-  },
-  "confidence": 0.0-1.0
-}`,
+		templateStr,
 		[]string{"content"},
 	)
 
-	// Format the prompt with the content
 	formattedPrompt, err := prompt.Format(map[string]any{
 		"content": content,
 	})
@@ -195,42 +213,32 @@ Required JSON format:
 		return nil, fmt.Errorf("failed to format analysis prompt: %w", err)
 	}
 
-	// Call the LLM for analysis
 	response, err := llms.GenerateFromSinglePrompt(analysisCtx, s.compClient, formattedPrompt)
 	if err != nil {
 		return nil, fmt.Errorf("llm analysis failed: %w", err)
 	}
 
-	// Parse the JSON response
 	var result AnalysisResult
 
-	// Clean the response - some LLMs may add markdown code blocks or explanatory text
 	cleanedResponse := strings.TrimSpace(response)
 	cleanedResponse = strings.TrimPrefix(cleanedResponse, "```json")
 	cleanedResponse = strings.TrimPrefix(cleanedResponse, "```")
 	cleanedResponse = strings.TrimSuffix(cleanedResponse, "```")
 	cleanedResponse = strings.TrimSpace(cleanedResponse)
-
-	// Extract JSON object from response if there's text before it
-	// LLMs sometimes add explanatory text like "Here's my analysis: { ... }"
 	cleanedResponse = extractJSONFromText(cleanedResponse)
 
-	// Parse LLM response - simplified format (only scores), but backward-compatible with old format
 	var llmResponse struct {
 		Scores          map[string]float64 `json:"scores"`
 		Confidence      float64            `json:"confidence"`
-		IsFlagged       bool               `json:"is_flagged"`       // Ignored - we use policy
-		FlagReason      string             `json:"flag_reason"`      // Ignored - we generate from scores
-		SuggestedAction string             `json:"suggested_action"` // Ignored - we use policy
+		IsFlagged       bool               `json:"is_flagged"`
+		FlagReason      string             `json:"flag_reason"`
+		SuggestedAction string             `json:"suggested_action"`
 	}
 
 	if err := json.Unmarshal([]byte(cleanedResponse), &llmResponse); err != nil {
-		log.Printf("[AI-DEBUG] JSON Parse Error: %v", err)
-		log.Printf("[AI-DEBUG] Failed to parse LLM response as JSON. Raw response: %s", response)
 		return nil, fmt.Errorf("failed to parse analysis result: %w. Raw response: %s", err, response)
 	}
 
-	// Initialize result with LLM scores and confidence
 	result.Scores = llmResponse.Scores
 	result.Confidence = llmResponse.Confidence
 	if result.Scores == nil {
@@ -240,22 +248,29 @@ Required JSON format:
 	violationFound := false
 	violationReasons := []string{}
 
-	toxicityScore := result.Scores["toxicity"]
-	if toxicityScore > s.toxicityThreshold {
+	// Check new taxonomy keys (aligned with ONNX)
+	toxicScore := result.Scores["toxic"]
+	if toxicScore > s.toxicityThreshold {
 		violationFound = true
-		violationReasons = append(violationReasons, fmt.Sprintf("High Toxicity (%.2f)", toxicityScore))
+		violationReasons = append(violationReasons, fmt.Sprintf("High Toxicity (%.2f)", toxicScore))
 	}
 
-	sexualScore := result.Scores["sexual"]
-	if sexualScore > s.sexualThreshold {
+	threatScore := result.Scores["threat"]
+	if threatScore > s.violenceThreshold {
 		violationFound = true
-		violationReasons = append(violationReasons, fmt.Sprintf("Sexual Content (%.2f)", sexualScore))
+		violationReasons = append(violationReasons, fmt.Sprintf("Threat/Violence (%.2f)", threatScore))
 	}
 
-	violenceScore := result.Scores["violence"]
-	if violenceScore > s.violenceThreshold {
+	insultScore := result.Scores["insult"]
+	if insultScore > s.toxicityThreshold {
 		violationFound = true
-		violationReasons = append(violationReasons, fmt.Sprintf("Violence (%.2f)", violenceScore))
+		violationReasons = append(violationReasons, fmt.Sprintf("Personal Insult (%.2f)", insultScore))
+	}
+
+	identityHateScore := result.Scores["identity_hate"]
+	if identityHateScore > s.violenceThreshold {
+		violationFound = true
+		violationReasons = append(violationReasons, fmt.Sprintf("Hate Speech (%.2f)", identityHateScore))
 	}
 
 	spamScore := result.Scores["spam"]
@@ -270,6 +285,24 @@ Required JSON format:
 		violationReasons = append(violationReasons, fmt.Sprintf("Misinformation (%.2f)", misinformationScore))
 	}
 
+	// Backward compatibility: Check old keys if new keys not present
+	if toxicScore == 0 && result.Scores["toxicity"] > 0 {
+		if result.Scores["toxicity"] > s.toxicityThreshold {
+			violationFound = true
+			violationReasons = append(violationReasons, fmt.Sprintf("High Toxicity (%.2f)", result.Scores["toxicity"]))
+		}
+	}
+	if threatScore == 0 && result.Scores["violence"] > 0 {
+		if result.Scores["violence"] > s.violenceThreshold {
+			violationFound = true
+			violationReasons = append(violationReasons, fmt.Sprintf("Violence (%.2f)", result.Scores["violence"]))
+		}
+	}
+	if result.Scores["sexual"] > s.sexualThreshold {
+		violationFound = true
+		violationReasons = append(violationReasons, fmt.Sprintf("Sexual Content (%.2f)", result.Scores["sexual"]))
+	}
+
 	if violationFound {
 		result.IsFlagged = true
 		result.SuggestedAction = "review_needed"
@@ -282,7 +315,6 @@ Required JSON format:
 
 	result.Timestamp = time.Now().UTC().Format(time.RFC3339)
 
-	// Log the analysis result
 	if result.IsFlagged {
 		log.Printf("[CONTENT_FLAGGED] Reason: %s, Confidence: %.2f, Scores: %+v, Action: %s",
 			result.FlagReason, result.Confidence, result.Scores, result.SuggestedAction)
@@ -293,13 +325,25 @@ Required JSON format:
 	return &result, nil
 }
 
+// getFallbackPrompt returns a basic prompt template when registry is unavailable
+func (s *Service) getFallbackPrompt() string {
+	return `You are a Content Safety AI for a SOFTWARE DEVELOPER COMMUNITY. Analyze this text: """{{.content}}""" and return a JSON object with scores (0.0-1.0) for: toxic, threat, insult, identity_hate, spam, misinformation, and confidence.`
+}
+
+// truncateString truncates a string to the specified length
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen]
+}
+
 // HealthCheck verifies the analyzer service is operational
 func (s *Service) HealthCheck(ctx context.Context) error {
 	if s.compClient == nil {
 		return fmt.Errorf("completion client is not initialized")
 	}
 
-	// Perform a simple test analysis
 	testCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 

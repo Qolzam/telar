@@ -1,4 +1,24 @@
 services:
+  # Model Builder - One-time service to export ONNX models
+  model-builder:
+    build:
+      context: ../../../../  # Repo root (from deployments/docker-compose/)
+      dockerfile: apps/ai-engine/Dockerfile.model-builder
+    container_name: telar-model-builder
+    volumes:
+      # Shared volume for models (same as ai-engine uses)
+      - ../../models:/app/models
+    environment:
+      # Model types to export: "all", "toxicity", "spam", or "toxicity spam"
+      # Default: "all" (exports both toxicity and spam models)
+      MODEL_TYPES: ${MODEL_TYPES:-all}
+      # Optional: Skip if models already exist
+      SKIP_IF_EXISTS: ${SKIP_MODEL_EXPORT:-false}
+    profiles:
+      - model-export  # Only run when explicitly requested
+    networks:
+      - telar-network
+
   # Ollama LLM Service
   ollama:
     image: ollama/ollama:latest
@@ -12,13 +32,56 @@ services:
       - ollama_data:/root/.ollama
     networks:
       - telar-network
+    deploy:
+      resources:
+        limits:
+          cpus: '8'        # Use all 8 CPU cores for better inference performance
+          memory: 16G      # Allocate sufficient memory for model loading
+        reservations:
+          cpus: '4'        # Reserve minimum 4 cores
+          memory: 12G      # Reserve minimum memory for model
+    environment:
+      # Optimize Ollama for CPU inference with multiple cores
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-1}
+      - OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS:-1}
+      - OLLAMA_NUM_THREAD=${OLLAMA_NUM_THREAD:-8}  # Use all 8 cores
     healthcheck:
-      # Use curl which is available in Ollama container, or simple TCP check
-      test: ["CMD-SHELL", "curl -f http://localhost:11434/api/tags || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      # Ollama container - use ollama CLI to check health
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # Ollama Model Init - Pulls required models after Ollama is healthy
+  ollama-init:
+    image: alpine:latest
+    container_name: telar-ollama-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      # Feature: Knowledge
+      KNOWLEDGE_EMBEDDING_PROVIDER: ${KNOWLEDGE_EMBEDDING_PROVIDER:-ollama}
+      KNOWLEDGE_EMBEDDING_MODEL: ${KNOWLEDGE_EMBEDDING_MODEL:-nomic-embed-text}
+      # Feature: Generator
+      GENERATOR_PROVIDER: ${GENERATOR_PROVIDER:-ollama}
+      GENERATOR_MODEL: ${GENERATOR_MODEL:-llama3:8b}
+      # Feature: Moderation
+      MODERATION_FALLBACK_PROVIDER: ${MODERATION_FALLBACK_PROVIDER:-ollama}
+      MODERATION_FALLBACK_MODEL: ${MODERATION_FALLBACK_MODEL:-qwen2.5:1.5b}
+      # Performance: Skip warmup for existing models (set to "true" to enable warmup)
+      WARMUP_EXISTING_MODELS: ${WARMUP_EXISTING_MODELS:-false}
+    volumes:
+      # Mount the init script (from docker-compose directory)
+      - ./init-ollama.sh:/init-ollama.sh:ro
+    networks:
+      - telar-network
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "apk add --no-cache curl bash && /bin/bash /init-ollama.sh"
+    restart: "no"  # Init container runs once and exits
 
   # Weaviate Vector Database
   weaviate:
@@ -31,10 +94,19 @@ services:
       PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
       DEFAULT_VECTORIZER_MODULE: 'none'
       CLUSTER_HOSTNAME: 'node1'
+      RECOUNT_PROPERTIES_AT_STARTUP: 'true'  # Auto-heal corrupted property length tracker files
     ports:
       - "${WEAVIATE_PORT:-9077}:8080"
     volumes:
       - weaviate_data:/var/lib/weaviate
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+        reservations:
+          cpus: '2'
+          memory: 2G
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/v1/.well-known/ready"]
       interval: 10s
@@ -58,33 +130,46 @@ services:
       SERVER_HOST: ${SERVER_HOST:-localhost}
       SERVER_ENV: ${SERVER_ENV:-development}
       
-      # Fully Configurable LLM Configuration
-      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}        # Supported: ollama, openai
-      COMPLETION_PROVIDER: ${COMPLETION_PROVIDER:-ollama}      # Supported: ollama, groq, openai, openrouter 
-      
-      # Ollama Configuration
+      # Global Infrastructure
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
-      COMPLETION_MODEL: ${COMPLETION_MODEL:-llama3:8b}  # Legacy: defaults to generation model
-      OLLAMA_GENERATION_MODEL: ${OLLAMA_GENERATION_MODEL:-llama3:8b}
-      OLLAMA_CLASSIFICATION_MODEL: ${OLLAMA_CLASSIFICATION_MODEL:-qwen2.5:1.5b}
-      
-      # Groq Configuration (Completions only - does not support embeddings)
       GROQ_API_KEY: ${GROQ_API_KEY:-}
-      GROQ_MODEL: ${GROQ_MODEL:-llama-3.1-8b-instant}  # Legacy: defaults to generation model
-      GROQ_GENERATION_MODEL: ${GROQ_GENERATION_MODEL:-llama-3.1-8b-instant}
-      GROQ_CLASSIFICATION_MODEL: ${GROQ_CLASSIFICATION_MODEL:-llama-3.1-8b-instant}
-      
-      # OpenAI Configuration (Optional for embeddings and/or completions)
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-3.5-turbo}  # Legacy: defaults to generation model
-      OPENAI_GENERATION_MODEL: ${OPENAI_GENERATION_MODEL:-gpt-4o}
-      OPENAI_CLASSIFICATION_MODEL: ${OPENAI_CLASSIFICATION_MODEL:-gpt-3.5-turbo}
+      GLOBAL_ONNX_LIB_PATH: ${GLOBAL_ONNX_LIB_PATH:-./libs/libonnxruntime.so}
+      MAX_CONCURRENT: ${MAX_CONCURRENT:-2}
       
-      # OpenRouter Configuration (Uses OpenAI compatibility - completions only)
-      # Note: OpenRouter does not support embeddings
-      # Use OPENAI_API_KEY, OPENAI_BASE_URL, and OPENAI_MODEL for OpenRouter
+      # Feature: Knowledge (RAG)
+      KNOWLEDGE_EMBEDDING_PROVIDER: ${KNOWLEDGE_EMBEDDING_PROVIDER:-ollama}
+      KNOWLEDGE_EMBEDDING_MODEL: ${KNOWLEDGE_EMBEDDING_MODEL:-nomic-embed-text}
+      
+      # Feature: Generator
+      GENERATOR_PROVIDER: ${GENERATOR_PROVIDER:-ollama}
+      GENERATOR_MODEL: ${GENERATOR_MODEL:-llama3:8b}
+      
+      # RAG Performance Optimization
+      RAG_CONTEXT_MAX_CHARS: ${RAG_CONTEXT_MAX_CHARS:-2000}
+      RAG_MAX_RESPONSE_TOKENS: ${RAG_MAX_RESPONSE_TOKENS:-300}
+      RAG_TOP_K: ${RAG_TOP_K:-5}
+      RAG_CHUNK_SIZE: ${RAG_CHUNK_SIZE:-4000}
+      RAG_CHUNK_OVERLAP: ${RAG_CHUNK_OVERLAP:-800}
+      
+      # Feature: Moderation
+      MODERATION_ONNX_TOXICITY_MODEL_PATH: ${MODERATION_ONNX_TOXICITY_MODEL_PATH:-./models/toxic-bert/model.onnx}
+      MODERATION_ONNX_SPAM_MODEL_PATH: ${MODERATION_ONNX_SPAM_MODEL_PATH:-./models/spam/model.onnx}
+      MODERATION_ONNX_TOXICITY_THRESHOLD: ${MODERATION_ONNX_TOXICITY_THRESHOLD:-0.60}
+      MODERATION_ONNX_SPAM_THRESHOLD: ${MODERATION_ONNX_SPAM_THRESHOLD:-0.80}
+      MODERATION_FALLBACK_PROVIDER: ${MODERATION_FALLBACK_PROVIDER:-ollama}
+      MODERATION_FALLBACK_MODEL: ${MODERATION_FALLBACK_MODEL:-qwen2.5:1.5b}
+      
+      # Multi-label ONNX thresholds (for toxic-bert model)
+      # Calibrated to prioritize specific harms over generic toxicity
+      # Priority order: Threat/Hate (low bar) -> Insult/Obscene (medium) -> Toxic (high bar)
+      MODERATION_ONNX_THRESHOLD_THREAT: ${MODERATION_ONNX_THRESHOLD_THREAT:-0.50}
+      MODERATION_ONNX_THRESHOLD_IDENTITY_HATE: ${MODERATION_ONNX_THRESHOLD_IDENTITY_HATE:-0.50}
+      MODERATION_ONNX_THRESHOLD_SEVERE_TOXIC: ${MODERATION_ONNX_THRESHOLD_SEVERE_TOXIC:-0.50}
+      MODERATION_ONNX_THRESHOLD_INSULT: ${MODERATION_ONNX_THRESHOLD_INSULT:-0.85}
+      MODERATION_ONNX_THRESHOLD_OBSCENE: ${MODERATION_ONNX_THRESHOLD_OBSCENE:-0.95}
+      MODERATION_ONNX_THRESHOLD_TOXIC: ${MODERATION_ONNX_THRESHOLD_TOXIC:-0.95}
       
       # Vector Database Configuration
       WEAVIATE_URL: ${WEAVIATE_URL:-http://weaviate:8080}
@@ -94,24 +179,56 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       CORS_ENABLED: ${CORS_ENABLED:-true}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      PROMPTS_PATH: ${PROMPTS_PATH:-/app/prompts}
+      PROMPT_VARIANT_OVERRIDE: ${PROMPT_VARIANT_OVERRIDE:-}  # For A/B testing: specify variant ID (e.g., "slm-strict-rules-v2")
       
-      # Moderation Thresholds
-      MODERATION_TOXICITY_THRESHOLD: ${MODERATION_TOXICITY_THRESHOLD:-0.50}
-      MODERATION_SPAM_THRESHOLD: ${MODERATION_SPAM_THRESHOLD:-0.45}
-      MODERATION_SEXUAL_THRESHOLD: ${MODERATION_SEXUAL_THRESHOLD:-0.75}
-      MODERATION_VIOLENCE_THRESHOLD: ${MODERATION_VIOLENCE_THRESHOLD:-0.75}
-      MODERATION_MISINFORMATION_THRESHOLD: ${MODERATION_MISINFORMATION_THRESHOLD:-0.70}
+      # Moderation Thresholds (Calibrated for qwen2.5:1.5b noise floor ~0.56)
+      # Thresholds set above noise floor to prevent false positives from model confusion
+      MODERATION_TOXICITY_THRESHOLD: ${MODERATION_TOXICITY_THRESHOLD:-0.75}
+      MODERATION_SPAM_THRESHOLD: ${MODERATION_SPAM_THRESHOLD:-0.75}
+      MODERATION_SEXUAL_THRESHOLD: ${MODERATION_SEXUAL_THRESHOLD:-0.80}
+      MODERATION_VIOLENCE_THRESHOLD: ${MODERATION_VIOLENCE_THRESHOLD:-0.80}
+      MODERATION_MISINFORMATION_THRESHOLD: ${MODERATION_MISINFORMATION_THRESHOLD:-0.80}
+      
+      # R2 Configuration (for model download)
+      R2_ENDPOINT: ${R2_ENDPOINT:-}
+      R2_BUCKET_NAME: ${R2_BUCKET_NAME:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_PUBLIC_URL: ${R2_PUBLIC_URL:-}
+      R2_MODEL_PREFIX: ${R2_MODEL_PREFIX:-models/distilbert/}
+      
+      # Model Management
+      SKIP_MODEL_DOWNLOAD: ${SKIP_MODEL_DOWNLOAD:-false}  # Changed default: try R2 download if configured
+      
+      # Database Configuration
+      POSTGRES_HOST: ${POSTGRES_HOST:-telar-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USERNAME: ${POSTGRES_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE:-ai_engine}
+      POSTGRES_SSL_MODE: ${POSTGRES_SSL_MODE:-disable}
     ports:
       - "${AI_ENGINE_PORT:-9066}:${AI_ENGINE_PORT:-9066}"
     depends_on:
       ollama:
-        condition: service_started
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully  # Wait for models to be pulled
       weaviate:
         condition: service_healthy
+      # Optional: Wait for model-builder if running
+      model-builder:
+        condition: service_completed_successfully
+        required: false  # Don't fail if model-builder isn't running
     networks:
       - telar-network
     volumes:
       - ai_engine_logs:/app/logs
+      # Mount models directory for ONNX (decoupled data pattern - not baked into image)
+      - ../../models:/app/models:ro
+      # Libs are baked into image, but can be overridden via mount if needed
+      # - ../../libs:/app/libs:ro
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:9066/health || exit 1"]
       interval: 30s

@@ -97,7 +97,7 @@ stop_ai_engine() {
 
 main() {
     log_info "🛑 Stopping Telar Development Servers..."
-    local web_port="${WEB_PORT:-3000}"
+    local web_port="${WEB_PORT:-4000}"
     local api_port="${API_PORT:-9099}"
     local profile_port="${PROFILE_PORT:-8081}"
     local posts_port="${POSTS_PORT:-8082}"

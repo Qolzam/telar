@@ -13,8 +13,8 @@
         bench bench-env bench-calibrated bench-summary open-profiles \
         test-transactions \
         lint lint-fix \
-        run-api run-web run-both run-profile run-profile-standalone run-posts run-comments dev stop-servers restart-servers pre-flight-check logs-api logs-web \
-        ai-engine-start ai-engine-stop ai-engine-reset ai-engine-status \
+        run-api run-web run-both run-profile run-profile-standalone run-posts run-comments dev api-stop api-reset pre-flight-check logs-api logs-web \
+        ai-start ai-stop ai-reset ai-status ai-export-models \
         test-e2e-auth test-e2e-posts test-e2e-profile test-e2e-comments test-e2e-web \
         verify-release
 
@@ -27,7 +27,7 @@ TEST_ENV_SCRIPT := tools/dev/test_env.sh
 
 # Service Ports (configurable via environment)
 API_PORT ?= 9099
-WEB_PORT ?= 3000
+WEB_PORT ?= 4000
 PROFILE_PORT ?= 8081
 POSTS_PORT ?= 8082
 COMMENTS_PORT ?= 8083
@@ -326,10 +326,13 @@ help:
 	@echo "  stop-api-background - Stop background API server gracefully."
 	@echo ""
 	@echo "AI Engine Management:"
-	@echo "  ai-engine-start   - Start AI Engine services in background (Docker Compose)."
-	@echo "  ai-engine-stop    - Stop AI Engine services."
-	@echo "  ai-engine-reset   - Reset AI Engine (clear all data and restart)."
-	@echo "  ai-engine-status  - Show AI Engine service status and URLs."
+	@echo "  ai-start        - Start AI Engine services in background (Docker Compose)."
+	@echo "  ai-stop         - Stop AI Engine services."
+	@echo "  ai-reset        - Reset AI Engine (clear all data and restart)."
+	@echo "  ai-status       - Show AI Engine service status and URLs."
+	@echo "  ai-export-models - Export ONNX models using Docker (one-time setup)."
+	@echo "  ai-migrate      - Apply AI Engine database migrations."
+	@echo "  ai-seed         - Seed AI Engine database with test tenant/app."
 	@echo ""
 	@echo "E2E Testing:"
 	@echo "  test-e2e SERVICE=<name> - Run E2E tests for a service (auth, posts, comments, profile)."
@@ -340,8 +343,8 @@ help:
 	@echo "  test-e2e-web      - Run Web E2E tests (Playwright browser tests)."
 	@echo ""
 	@echo "  verify-release    - Run full quality gate: Hygiene + Lint + Build + Test + E2E (MANDATORY before merge)"
-	@echo "  stop-servers      - Stop all running servers."
-	@echo "  restart-servers   - Restart all servers safely (preserves Cursor processes)."
+	@echo "  api-stop          - Stop all running servers."
+	@echo "  api-reset         - Restart all servers safely (preserves Cursor processes)."
 	@echo "  pre-flight-check  - Check system readiness before server startup."
 	@echo "  logs-api          - Tail API server logs."
 	@echo "  logs-web          - Tail web server logs."
@@ -394,10 +397,10 @@ run-both: up-dbs-dev
 dev: up-dbs-dev
 	@bash tools/dev/app/start.sh
 
-stop-servers:
+api-stop:
 	@bash tools/dev/app/stop.sh
 
-restart-servers:
+api-reset:
 	@bash tools/dev/app/restart.sh
 
 # Target to run the API stack in the background for E2E tests
@@ -463,18 +466,37 @@ logs-web:
 
 # --- AI Engine Management ---
 
-ai-engine-start:
+ai-start:
 	@echo "Starting AI Engine services..."
 	@bash tools/dev/app/start-ai-engine.sh
 
-ai-engine-stop:
+ai-stop:
 	@echo "Stopping AI Engine services..."
 	@bash apps/ai-engine/run_dev.sh stop
 
-ai-engine-reset:
+ai-reset:
 	@echo "Resetting AI Engine (clearing all data and restarting)..."
 	@bash apps/ai-engine/run_dev.sh reset
 
-ai-engine-status:
+ai-status:
 	@echo "Checking AI Engine service status..."
 	@bash apps/ai-engine/run_dev.sh status
+
+ai-export-models:
+	@echo "🔨 Exporting ONNX models (this may take a few minutes)..."
+	@echo "Usage: make ai-export-models [MODEL_TYPES=toxicity|spam|all]"
+	@echo "Default: Export all models (toxicity + spam)"
+	@docker compose -f apps/ai-engine/deployments/docker-compose/docker-compose.yml \
+		--profile model-export up --build model-builder
+	@echo "✅ Model export complete!"
+	@echo ""
+	@echo "Exported models:"
+	@ls -lh apps/ai-engine/models/*/model.onnx 2>/dev/null || echo "  No models found (check export logs above)"
+
+ai-migrate:
+	@echo "Applying AI Engine database migrations..."
+	@bash apps/ai-engine/scripts/migrate-db.sh
+
+ai-seed:
+	@echo "Seeding AI Engine database with test data..."
+	@cd apps/ai-engine && go run scripts/seed-db.go

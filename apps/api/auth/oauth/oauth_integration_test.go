@@ -28,7 +28,7 @@ func TestOAuth_User_Account_Management(t *testing.T) {
 	require.NoError(t, err)
 
 	oauthConfig := oauth.NewOAuthConfig(
-		"http://localhost:3000",
+		"http://localhost:4000",
 		"test_github_client",
 		"test_github_secret",
 		"test_google_client",
@@ -45,7 +45,7 @@ func TestOAuth_User_Account_Management(t *testing.T) {
 			Secret: "test-secret",
 		},
 		AppConfig: platformconfig.AppConfig{
-			WebDomain: "http://localhost:3000",
+			WebDomain: "http://localhost:4000",
 		},
 	}
 	service := oauth.NewService(base, serviceConfig)

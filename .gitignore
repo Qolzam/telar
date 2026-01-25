@@ -63,6 +63,7 @@ coverage.txt
 # IDE and editor files
 .vscode/
 .idea/
+.cursor/
 *.swp
 *.swo
 *~
@@ -133,3 +134,6 @@ terraform.tfvars
 /*.md.bak
 /docs/notes/
 node_modules
+
+# Legacy model directory (root level - use apps/ai-engine/models/ instead)
+/model/

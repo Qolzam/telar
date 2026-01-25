@@ -42,7 +42,7 @@ export type { UploadRequest, UploadResponse, ConfirmUploadRequest, FileURLRespon
 export { compressImage, validateFile, uploadFileWithCompression } from './storage-utils';
 export { adminApi } from './admin';
 export type { IAdminApi } from './admin';
-export type { AdminMember, MembersListResponse, FlaggedPost, ModerationListResponse, ModerationDetails } from './admin';
+export type { AdminMember, MembersListResponse, FlaggedPost, ModerationListResponse, ModerationDetails, ModerationScores } from './admin';
 
 import { ApiClient } from './client';
 import { SDK_CONFIG } from './config';

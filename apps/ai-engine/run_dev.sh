@@ -226,14 +226,25 @@ reset_services() {
     
     print_warning "This will completely clear all Weaviate data and restart services"
     print_warning "All ingested documents and embeddings will be lost"
+    print_status "Ollama models will be preserved (ollama_data volume will not be removed)"
     
-    # Stop services and remove volumes (complete data reset)
-    print_status "Clearing all data and stopping services..."
+    # Stop services without removing volumes
+    print_status "Stopping services..."
     cd "$docker_compose_dir"
-    docker compose down -v
+    docker compose down
     
+    # Get the compose project name (defaults to directory name, usually "docker-compose")
+    local compose_project_name=$(docker compose config 2>/dev/null | grep -E "^name:" | awk '{print $2}' || echo "docker-compose")
     
-    print_success "All data cleared and services stopped"
+    # Remove only specific volumes (preserve ollama_data to keep models)
+    print_status "Clearing Weaviate data and logs (preserving Ollama models)..."
+    docker volume rm "${compose_project_name}_weaviate_data" 2>/dev/null || true
+    docker volume rm "${compose_project_name}_ai_engine_logs" 2>/dev/null || true
+    
+    # Note: ollama_data volume is intentionally NOT removed to preserve models
+    print_status "Preserved volume: ${compose_project_name}_ollama_data (models will persist)"
+    
+    print_success "Data cleared and services stopped (Ollama models preserved)"
     
     # Wait a moment for cleanup
     sleep 2
@@ -252,7 +263,7 @@ show_usage() {
     echo "  start    Start all development services (default)"
     echo "  stop     Stop all development services (preserves volumes - models persist)"
     echo "  restart  Restart all development services (preserves volumes)"
-    echo "  reset    Clear all data and restart fresh (⚠️  destructive - removes models)"
+    echo "  reset    Clear all data and restart fresh (⚠️  clears Weaviate data, preserves Ollama models)"
     echo "  status   Show service status"
     echo "  help     Show this help message"
     echo ""

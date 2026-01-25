@@ -891,6 +891,12 @@ func (s *postService) ConvertPostToResponse(ctx context.Context, post *models.Po
 		}
 	}
 
+	// Convert JSONB to map[string]interface{} for ModerationDetails
+	var moderationDetailsMap map[string]interface{}
+	if post.ModerationDetails != nil {
+		moderationDetailsMap = map[string]interface{}(post.ModerationDetails)
+	}
+
 	response := models.PostResponse{
 		ObjectId:         post.ObjectId.String(),
 		PostTypeId:       post.PostTypeId,
@@ -918,6 +924,8 @@ func (s *postService) ConvertPostToResponse(ctx context.Context, post *models.Po
 		LastUpdated:      post.LastUpdated,
 		Permission:       post.Permission,
 		Version:          post.Version,
+		Status:           post.Status,
+		ModerationDetails: moderationDetailsMap,
 	}
 
 	// Enrich with vote type if user context is available

@@ -6,47 +6,52 @@ import (
 )
 
 type Pipeline struct {
-	cache   *InMemoryCache
-	filters []ContentModerator // L2 Heuristics
-	llm     ContentModerator   // L3 Deep Analysis
+	layers []ContentModerator
+	cache  *InMemoryCache // Explicit reference for Set() operations
 }
 
-func NewPipeline(cache *InMemoryCache, llm ContentModerator, filters ...ContentModerator) *Pipeline {
+func NewPipeline(cache *InMemoryCache, layers ...ContentModerator) *Pipeline {
+	allLayers := append([]ContentModerator{cache}, layers...)
 	return &Pipeline{
-		cache:   cache,
-		llm:     llm,
-		filters: filters,
+		layers: allLayers,
+		cache:  cache,
 	}
 }
 
-// Execute runs the tiered moderation strategy
 func (p *Pipeline) Execute(ctx context.Context, text string) (*ModerationResult, error) {
-	// 1. Check L1 Cache
+	// Architecture: Only stop early on violations (IsFlagged=true). Don't stop on safe results
+	// to allow multi-expert evaluation (e.g., Toxicity=0.01 but Spam=0.99). Only the final
+	// layer (L4 LLM) can make the final "Safe" determination.
+
 	if res, err := p.cache.Moderate(ctx, text); err == nil && res != nil {
-		log.Printf("Moderation: L1 Cache Hit")
 		return res, nil
 	}
 
-	// 2. Check L2 Heuristics (Keywords, Regex)
-	for _, filter := range p.filters {
-		if res, err := filter.Moderate(ctx, text); err == nil && res != nil {
-			log.Printf("Moderation: L2 Filter Hit - %s", filter.Name())
-			// Optimization: We could cache this "bad" result too if we wanted
-			return res, nil
+	processingLayers := p.layers[1:]
+	for i, layer := range processingLayers {
+		result, err := layer.Moderate(ctx, text)
+		if err != nil {
+			log.Printf("⚠️ Layer %s failed: %v", layer.Name(), err)
+			continue
+		}
+
+		if result != nil {
+			if result.IsFlagged {
+				p.cache.Set(text, result)
+				return result, nil
+		}
+
+			if i == len(processingLayers)-1 {
+				p.cache.Set(text, result)
+				return result, nil
+			}
 		}
 	}
 
-	// 3. Fallback to L3 Deep Analysis (LLM)
-	log.Printf("Moderation: L1/L2 Miss. Delegating to L3 AI.")
-	res, err := p.llm.Moderate(ctx, text)
-	if err != nil {
-		return nil, err
-	}
-
-	// 4. Update L1 Cache with the expensive result
-	p.cache.Set(text, res)
-
-	return res, nil
+	return &ModerationResult{
+		IsFlagged:       false,
+		FlagReason:      "safe_fallback",
+		SuggestedAction: "approve",
+		ModelUsed:       "pipeline-fallback",
+	}, nil
 }
-
-

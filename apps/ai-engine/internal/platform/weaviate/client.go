@@ -3,7 +3,9 @@ package weaviate
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/url"
+	"time"
 
 	"github.com/weaviate/weaviate-go-client/v4/weaviate"
 	"github.com/weaviate/weaviate-go-client/v4/weaviate/auth"
@@ -58,44 +60,54 @@ func NewClient(config Config) (*Client, error) {
 }
 
 // StoreDocument saves a document with its vector embedding to Weaviate
+// This is kept for backward compatibility but is deprecated in favor of StoreChunk
 func (c *Client) StoreDocument(ctx context.Context, doc *Document, embedding []float32) error {
+	return c.StoreChunk(ctx, doc.ID, 0, doc.Text, doc.Metadata, embedding)
+}
+
+// StoreChunk saves a document chunk with its vector embedding to Weaviate
+func (c *Client) StoreChunk(ctx context.Context, sourceID string, chunkIndex int, content string, metadata map[string]string, embedding []float32) error {
 	// extract source from metadata, provide a default if not present
-	source, ok := doc.Metadata["source"]
+	source, ok := metadata["source"]
 	if !ok {
 		source = "unknown"
 	}
-	
+
 	properties := map[string]interface{}{
-		"text":   doc.Text,
-		"source": source,
+		"content":     content,
+		"source_id":   sourceID,
+		"chunk_index": chunkIndex,
+		"source":      source,
 	}
 
 	_, err := c.client.Data().Creator().
-		WithClassName("Document").
-		// withID is optional, Weaviate can generate one
+		WithClassName("DocumentChunk").
 		WithProperties(properties).
 		WithVector(embedding).
 		Do(ctx)
 
 	if err != nil {
-		return fmt.Errorf("failed to store document: %w", err)
+		return fmt.Errorf("failed to store chunk: %w", err)
 	}
 
 	return nil
 }
 
-// SearchSimilar finds documents similar to the query embedding using vector similarity search
+// SearchSimilar finds document chunks similar to the query embedding using vector similarity search
 func (c *Client) SearchSimilar(ctx context.Context, embedding []float32, limit int) ([]*SearchResult, error) {
-	className := "Document"
+	start := time.Now()
+	className := "DocumentChunk"
 	if limit <= 0 {
 		limit = 5
 	}
 
 	// define the fields we want to retrieve
 	fields := []graphql.Field{
-		graphql.Field{Name: "text"},
-		graphql.Field{Name: "source"}, // source is stored directly, not in metadata
-		graphql.Field{Name: "_additional", Fields: []graphql.Field{
+		{Name: "content"},
+		{Name: "source_id"},
+		{Name: "chunk_index"},
+		{Name: "source"},
+		{Name: "_additional", Fields: []graphql.Field{
 			{Name: "id"},
 			{Name: "certainty"}, // certainty is Weaviate's score (0 to 1)
 		}},
@@ -106,43 +118,60 @@ func (c *Client) SearchSimilar(ctx context.Context, embedding []float32, limit i
 		WithVector(embedding)
 
 	// execute the query
+	queryStart := time.Now()
 	response, err := c.client.GraphQL().Get().
 		WithClassName(className).
 		WithFields(fields...).
 		WithNearVector(nearVector).
 		WithLimit(limit).
 		Do(ctx)
+	queryDuration := time.Since(queryStart)
 	if err != nil {
+		log.Printf("[TIMING] vector_search failed embedding_dim=%d limit=%d query_duration_ms=%d total_duration_ms=%d error=%v",
+			len(embedding), limit, queryDuration.Milliseconds(), time.Since(start).Milliseconds(), err)
 		return nil, fmt.Errorf("failed to perform vector search: %w", err)
 	}
 
+	parseStart := time.Now()
 	var searchResults []*SearchResult
 	if getResult, ok := response.Data["Get"].(map[string]interface{}); ok {
-		if documents, ok := getResult[className].([]interface{}); ok {
-			for _, docRaw := range documents {
-				docMap := docRaw.(map[string]interface{})
+		if chunks, ok := getResult[className].([]interface{}); ok {
+			for _, chunkRaw := range chunks {
+				chunkMap := chunkRaw.(map[string]interface{})
 
-				text := docMap["text"].(string)
-				
-				// extract source 
+				content := chunkMap["content"].(string)
+
+				// extract source_id, chunk_index, and source
+				sourceID := ""
+				if sourceIDVal, ok := chunkMap["source_id"].(string); ok {
+					sourceID = sourceIDVal
+				}
+
+				chunkIndex := 0
+				if chunkIndexVal, ok := chunkMap["chunk_index"].(float64); ok {
+					chunkIndex = int(chunkIndexVal)
+				}
+
 				source := "unknown"
-				if sourceVal, ok := docMap["source"].(string); ok {
+				if sourceVal, ok := chunkMap["source"].(string); ok {
 					source = sourceVal
 				}
 
 				var id string
 				var certainty float32
-				if additional, ok := docMap["_additional"].(map[string]interface{}); ok {
+				if additional, ok := chunkMap["_additional"].(map[string]interface{}); ok {
 					id = additional["id"].(string)
 					certainty = float32(additional["certainty"].(float64))
 				}
 
 				searchResults = append(searchResults, &SearchResult{
 					Document: &Document{
-						ID:   id,
-						Text: text,
+						ID:   sourceID, // Use source_id as the document ID for consistency
+						Text: content,  // Store chunk content as text
 						Metadata: map[string]string{
-							"source": source,
+							"source":      source,
+							"chunk_index": fmt.Sprintf("%d", chunkIndex),
+							"chunk_id":    id,
 						},
 					},
 					Score: certainty,
@@ -150,6 +179,20 @@ func (c *Client) SearchSimilar(ctx context.Context, embedding []float32, limit i
 			}
 		}
 	}
+	parseDuration := time.Since(parseStart)
+	totalDuration := time.Since(start)
+
+	var avgScore float32
+	if len(searchResults) > 0 {
+		sum := float32(0)
+		for _, result := range searchResults {
+			sum += result.Score
+		}
+		avgScore = sum / float32(len(searchResults))
+	}
+
+	log.Printf("[TIMING] vector_search embedding_dim=%d limit=%d results_count=%d query_duration_ms=%d parse_duration_ms=%d total_duration_ms=%d avg_score=%.4f",
+		len(embedding), limit, len(searchResults), queryDuration.Milliseconds(), parseDuration.Milliseconds(), totalDuration.Milliseconds(), avgScore)
 
 	return searchResults, nil
 }
@@ -170,7 +213,7 @@ func (c *Client) Health(ctx context.Context) error {
 
 // EnsureSchema creates the required Weaviate schema for AI Engine
 func (c *Client) EnsureSchema(ctx context.Context) error {
-	className := "Document"
+	className := "DocumentChunk"
 
 	// check if the class already exists
 	exists, err := c.client.Schema().ClassExistenceChecker().WithClassName(className).Do(ctx)
@@ -182,16 +225,26 @@ func (c *Client) EnsureSchema(ctx context.Context) error {
 		return nil
 	}
 
-	// define the class object
+	// define the class object for DocumentChunk
 	classObj := &models.Class{
 		Class:       className,
-		Description: "A document containing text and metadata for the AI Engine",
+		Description: "A chunk of a document containing text and metadata for the AI Engine RAG system",
 		Vectorizer:  "none", // VERY IMPORTANT: We provide our own vectors
 		Properties: []*models.Property{
 			{
-				Name:        "text",
+				Name:        "content",
 				DataType:    []string{"text"},
-				Description: "The main content of the document",
+				Description: "The text content of the chunk",
+			},
+			{
+				Name:        "source_id",
+				DataType:    []string{"text"},
+				Description: "The ID of the original document this chunk belongs to",
+			},
+			{
+				Name:        "chunk_index",
+				DataType:    []string{"int"},
+				Description: "The index of this chunk within the original document (0-based)",
 			},
 			{
 				Name:        "source",

@@ -63,7 +63,7 @@ func TestVerificationService_SuccessBranch_Coverage(t *testing.T) {
 		},
 		AppConfig: platformconfig.AppConfig{
 			OrgName:   "TestOrg",
-			WebDomain: "http://localhost:3000",
+			WebDomain: "http://localhost:4000",
 		},
 	}
 	

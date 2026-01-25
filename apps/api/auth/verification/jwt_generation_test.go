@@ -22,7 +22,7 @@ func TestVerifySignup_AccessTokenGeneration(t *testing.T) {
 		},
 		AppConfig: platformconfig.AppConfig{
 			OrgName:   "TestOrg",
-			WebDomain: "http://localhost:3000",
+			WebDomain: "http://localhost:4000",
 		},
 	}
 

@@ -63,7 +63,7 @@ func TestState_Store_Security(t *testing.T) {
 
 func TestOAuth_Config(t *testing.T) {
 	config := oauth.NewOAuthConfig(
-		"http://localhost:3000",
+		"http://localhost:4000",
 		"test_github_client",
 		"test_github_secret",
 		"test_google_client",

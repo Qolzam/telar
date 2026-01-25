@@ -15,7 +15,7 @@ check_port_free() {
     local name=$2
     if lsof -ti:$port >/dev/null 2>&1; then
         log_error "Port $port is in use by another process. Cannot start $name."
-        log_error "Run 'make stop-servers' first."
+        log_error "Run 'make api-stop' first."
         return 1
     fi
     return 0

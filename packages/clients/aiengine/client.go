@@ -126,9 +126,9 @@ func (c *httpClient) AnalyzeContent(ctx context.Context, req AnalysisRequest) (*
 
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	// Add internal API key header if configured
+	// Use Authorization: Bearer header
 	if c.apiKey != "" {
-		httpReq.Header.Set("X-Internal-API-Key", c.apiKey)
+		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
 	}
 
 	// Execute the request
