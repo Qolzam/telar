@@ -11,6 +11,10 @@ product.
 > web client, AI Engine and client packages are present in the public
 > repository, but the platform does not have a stable production release yet.
 
+<p align="center">
+<img width="1731" height="909" alt="image" src="https://github.com/user-attachments/assets/bc1b26f4-0e2e-4820-992a-379872beb915" alt="Current Telar platform architecture: Next.js web client and TypeScript SDK connected to the Go application API, PostgreSQL, AI Engine, Weaviate and LLM providers." width="100%" />
+</p>
+
 [Project website](https://telar.dev) ·
 [Earlier Telar Social projects](https://telar.dev/legacy) ·
 [Issues](https://github.com/Qolzam/telar/issues)
